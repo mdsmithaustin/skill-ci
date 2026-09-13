@@ -2,7 +2,6 @@
 
 Deliberate gaps, each with the reason it is open.
 
-- `runner.lock` says `PIN_ME`. The real commit SHA lands after the fork's two patches (blind judge payload, Codex rollout-file skill-load detection) merge at github.com/mdsmithaustin/skill-eval-harness. Until then the `manifests` job's install step fails on purpose.
 
 - `strict-frontmatter` is accepted by the reusable workflow and fails the job when set. agent-loop-runner's stricter allowed-keys policy (only `name` and `description` permitted) is not expressible without adding logic to `tools/check-skill-frontmatter.py`, and that file is kept verbatim from mds-pstack. Expressing it means either a flag added in mds-pstack first and re-copied here, or a separate small checker.
 
