@@ -30,6 +30,8 @@ The single home for testing Agent Skills across this maintainer's skill reposito
 
 ## Authoring conventions
 
+Sixth, learned the hard way on 2026-09-13. Assert on the artifact, never on the whole reply. A skill that works often explains what it did, and an explanation quotes the very thing the skill removed. A substring gate over the reply then fails the good run and passes the silent one, and the report reads as negative lift when the skill actually performed better. Have the prompt write its product to a file and point the assertion at that file. Text assertions cannot take a file directly, so use the `script` oracle against the run directory. Two more rules from the same run: encode the skill's rule, not a crude substring of it, and check a judge assertion's threshold, because a rubric that scores 0.85 still records as a failure against a threshold of 1.0.
+
 Five rules for anyone writing cases, harvested from the research that chose this shape.
 
 1. Describe the world in prose instead of fixtures. A case states what the repository, the files, and the situation look like in a few sentences the agent reads as context. Build a fixture tree only when an assertion has to read a real file that the agent was expected to write or change.
