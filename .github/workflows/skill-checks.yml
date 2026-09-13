@@ -25,6 +25,11 @@ on:
         type: string
         required: false
         default: skills
+      trigger-cases:
+        description: optional path to a version-1 trigger declaration corpus; when set, frontmatter checking also verifies every skill is declared in it
+        type: string
+        required: false
+        default: ''
       strict-frontmatter:
         description: Reject frontmatter keys outside name and description. Not implemented yet; see TODO.md.
         type: boolean
@@ -74,7 +79,13 @@ jobs:
       - name: Skill frontmatter
         env:
           SKILLS_DIR: ${{ inputs.skills-dir }}
-        run: python3 .skill-ci/tools/check-skill-frontmatter.py "$SKILLS_DIR"
+          TRIGGER_CASES: ${{ inputs.trigger-cases }}
+        run: |
+          if [ -n "$TRIGGER_CASES" ]; then
+            python3 .skill-ci/tools/check-skill-frontmatter.py "$SKILLS_DIR" --triggers "$TRIGGER_CASES"
+          else
+            python3 .skill-ci/tools/check-skill-frontmatter.py "$SKILLS_DIR"
+          fi
       - name: Skill links, references, and port substitutions
         env:
           SKILLS_DIR: ${{ inputs.skills-dir }}
