@@ -1,5 +1,11 @@
 #!/bin/sh
-# Claude Code with user-level skills, settings, and plugins hidden, login kept.
-# Verified 2026-09-13 on 2.1.270: --setting-sources project drops ~/.claude/skills
-# and keeps OAuth; --bare would drop the login too.
-exec claude --setting-sources project "$@"
+# Claude Code for eval runs: user-level skills, settings and plugins hidden,
+# login kept, and file writes allowed inside the runner's disposable workspace.
+#
+# --setting-sources project  drops ~/.claude/skills while keeping OAuth
+#                            (--bare would drop the login too).
+# --permission-mode acceptEdits  lets a case write the artifact it is asked to
+#                            produce. Without it a -p run is denied and any
+#                            artifact assertion vetoes every arm.
+# Verified 2026-09-13 on Claude Code 2.1.270.
+exec claude --setting-sources project --permission-mode acceptEdits "$@"
