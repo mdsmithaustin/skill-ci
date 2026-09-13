@@ -2,8 +2,9 @@
 # mise tasks, and the activation steps all read this file.
 #
 # It points at the fork github.com/mdsmithaustin/skill-eval-harness. The fork
-# carries the two patches the decision record names (blind judge payload, Codex
-# rollout-file skill-load detection, skill mount keyed by directory name) on branch mds/blind-judge-and-codex-rollout.
+# carries four patches on branch mds/blind-judge-and-codex-rollout: blind judge
+# payload, Codex rollout-file skill-load detection, skill mount keyed by
+# directory name, and lenient parsing of an agent CLI's own event stream.
 # The SHA is that branch's head. Move it only after the fork's tests pass at
 # the new commit and this repository's tests pass against it.
 git+https://github.com/mdsmithaustin/skill-eval-harness.git@566be99

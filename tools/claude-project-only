@@ -4,8 +4,11 @@
 #
 # --setting-sources project  drops ~/.claude/skills while keeping OAuth
 #                            (--bare would drop the login too).
-# --permission-mode acceptEdits  lets a case write the artifact it is asked to
-#                            produce. Without it a -p run is denied and any
-#                            artifact assertion vetoes every arm.
+# --permission-mode acceptEdits  lets a case use tools that write inside the
+#                            runner's disposable workspace. A -p run is
+#                            otherwise denied outright. It does NOT make a
+#                            written file gradable; the workspace is discarded
+#                            and never harvested, which is why cases return
+#                            their product inside tags (README convention six).
 # Verified 2026-09-13 on Claude Code 2.1.270.
 exec claude --setting-sources project --permission-mode acceptEdits "$@"

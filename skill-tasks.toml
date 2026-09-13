@@ -76,12 +76,21 @@ skill-benchmark prepare "$manifest" --split tune --runs-per-variant "${RUNS:-3}"
 
 for agent in ${AGENTS:-claude codex}; do
   case "$agent" in
-    claude) answer_flags="--model ${MODEL:-sonnet} --claude-bin $claude_bin" ;;
-    codex)  answer_flags="--model ${CODEX_MODEL:-gpt-5.6-sol} --codex-cmd $codex_cmd" ;;
-    *) echo "unsupported agent: $agent" >&2; exit 2 ;;
+    claude)
+      skill-benchmark run-agent --agent claude --model "${MODEL:-sonnet}" \
+        --claude-bin "$claude_bin" \
+        --tasks "$out/tasks.jsonl" --runs "$out/claude" --timeout "${TIMEOUT:-240}"
+      ;;
+    codex)
+      skill-benchmark run-agent --agent codex --model "${CODEX_MODEL:-gpt-5.6-sol}" \
+        --codex-cmd "$codex_cmd" \
+        --tasks "$out/tasks.jsonl" --runs "$out/codex" --timeout "${TIMEOUT:-240}"
+      ;;
+    *)
+      echo "unsupported agent: $agent" >&2
+      exit 2
+      ;;
   esac
-  skill-benchmark run-agent --agent "$agent" $answer_flags \
-    --tasks "$out/tasks.jsonl" --runs "$out/$agent" --timeout "${TIMEOUT:-240}"
   skill-benchmark grade "$manifest" --runs "$out/$agent" --allow-scripts
   skill-benchmark judge "$manifest" --runs "$out/$agent" --judge-backend claude \
     --judge-model "${JUDGE_MODEL:-opus}" --claude-bin "$claude_bin" \
