@@ -74,3 +74,4 @@ Activation wires one target repository into the shared skill testing home. It wr
 - Re-activation is safe. Every step converges: existing workflow jobs, includes, and manifests are kept, not rewritten.
 - The pin lives in `runner.lock` only. Do not write the runner version anywhere else.
 - `README.md` in this checkout owns the three-layer shape and the authoring conventions. Point authors there instead of restating them.
+- `DECISIONS.md` owns the rationale, including why the runner is a pinned fork and the test for when to stop using it. Point a reader there rather than explaining it in a run report.

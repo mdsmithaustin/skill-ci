@@ -2,6 +2,8 @@
 
 The single home for testing Agent Skills across this maintainer's skill repositories. It is itself an Agent Skill: say "activate skill-ci" in any repository that holds skills and the agent wires that repository up by following `SKILL.md`. No new harness lives here. The behavioral runner is a pinned fork of skill-eval-harness; this repository holds the case convention, the shared lints, the reusable workflow, the mise tasks, and the scaffold.
 
+Why this repository is shaped this way, and when to abandon the dependency it pins, is in `DECISIONS.md`.
+
 ## Three layers
 
 1. One case convention, in the skill directory. Each skill owns `evals/shared-benchmark.json`, a skill-eval-harness manifest (format version 1) with `skill_name`, a `harness` block naming the fork, `skill_paths` relative to the skill directory, the `with_skill` and `without_skill` variants, and a `cases` list. Trigger rows (`kind: trigger`, `should_trigger` true or false) are harvested from local Claude and Codex session history with observed ground truth and reviewed before use. Outcome cases are written by the skill's author. Gated skills (the ones a model may not invoke on its own) get outcome cases only, invoked by explicit `/name` or `$name`; description-triggerable skills get the trigger matrix too.
@@ -53,6 +55,7 @@ Eighth. Prefer the calibration you already have to a new dependency. The harness
 ```text
 SKILL.md                          activation contract for an agent
 README.md                         this file
+DECISIONS.md                      why the repository is shaped this way
 TODO.md                           what is deliberately not done yet
 runner.lock                       the one runner pin
 skill-tasks.toml                  mise tasks a target includes
@@ -64,6 +67,8 @@ tools/check-skill-content.py      verbatim from mds-pstack
 tools/scaffold_manifest.py        writes an empty manifest per skill
 tools/test_*.py                   unit tests for the three scripts
 tools/requirements.txt            hashed PyYAML pin for the checkers
+tools/claude-project-only         Claude with user skills hidden, writes allowed
+tools/codex-project-only          Codex with user skills hidden, login kept
 ```
 
 ## Running the tests here
