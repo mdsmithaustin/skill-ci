@@ -20,6 +20,11 @@ on:
         description: Directory holding one subdirectory per skill.
         type: string
         default: skills
+      pii-scope:
+        description: skills (default) scans only the skills tree; repository scans every tracked file
+        type: string
+        required: false
+        default: skills
       strict-frontmatter:
         description: Reject frontmatter keys outside name and description. Not implemented yet; see TODO.md.
         type: boolean
@@ -56,7 +61,16 @@ jobs:
           echo "::error::strict-frontmatter is not implemented; the allowed-keys policy is tracked in skill-ci TODO.md"
           exit 1
       - name: Reject PII
-        run: python3 .skill-ci/tools/check-pii.py
+        env:
+          SKILLS_DIR: ${{ inputs.skills-dir }}
+          PII_SCOPE: ${{ inputs.pii-scope }}
+        run: |
+          if [ "$PII_SCOPE" = repository ]; then
+            python3 .skill-ci/tools/check-pii.py
+          else
+            find "$SKILLS_DIR" -type f -print0 \
+              | xargs -0 python3 .skill-ci/tools/check-pii.py
+          fi
       - name: Skill frontmatter
         env:
           SKILLS_DIR: ${{ inputs.skills-dir }}
