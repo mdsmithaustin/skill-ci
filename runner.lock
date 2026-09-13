@@ -3,7 +3,7 @@
 #
 # It points at the fork github.com/mdsmithaustin/skill-eval-harness. The fork
 # carries the two patches the decision record names (blind judge payload, Codex
-# rollout-file skill-load detection). PIN_ME is a placeholder: the real commit
-# SHA lands after those patches merge. Until then `uv tool install` of this
-# spec fails, which is the intended signal.
+# rollout-file skill-load detection) on branch mds/blind-judge-and-codex-rollout.
+# The SHA is that branch's head. Move it only after the fork's tests pass at
+# the new commit and this repository's tests pass against it.
 git+https://github.com/mdsmithaustin/skill-eval-harness.git@810522d8fd89e5eb9b06ef05c7a2c82bf3605c64
