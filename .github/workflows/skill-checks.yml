@@ -55,6 +55,8 @@ jobs:
         run: |
           echo "::error::strict-frontmatter is not implemented; the allowed-keys policy is tracked in skill-ci TODO.md"
           exit 1
+      - name: Reject PII
+        run: python3 .skill-ci/tools/check-pii.py
       - name: Skill frontmatter
         env:
           SKILLS_DIR: ${{ inputs.skills-dir }}

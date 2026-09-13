@@ -1,5 +1,7 @@
 # Fast local feedback. CI is the enforcement boundary.
 pre-commit:
   commands:
+    reject-pii:
+      run: python3 tools/check-pii.py --staged
     unit-tests:
       run: uv run --no-project --with-requirements tools/requirements.txt python -m unittest discover -s tools -p 'test_*.py'

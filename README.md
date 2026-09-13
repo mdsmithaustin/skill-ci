@@ -8,7 +8,7 @@ Why this repository is shaped this way, and when to abandon the dependency it pi
 
 1. One case convention, in the skill directory. Each skill owns `evals/shared-benchmark.json`, a skill-eval-harness manifest (format version 1) with `skill_name`, a `harness` block naming the fork, `skill_paths` relative to the skill directory, the `with_skill` and `without_skill` variants, and a `cases` list. Trigger rows (`kind: trigger`, `should_trigger` true or false) are harvested from local Claude and Codex session history with observed ground truth and reviewed before use. Outcome cases are written by the skill's author. Gated skills (the ones a model may not invoke on its own) get outcome cases only, invoked by explicit `/name` or `$name`; description-triggerable skills get the trigger matrix too.
 
-2. One lint set, owned here and consumed everywhere. `tools/check-skill-frontmatter.py` validates agentskills.io metadata and the Codex invocation policy. `tools/check-skill-content.py` fails on dangling relative links, unknown bold skill references, unclosed fences, and retired port paths. Both came from mds-pstack unchanged and are parametrized on a skills root. The reusable workflow `.github/workflows/skill-checks.yml` runs them on every push and pull request, then runs `skill-benchmark validate --strict-leakage` on every manifest and `skill-benchmark audit-manifest --fail-on-blockers` on every manifest that has at least one case. A scaffolded manifest with no cases is validated but not audited, because readiness is a question about a manifest someone has started to write. All of this is model-free.
+2. One lint set, owned here and consumed everywhere. `tools/check-skill-frontmatter.py` validates agentskills.io metadata and the Codex invocation policy. `tools/check-skill-content.py` fails on dangling relative links, unknown bold skill references, unclosed fences, and retired port paths. `tools/check-pii.py` rejects likely personal data, which matters because harvested cases are cut from real session transcripts. All three came from mds-pstack unchanged and are parametrized on a skills root. The reusable workflow `.github/workflows/skill-checks.yml` runs them on every push and pull request, then runs `skill-benchmark validate --strict-leakage` on every manifest and `skill-benchmark audit-manifest --fail-on-blockers` on every manifest that has at least one case. A scaffolded manifest with no cases is validated but not audited, because readiness is a question about a manifest someone has started to write. All of this is model-free.
 
 3. One pinned external runner. `runner.lock` holds a single `git+https` spec pointing at github.com/mdsmithaustin/skill-eval-harness at one commit. The workflow, the mise tasks, and activation all read it. Behavioral runs (`skill-trigger`, `skill-run`) are operator-local: they drive the installed `claude` and `codex` binaries on the host's own logins, spend model budget, and never run in CI or as a pull request gate.
 
@@ -60,10 +60,12 @@ TODO.md                           what is deliberately not done yet
 runner.lock                       the one runner pin
 skill-tasks.toml                  mise tasks a target includes
 mise.toml                         this repository's own tools and tasks
-lefthook.yml                      pre-commit runs the unit tests
+lefthook.yml                      pre-commit rejects PII and runs the unit tests
 .github/workflows/skill-checks.yml  reusable workflow_call workflow
+.github/dependabot.yml            weekly actions and pip updates
 tools/check-skill-frontmatter.py  verbatim from mds-pstack
 tools/check-skill-content.py      verbatim from mds-pstack
+tools/check-pii.py                verbatim from mds-pstack
 tools/scaffold_manifest.py        writes an empty manifest per skill
 tools/test_*.py                   unit tests for the three scripts
 tools/requirements.txt            hashed PyYAML pin for the checkers

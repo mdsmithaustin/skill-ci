@@ -1,0 +1,15 @@
+# The behavioral runner is not covered here. It is pinned by commit in
+# runner.lock as a git URL, which no Dependabot ecosystem reads, and moving it
+# is a judgement call gated on the fork's tests. See DECISIONS.md.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: pip
+    directory: /tools
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
