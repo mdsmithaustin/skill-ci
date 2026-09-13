@@ -66,7 +66,9 @@ Activation wires one target repository into the shared skill testing home. It wr
 
 5. Check. Run `mise run skill-lint`, and `mise run skill-validate` when the runner is installed. Fix only what activation introduced. A lint finding inside an existing skill belongs to its author: list it in the report and leave it.
 
-6. Stop. Report the files written, the tasks listed, the runner state (installed at which spec, or unpinned), the manifest count, and any findings.
+6. Ignore run output. A behavioral run writes raw agent transcripts under the skill it exercised. Add `eval-runs/` and `evals/runs/` to the target's `.gitignore` if they are not already ignored. Those files hold real session content and must never be committed.
+
+7. Stop. Report the files written, the tasks listed, the runner state (installed at which spec, or unpinned), the manifest count, and any findings.
 
 ## Rules
 

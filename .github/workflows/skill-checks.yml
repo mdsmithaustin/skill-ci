@@ -68,7 +68,7 @@ jobs:
           if [ "$PII_SCOPE" = repository ]; then
             python3 .skill-ci/tools/check-pii.py
           else
-            find "$SKILLS_DIR" -type f -print0 \
+            git ls-files -z -- "$SKILLS_DIR" \
               | xargs -0 python3 .skill-ci/tools/check-pii.py
           fi
       - name: Skill frontmatter
