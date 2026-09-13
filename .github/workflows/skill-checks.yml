@@ -1,0 +1,106 @@
+name: skill-checks
+
+# Reusable, model-free checks for a repository of Agent Skills. A target repo
+# calls it from its own workflow:
+#
+#   jobs:
+#     skills:
+#       uses: mdsmithaustin/skill-ci/.github/workflows/skill-checks.yml@<ref>
+#       with:
+#         skills-dir: skills
+#         skill-ci-ref: <ref>
+#
+# Nothing in this file calls a model. Behavioral runs are operator-local
+# (skill-tasks.toml) and never PR-gated. The runner pin lives in runner.lock.
+
+on:
+  workflow_call:
+    inputs:
+      skills-dir:
+        description: Directory holding one subdirectory per skill.
+        type: string
+        default: skills
+      strict-frontmatter:
+        description: Reject frontmatter keys outside name and description. Not implemented yet; see TODO.md.
+        type: boolean
+        default: false
+      skill-ci-ref:
+        description: Ref of mdsmithaustin/skill-ci to fetch tools and runner.lock from. Pass the same ref as the uses line.
+        type: string
+        default: main
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mdsmithaustin/skill-ci
+          ref: ${{ inputs.skill-ci-ref }}
+          path: .skill-ci
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install lint dependency
+        run: python3 -m pip install --require-hashes -r .skill-ci/tools/requirements.txt
+      - name: strict-frontmatter is not implemented
+        if: inputs.strict-frontmatter
+        run: |
+          echo "::error::strict-frontmatter is not implemented; the allowed-keys policy is tracked in skill-ci TODO.md"
+          exit 1
+      - name: Skill frontmatter
+        env:
+          SKILLS_DIR: ${{ inputs.skills-dir }}
+        run: python3 .skill-ci/tools/check-skill-frontmatter.py "$SKILLS_DIR"
+      - name: Skill links, references, and port substitutions
+        env:
+          SKILLS_DIR: ${{ inputs.skills-dir }}
+        run: python3 .skill-ci/tools/check-skill-content.py "$SKILLS_DIR"
+
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mdsmithaustin/skill-ci
+          ref: ${{ inputs.skill-ci-ref }}
+          path: .skill-ci
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: python3 -m pip install uv==0.12.7
+      - name: Install the pinned runner from runner.lock
+        run: |
+          set -euo pipefail
+          spec="$(grep -v '^#' .skill-ci/runner.lock | grep -v '^[[:space:]]*$')"
+          echo "runner: $spec"
+          uv tool install "$spec"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Validate manifests and audit readiness
+        env:
+          SKILLS_DIR: ${{ inputs.skills-dir }}
+        run: |
+          set -euo pipefail
+          count=0
+          while IFS= read -r manifest; do
+            count=$((count + 1))
+            skill-benchmark validate --strict-leakage "$manifest"
+            if [ "$(jq '.cases | length' "$manifest")" -eq 0 ]; then
+              echo "$manifest: no cases yet, readiness audit skipped"
+            else
+              skill-benchmark audit-manifest --fail-on-blockers "$manifest"
+            fi
+          done < <(find "$SKILLS_DIR" -path '*/evals/shared-benchmark.json' | sort)
+          echo "manifests checked: $count"

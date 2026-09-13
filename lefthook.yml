@@ -1,0 +1,5 @@
+# Fast local feedback. CI is the enforcement boundary.
+pre-commit:
+  commands:
+    unit-tests:
+      run: uv run --no-project --with-requirements tools/requirements.txt python -m unittest discover -s tools -p 'test_*.py'

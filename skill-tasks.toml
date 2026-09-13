@@ -1,0 +1,74 @@
+# mise task file. A target repo includes it from its own mise.toml:
+#
+#   [env]
+#   SKILL_CI = "{{ config_root }}/../skill-ci"
+#   [task_config]
+#   includes = ["../skill-ci/skill-tasks.toml"]
+#
+# or copies these tables in. Every task reads SKILL_CI (the skill-ci checkout)
+# and SKILLS_DIR (default "skills"). Requires uv on PATH.
+#
+# skill-lint, skill-validate, skill-audit are model-free and run in CI too.
+# skill-trigger and skill-run drive the host's own claude and codex logins,
+# spend model budget, and never run in CI.
+
+[skill-lint]
+description = "Frontmatter, links, references, port substitutions (model-free)"
+run = '''
+set -euo pipefail
+: "${SKILL_CI:?set SKILL_CI to the skill-ci checkout}"
+SKILLS_DIR="${SKILLS_DIR:-skills}"
+py() { uv run --no-project --with-requirements "$SKILL_CI/tools/requirements.txt" python "$@"; }
+py "$SKILL_CI/tools/check-skill-frontmatter.py" "$SKILLS_DIR"
+py "$SKILL_CI/tools/check-skill-content.py" "$SKILLS_DIR"
+'''
+
+[skill-validate]
+description = "skill-benchmark validate --strict-leakage on every manifest (model-free)"
+run = '''
+set -euo pipefail
+SKILLS_DIR="${SKILLS_DIR:-skills}"
+for manifest in $(find "$SKILLS_DIR" -path '*/evals/shared-benchmark.json' | sort); do
+  skill-benchmark validate --strict-leakage "$manifest"
+done
+'''
+
+[skill-audit]
+description = "skill-benchmark audit-manifest --fail-on-blockers on every manifest (model-free)"
+run = '''
+set -euo pipefail
+SKILLS_DIR="${SKILLS_DIR:-skills}"
+for manifest in $(find "$SKILLS_DIR" -path '*/evals/shared-benchmark.json' | sort); do
+  skill-benchmark audit-manifest --fail-on-blockers "$manifest"
+done
+'''
+
+[skill-trigger]
+description = "Operator-local trigger matrix for one skill on the host's claude and codex logins (paid, never CI)"
+run = '''
+set -euo pipefail
+skill="{{arg(name="skill", help="skill directory, e.g. skills/unslop")}}"
+manifest="$skill/evals/shared-benchmark.json"
+out="${OUT:-$skill/eval-runs/trigger-$(date +%Y%m%d-%H%M%S)}"
+mkdir -p "$out"
+skill-trigger-matrix "$manifest" --agent claude --agent codex \
+  --runs-per-query "${RUNS:-3}" ${CODEX_CMD:+--codex-cmd "$CODEX_CMD"} \
+  --trace-runs "$out/traces" --out "$out/trigger-matrix.json"
+'''
+
+[skill-run]
+description = "Operator-local paired with/without run for one skill on the host's claude and codex logins (paid, never CI)"
+run = '''
+set -euo pipefail
+skill="{{arg(name="skill", help="skill directory, e.g. skills/unslop")}}"
+manifest="$skill/evals/shared-benchmark.json"
+out="${OUT:-$skill/eval-runs/run-$(date +%Y%m%d-%H%M%S)}"
+skill-benchmark audit-manifest --fail-on-blockers "$manifest"
+mkdir -p "$out"
+skill-benchmark prepare "$manifest" --split tune --runs-per-variant "${RUNS:-3}" --out "$out/tasks.jsonl"
+for agent in claude codex; do
+  skill-benchmark run-agent --agent "$agent" --tasks "$out/tasks.jsonl" --runs "$out/$agent" \
+    ${CODEX_CMD:+--codex-cmd "$CODEX_CMD"}
+  skill-benchmark benchmark "$manifest" --runs "$out/$agent" --split tune --out "$out/$agent-benchmark.json"
+done
+'''

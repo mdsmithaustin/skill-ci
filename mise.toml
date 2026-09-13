@@ -1,0 +1,13 @@
+[tools]
+python = "3.12.14"
+uv = "0.12.7"
+
+[env]
+SKILL_CI = "{{ config_root }}"
+
+[task_config]
+includes = ["skill-tasks.toml"]
+
+[tasks.test]
+description = "Unit tests for the checkers and the manifest scaffold (model-free)"
+run = "uv run --no-project --with-requirements tools/requirements.txt python -m unittest discover -s tools -p 'test_*.py'"

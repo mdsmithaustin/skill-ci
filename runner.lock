@@ -1,0 +1,9 @@
+# The one place the behavioral runner is pinned. The reusable workflow, the
+# mise tasks, and the activation steps all read this file.
+#
+# It points at the fork github.com/mdsmithaustin/skill-eval-harness. The fork
+# carries the two patches the decision record names (blind judge payload, Codex
+# rollout-file skill-load detection). PIN_ME is a placeholder: the real commit
+# SHA lands after those patches merge. Until then `uv tool install` of this
+# spec fails, which is the intended signal.
+git+https://github.com/mdsmithaustin/skill-eval-harness.git@PIN_ME
