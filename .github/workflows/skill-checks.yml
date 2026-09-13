@@ -100,7 +100,7 @@ jobs:
             if [ "$(jq '.cases | length' "$manifest")" -eq 0 ]; then
               echo "$manifest: no cases yet, readiness audit skipped"
             else
-              skill-benchmark audit-manifest --fail-on-blockers "$manifest"
+              skill-benchmark audit-manifest --fail-on-blockers --strict-judge "$manifest"
             fi
           done < <(find "$SKILLS_DIR" -path '*/evals/shared-benchmark.json' | sort)
           echo "manifests checked: $count"

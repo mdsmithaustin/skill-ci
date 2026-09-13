@@ -36,12 +36,12 @@ done
 '''
 
 [skill-audit]
-description = "skill-benchmark audit-manifest --fail-on-blockers on every manifest (model-free)"
+description = "Readiness audit on every manifest, judge independence included (model-free)"
 run = '''
 set -euo pipefail
 SKILLS_DIR="${SKILLS_DIR:-skills}"
 for manifest in $(find "$SKILLS_DIR" -path '*/evals/shared-benchmark.json' | sort); do
-  skill-benchmark audit-manifest --fail-on-blockers "$manifest"
+  skill-benchmark audit-manifest --fail-on-blockers --strict-judge "$manifest"
 done
 '''
 
