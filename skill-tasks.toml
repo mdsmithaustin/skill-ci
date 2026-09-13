@@ -61,18 +61,33 @@ skill-trigger-matrix "$manifest" --agent claude --agent codex \
 '''
 
 [skill-run]
-description = "Operator-local paired with/without run for one skill on the host's claude and codex logins (paid, never CI)"
+description = "Operator-local paired with/without run for one skill on the host's own logins (paid, never CI)"
 run = '''
 set -euo pipefail
 skill="{{arg(name="skill", help="skill directory, e.g. skills/unslop")}}"
 manifest="$skill/evals/shared-benchmark.json"
 out="${OUT:-$skill/eval-runs/run-$(date +%Y%m%d-%H%M%S)}"
-skill-benchmark audit-manifest --fail-on-blockers "$manifest"
+claude_bin="$SKILL_CI/tools/claude-project-only"
+codex_cmd="${CODEX_CMD:-$SKILL_CI/tools/codex-project-only exec --json --skip-git-repo-check --sandbox read-only}"
+
+skill-benchmark audit-manifest "$manifest" --fail-on-blockers --strict-judge
 mkdir -p "$out"
 skill-benchmark prepare "$manifest" --split tune --runs-per-variant "${RUNS:-3}" --out "$out/tasks.jsonl"
-for agent in claude codex; do
-  skill-benchmark run-agent --agent "$agent" --tasks "$out/tasks.jsonl" --runs "$out/$agent" \
-    ${CODEX_CMD:+--codex-cmd "$CODEX_CMD"}
-  skill-benchmark benchmark "$manifest" --runs "$out/$agent" --split tune --out "$out/$agent-benchmark.json"
+
+for agent in ${AGENTS:-claude codex}; do
+  case "$agent" in
+    claude) answer_flags="--model ${MODEL:-sonnet} --claude-bin $claude_bin" ;;
+    codex)  answer_flags="--model ${CODEX_MODEL:-gpt-5.6-sol} --codex-cmd $codex_cmd" ;;
+    *) echo "unsupported agent: $agent" >&2; exit 2 ;;
+  esac
+  skill-benchmark run-agent --agent "$agent" $answer_flags \
+    --tasks "$out/tasks.jsonl" --runs "$out/$agent" --timeout "${TIMEOUT:-240}"
+  skill-benchmark grade "$manifest" --runs "$out/$agent" --allow-scripts
+  skill-benchmark judge "$manifest" --runs "$out/$agent" --judge-backend claude \
+    --judge-model "${JUDGE_MODEL:-opus}" --claude-bin "$claude_bin" \
+    --judge-runs "${JUDGE_RUNS:-3}" --out "$out/$agent-judge.jsonl"
+  skill-benchmark benchmark "$manifest" --runs "$out/$agent" --split tune --allow-scripts \
+    --judge-results "$out/$agent-judge.jsonl" --out "$out/$agent-benchmark.json"
+  skill-benchmark report --benchmark "$out/$agent-benchmark.json" --format github
 done
 '''

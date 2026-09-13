@@ -6,4 +6,4 @@
 # rollout-file skill-load detection, skill mount keyed by directory name) on branch mds/blind-judge-and-codex-rollout.
 # The SHA is that branch's head. Move it only after the fork's tests pass at
 # the new commit and this repository's tests pass against it.
-git+https://github.com/mdsmithaustin/skill-eval-harness.git@718ee1f0bcae6c8ab787a8e053dfb7a6a0bc3deb
+git+https://github.com/mdsmithaustin/skill-eval-harness.git@566be99

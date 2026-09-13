@@ -12,3 +12,7 @@ Deliberate gaps, each with the reason it is open.
 - Trigger-row harvesting from local Claude and Codex session history is not in this repository. The decision record says the user reviews the harvest before use; the tool that produces it has not been written.
 
 - The mds-pstack checkers are copied, not shared. When mds-pstack moves to consuming this repository's workflow, its own copies and its `lint.yml` steps for them are deleted in the same change.
+
+- `skill-run` and `skill-trigger` drive the CLIs through `tools/claude-project-only` and `tools/codex-project-only`. Those launchers exist because the runner invokes `claude -p` with no tool permissions and because both harnesses discover user-level skills from the operator's home directory, which would otherwise put all of them inside an isolated run. If either CLI changes how it scopes skills or grants tools, the launchers are the first thing to recheck.
+
+- Outcome cases cannot grade a file the agent writes. On the `run-agent` path the agent's working directory is temporary and is discarded, and only `run-subagent` copies sidecar files into the run directory. Cases work around this by asking for the product inside tags and extracting it from `output.md`. Moving outcome runs to `run-subagent` would remove the workaround and is worth evaluating.
