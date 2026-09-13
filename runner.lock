@@ -3,7 +3,7 @@
 #
 # It points at the fork github.com/mdsmithaustin/skill-eval-harness. The fork
 # carries the two patches the decision record names (blind judge payload, Codex
-# rollout-file skill-load detection) on branch mds/blind-judge-and-codex-rollout.
+# rollout-file skill-load detection, skill mount keyed by directory name) on branch mds/blind-judge-and-codex-rollout.
 # The SHA is that branch's head. Move it only after the fork's tests pass at
 # the new commit and this repository's tests pass against it.
-git+https://github.com/mdsmithaustin/skill-eval-harness.git@810522d8fd89e5eb9b06ef05c7a2c82bf3605c64
+git+https://github.com/mdsmithaustin/skill-eval-harness.git@718ee1f0bcae6c8ab787a8e053dfb7a6a0bc3deb
