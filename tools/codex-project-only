@@ -1,0 +1,9 @@
+#!/bin/sh
+# Codex with user-level skills hidden, login kept. Codex discovers user skills
+# under $HOME/.agents/skills, so HOME moves to an empty directory while
+# CODEX_HOME (auth, config) is preserved. Verified 2026-09-13 on codex-cli 0.150.1.
+real_home="${HOME}"
+export CODEX_HOME="${CODEX_HOME:-$real_home/.codex}"
+HOME="$(mktemp -d "${TMPDIR:-/tmp}/codex-project-only.XXXXXX")"
+export HOME
+exec codex "$@"

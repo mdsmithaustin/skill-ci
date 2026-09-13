@@ -11,7 +11,8 @@
 # skill-lint, skill-validate, skill-audit are model-free and run in CI too.
 # skill-trigger and skill-run drive the host's own claude and codex logins,
 # spend model budget, and never run in CI. Claude runs through tools/claude-project-only
-# so user-level skills stay out of the workspace while the OAuth login keeps working.
+# and Codex through tools/codex-project-only, so user-level skills stay out of the
+# workspace on both harnesses while the logins keep working.
 
 [skill-lint]
 description = "Frontmatter, links, references, port substitutions (model-free)"
@@ -54,7 +55,8 @@ out="${OUT:-$skill/eval-runs/trigger-$(date +%Y%m%d-%H%M%S)}"
 mkdir -p "$out"
 skill-trigger-matrix "$manifest" --agent claude --agent codex \
   --claude-bin "$SKILL_CI/tools/claude-project-only" \
-  --runs-per-query "${RUNS:-3}" ${MODEL:+--model "$MODEL"} ${CODEX_CMD:+--codex-cmd "$CODEX_CMD"} \
+  --codex-cmd "${CODEX_CMD:-$SKILL_CI/tools/codex-project-only exec --json --skip-git-repo-check --sandbox read-only}" \
+  --runs-per-query "${RUNS:-3}" ${MODEL:+--model "$MODEL"} \
   --trace-runs "$out/traces" --out "$out/trigger-matrix.json"
 '''
 
