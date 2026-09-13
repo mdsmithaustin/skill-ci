@@ -1,0 +1,5 @@
+#!/bin/sh
+# Claude Code with user-level skills, settings, and plugins hidden, login kept.
+# Verified 2026-09-13 on 2.1.270: --setting-sources project drops ~/.claude/skills
+# and keeps OAuth; --bare would drop the login too.
+exec claude --setting-sources project "$@"
