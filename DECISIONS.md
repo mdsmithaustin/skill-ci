@@ -16,14 +16,23 @@ Building our own would have reproduced about twenty thousand lines to add two th
 
 ## Why a fork, and when to leave it
 
-`runner.lock` pins a fork rather than the upstream release. The fork carries four patches, all at the boundary where the runner meets something outside itself.
+`runner.lock` pins a fork rather than the upstream release. The fork carries five patches, all at the boundary where the runner meets something outside itself.
 
 1. The judge prompt no longer reveals which arm it is grading.
 2. Codex skill loads are read from the session rollout, because an explicit mention injects the skill with no tool event.
 3. A skill mounts under its own directory name, which the Agent Skills format requires.
 4. An agent CLI's own event stream parses leniently, because Codex repeats a key and the strict reader was discarding whole rows.
+5. A manifest under `evals/<skill>/` resolves to the repository above it, so a manifest can sit outside the tree a skill installer copies.
 
-The original exit test counted patches. That measured the wrong thing, because driving two command line tools that ship weekly produces a steady trickle of adapter fixes. The test is now where a patch lands. A fix in the adapter edge is the ordinary cost of the dependency. A fix that has to change grading, aggregation, or the case model means the tool disagrees with us about evaluation, and that is when to leave. Four for four have been adapter edge.
+The original exit test counted patches. That measured the wrong thing, because driving two command line tools that ship weekly produces a steady trickle of adapter fixes. The test is now where a patch lands. A fix in the adapter edge is the ordinary cost of the dependency. A fix that has to change grading, aggregation, or the case model means the tool disagrees with us about evaluation, and that is when to leave. Five for five have been adapter edge.
+
+## Where manifests live
+
+A manifest belongs outside the skills tree, at `evals/<skill>/shared-benchmark.json`, with `skill_paths` relative to the repository root. The reason is what a skill installer does. `npx skills` copies a skill directory verbatim to every consumer, in both copy and symlink mode, and it has no ignore or exclude mechanism. A manifest at `<skills-dir>/<skill>/evals/shared-benchmark.json` therefore hands every consumer of that skill its trigger queries, its expected answers, and its oracle scripts. In mds-pstack that is roughly twenty kilobytes of answer key per skill. Measured on 2026-09-13 by installing a fixture skill with an `evals/` tree and reading a planted transcript back from the installed path.
+
+The old layout still resolves, because the runner's rule for the repository root runs the existing case first. The reusable workflow's `evals-dir` input and the `EVALS_DIR` variable the mise tasks read select the tree to search, and both default to the skills tree. A repository migrates when it chooses to, one manifest at a time.
+
+The cost is that a manifest and its skill no longer share a directory, so nothing keeps them in step automatically. Case files, `prompt_ref`, and script-oracle paths resolve against the manifest's own directory in both layouts, which is the trap worth knowing when a manifest moves.
 
 ## Where runs happen
 

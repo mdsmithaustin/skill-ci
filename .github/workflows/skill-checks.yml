@@ -35,6 +35,11 @@ on:
         type: string
         required: false
         default: ''
+      evals-dir:
+        description: directory holding eval manifests when they live outside the skills tree; the default searches the skills tree for backward compatibility
+        type: string
+        required: false
+        default: ''
       strict-frontmatter:
         description: Reject frontmatter keys outside name and description. Not implemented yet; see TODO.md.
         type: boolean
@@ -145,8 +150,18 @@ jobs:
       - name: Validate manifests and audit readiness
         env:
           SKILLS_DIR: ${{ inputs.skills-dir }}
+          EVALS_DIR: ${{ inputs.evals-dir }}
         run: |
           set -euo pipefail
+          if [ -n "$EVALS_DIR" ]; then
+            if [ ! -d "$EVALS_DIR" ]; then
+              echo "::error::evals-dir is set to '$EVALS_DIR', which is not a directory; no manifest would be checked"
+              exit 1
+            fi
+            search=(find "$EVALS_DIR" -name shared-benchmark.json)
+          else
+            search=(find "$SKILLS_DIR" -path '*/evals/shared-benchmark.json')
+          fi
           count=0
           while IFS= read -r manifest; do
             count=$((count + 1))
@@ -156,5 +171,5 @@ jobs:
             else
               skill-benchmark audit-manifest --fail-on-blockers --strict-judge "$manifest"
             fi
-          done < <(find "$SKILLS_DIR" -path '*/evals/shared-benchmark.json' | sort)
+          done < <("${search[@]}" | sort)
           echo "manifests checked: $count"
