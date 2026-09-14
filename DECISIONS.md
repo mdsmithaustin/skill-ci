@@ -26,6 +26,14 @@ Building our own would have reproduced about twenty thousand lines to add two th
 
 The original exit test counted patches. That measured the wrong thing, because driving two command line tools that ship weekly produces a steady trickle of adapter fixes. The test is now where a patch lands. A fix in the adapter edge is the ordinary cost of the dependency. A fix that has to change grading, aggregation, or the case model means the tool disagrees with us about evaluation, and that is when to leave. Five for five have been adapter edge.
 
+## Why execution derives from the lock
+
+`runner.lock` records the runner commit once. `tools/run_runner.py` validates that one specification each time a local task or reusable workflow runs. It starts Python in uv's isolated tool environment and executes the runner from that environment's scripts directory. uv can otherwise fall back to a same-named command on `PATH` when a source does not provide an entrypoint.
+
+The reusable workflow checks out the revision that GitHub selected for that workflow through `job.workflow_repository` and `job.workflow_sha`. A caller therefore records one full SHA in its `uses` line. The deprecated `skill-ci-ref` input remains accepted for callers that have not removed it, but it cannot change the checkout. Dependabot can update the remote reusable-workflow reference through its `github-actions` ecosystem without a cross-repository credential.
+
+GitHub documents the [called workflow identity](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#job-context) and [automatic reusable-workflow updates](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/auto-update-actions).
+
 ## Where manifests live
 
 A manifest belongs outside the skills tree, at `evals/<skill>/shared-benchmark.json`, with `skill_paths` relative to the repository root. The reason is what a skill installer does. `npx skills` copies a skill directory verbatim to every consumer, in both copy and symlink mode, and it has no ignore or exclude mechanism. A manifest at `<skills-dir>/<skill>/evals/shared-benchmark.json` therefore hands every consumer of that skill its trigger queries, its expected answers, and its oracle scripts. In mds-pstack that is roughly twenty kilobytes of answer key per skill. Measured on 2026-09-13 by installing a fixture skill with an `evals/` tree and reading a planted transcript back from the installed path.
