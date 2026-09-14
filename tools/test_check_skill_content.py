@@ -40,10 +40,13 @@ class ContentLint(Tree):
         real = self.skill("real-skill", 'name: real-skill\ndescription: "d"')
         (real / "refs").mkdir()
         (real / "refs" / "my notes.md").write_text("x", encoding="utf-8")
+        (real / "refs" / "my").write_text("x", encoding="utf-8")
         (real / "refs" / "diagram(1).svg").write_text("x", encoding="utf-8")
         (real / "refs" / "my#notes.md").write_text("x", encoding="utf-8")
         (real / "refs" / "my?notes.md").write_text("x", encoding="utf-8")
+        (real / "refs" / "literal%20name.md").write_text("x", encoding="utf-8")
         (real / "refs" / r"foo\q.md").write_text("x", encoding="utf-8")
+        (real / "run.sh").write_text("x", encoding="utf-8")
         (real / "LICENSE").write_text("x", encoding="utf-8")
 
     def body(self, body: str) -> tuple[int, str]:
@@ -52,6 +55,11 @@ class ContentLint(Tree):
 
     def test_clean_tree_passes(self) -> None:
         self.assertEqual(run(CONTENT, self.root), (0, ""))
+
+    def test_whitespace_only_line_does_not_hide_a_broken_link(self) -> None:
+        code, out = self.body("Intro.\n   \nSee [bad](MISSING).")
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING", out)
 
     def test_dotdot_link_broken_fires(self) -> None:
         code, out = self.body("See [x](../gone/n.md).")
@@ -68,11 +76,57 @@ class ContentLint(Tree):
         self.assertEqual(code, 1, "markdown links are checked whatever the extension")
         self.assertIn("references/gone.svg", out)
 
+    def test_broken_markdown_image_fires(self) -> None:
+        code, out = self.body("See ![diagram](references/gone.svg).")
+        self.assertEqual(code, 1)
+        self.assertIn("references/gone.svg", out)
+
     def test_explicit_placeholder_does_not_hide_a_broken_extensionless_link(self) -> None:
         code, out = self.body("See [PR]({url}) and [license](MISSING).")
         self.assertEqual(code, 1)
         self.assertIn("MISSING", out)
         self.assertNotIn("{url}", out)
+
+    def test_multiline_explicit_placeholders_are_ignored(self) -> None:
+        body = (
+            "See [PR](\n  {url}\n) and [issue][issue].\n\n"
+            "[issue]:\n  {issue_url}"
+        )
+        self.assertEqual(self.body(body)[0], 0)
+
+    def test_raw_placeholder_variants_are_ignored(self) -> None:
+        body = (
+            "See [angle](<{url}>), [fragment]({url}#section), and "
+            "[query]({url}?q=1).\n\n"
+            "[reference]: <{issue_url}>\n"
+            "See [reference]."
+        )
+        self.assertEqual(self.body(body)[0], 0)
+
+    def test_raw_placeholders_with_escaped_uri_delimiters_are_ignored(self) -> None:
+        body = (
+            r"See [fragment]({url}\#section), "
+            r"![query]({url}\?q=1), and [angle](<{url}\#section>)."
+            "\n\n"
+            r"[reference]: <{issue_url}\?q=1>"
+            "\nSee [reference]."
+        )
+        self.assertEqual(self.body(body)[0], 0)
+
+    def test_placeholder_prefix_with_balanced_suffix_is_a_filename(self) -> None:
+        code, out = self.body("See [missing]({url}(tail)).")
+        self.assertEqual(code, 1)
+        self.assertIn("{url}(tail)", out)
+
+    def test_percent_encoded_placeholder_is_a_filename(self) -> None:
+        code, out = self.body("See [missing](%7Burl%7D).")
+        self.assertEqual(code, 1)
+        self.assertIn("target does not exist: {url}", out)
+
+    def test_escaped_placeholder_is_a_filename(self) -> None:
+        code, out = self.body(r"See [missing](\{url\}).")
+        self.assertEqual(code, 1)
+        self.assertIn("target does not exist: {url}", out)
 
     def test_existing_extensionless_link_does_not_hide_a_broken_peer(self) -> None:
         code, out = self.body("See [license](../real-skill/LICENSE) and [bad](MISSING).")
@@ -88,6 +142,252 @@ class ContentLint(Tree):
         code, out = self.body("Run `../real-skill/gone.sh` first.")
         self.assertEqual(code, 1, "inline code paths are checked whatever the extension")
         self.assertIn("relative-link", out)
+
+    def test_quoted_inline_code_paths_may_contain_spaces(self) -> None:
+        code, out = self.body(
+            "Use `\"../real-skill/refs/my notes.md\"` and "
+            "`\"../real-skill/refs/MISSING FILE.md\"`."
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING FILE.md", out)
+        self.assertNotIn("my notes.md", out)
+
+    def test_inline_code_percent_escapes_are_literal(self) -> None:
+        code, out = self.body(
+            "Use `../real-skill/refs/literal%20name.md` and "
+            "`../real-skill/refs/MISSING%20LITERAL.md`."
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING%20LITERAL.md", out)
+        self.assertNotIn("literal%20name.md", out)
+
+    def test_inline_command_with_options_is_not_a_path(self) -> None:
+        self.assertEqual(
+            self.body("Run `../real-skill/run.sh --check`.")[0],
+            0,
+        )
+
+    def test_unquoted_spaced_inline_content_is_not_a_path(self) -> None:
+        self.assertEqual(
+            self.body("Use `../real-skill/refs/MISSING FILE.md`.")[0],
+            0,
+        )
+
+    def test_multiple_quoted_tokens_are_not_one_path(self) -> None:
+        cases = (
+            '`"../real-skill/LICENSE" "../MISSING.md"`',
+            "`'../real-skill/LICENSE' '../MISSING.md'`",
+        )
+        for body in cases:
+            with self.subTest(body=body):
+                self.assertEqual(self.body(body)[0], 0)
+
+    def test_inline_code_delimiters_remain_part_of_the_filename(self) -> None:
+        code, out = self.body(
+            "Use `../real-skill/refs/my?notes.md`, "
+            "`../real-skill/refs/my#notes.md`, "
+            "`../real-skill/refs/gone?notes.md`, and "
+            "`../real-skill/refs/gone#notes.md`."
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("gone?notes.md", out)
+        self.assertIn("gone#notes.md", out)
+        self.assertNotIn("my?notes.md", out)
+        self.assertNotIn("my#notes.md", out)
+
+    def test_markdown_examples_inside_inline_code_are_ignored(self) -> None:
+        body = (
+            "Use `[inline](MISSING-INLINE-EXAMPLE.svg)` and "
+            "`[reference]: MISSING-REFERENCE-EXAMPLE.svg`; "
+            "see [real](MISSING-REAL.svg)."
+        )
+        code, out = self.body(body)
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-REAL.svg", out)
+        self.assertNotIn("MISSING-INLINE-EXAMPLE.svg", out)
+        self.assertNotIn("MISSING-REFERENCE-EXAMPLE.svg", out)
+
+    def test_even_length_code_span_hides_markdown_examples(self) -> None:
+        body = (
+            "Use ``[example](MISSING-DOUBLE-SPAN.svg)`` and "
+            "see [real](MISSING-REAL.svg)."
+        )
+        code, out = self.body(body)
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-REAL.svg", out)
+        self.assertNotIn("MISSING-DOUBLE-SPAN.svg", out)
+
+    def test_even_length_code_span_still_checks_a_filesystem_path(self) -> None:
+        code, out = self.body("Use ``../real-skill/refs/gone.svg``.")
+        self.assertEqual(code, 1)
+        self.assertIn("../real-skill/refs/gone.svg", out)
+
+    def test_escaped_backticks_do_not_hide_a_real_link(self) -> None:
+        code, out = self.body(r"Use \`[real](MISSING-ESCAPED-TICKS.svg)\`.")
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-ESCAPED-TICKS.svg", out)
+
+    def test_multiline_code_span_hides_markdown_examples(self) -> None:
+        body = (
+            "Use ``code\n"
+            "[example](MISSING-MULTILINE-SPAN.svg)\n"
+            "code`` and see [real](MISSING-REAL.svg)."
+        )
+        code, out = self.body(body)
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-REAL.svg", out)
+        self.assertNotIn("MISSING-MULTILINE-SPAN.svg", out)
+
+    def test_link_after_multiline_code_span_reports_its_own_line(self) -> None:
+        code, out = self.body(
+            "Prefix ``code\ncontinued`` then [bad](MISSING-AFTER-CODE.svg)"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("SKILL.md:7: relative-link", out)
+
+    def test_links_after_multiline_link_syntax_report_their_lines(self) -> None:
+        code, out = self.body(
+            "[first](\nMISSING-FIRST.svg\n)\n"
+            "[second](MISSING-SECOND.svg)"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("SKILL.md:6: relative-link", out)
+        self.assertIn("SKILL.md:9: relative-link", out)
+
+    def test_code_path_inside_multiline_link_label_reports_its_line(self) -> None:
+        code, out = self.body(
+            "[label\n`../MISSING-NESTED-LABEL.md`](https://example.com)"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("SKILL.md:7: relative-link", out)
+
+    def test_skill_after_multiline_code_span_reports_its_own_line(self) -> None:
+        code, out = self.body(
+            "Prefix ``code\ncontinued`` then **fake-skill** skill."
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("SKILL.md:7: sibling-skill", out)
+
+    def test_nested_multiline_tokens_advance_the_line_once(self) -> None:
+        cases = (
+            "[``code\ncontinued``](https://example.com) then "
+            "**fake-skill** skill.",
+            "[![alt\ncontinued](../real-skill/LICENSE)](https://example.com) "
+            "then **fake-skill** skill.",
+        )
+        for body in cases:
+            with self.subTest(body=body):
+                code, out = self.body(body)
+                self.assertEqual(code, 1)
+                self.assertIn("SKILL.md:7: sibling-skill", out)
+
+    def test_inline_code_path_inside_image_alt_is_checked(self) -> None:
+        code, out = self.body(
+            "![`../MISSING-IN-ALT.md`](../real-skill/LICENSE)"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("../MISSING-IN-ALT.md", out)
+
+    def test_spaced_inline_code_path_inside_image_alt_is_checked(self) -> None:
+        code, out = self.body(
+            "![`\"../MISSING IMAGE ALT.md\"`](../real-skill/LICENSE)"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("../MISSING IMAGE ALT.md", out)
+
+    def test_skill_reference_inside_image_alt_is_checked(self) -> None:
+        code, out = self.body(
+            "![Use the **fake-skill** skill.](../real-skill/LICENSE)"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("sibling-skill", out)
+
+    def test_multiline_image_alt_skill_reports_its_own_line(self) -> None:
+        code, out = self.body(
+            "![alt\nUse the **fake-skill** skill.](../real-skill/LICENSE)"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("SKILL.md:7: sibling-skill", out)
+
+    def test_code_spans_stop_at_markdown_block_boundaries(self) -> None:
+        cases = {
+            "blank": "Use `open\n\n[real](MISSING-BLANK.svg)`",
+            "list": "- Start `open\n- [real](MISSING-LIST.svg)`",
+            "heading": "# Start `open\n[real](MISSING-HEADING.svg)`",
+        }
+        for name, body in cases.items():
+            with self.subTest(name=name):
+                code, out = self.body(body)
+                self.assertEqual(code, 1)
+                self.assertIn(f"MISSING-{name.upper()}.svg", out)
+
+    def test_lazy_blockquote_continuation_stays_in_its_inline_block(self) -> None:
+        code, out = self.body(
+            "> Start `open\n[example](MISSING-LAZY-QUOTE.svg)`"
+        )
+        self.assertEqual(code, 0, out)
+
+    def test_commonmark_block_boundaries_end_unmatched_code_spans(self) -> None:
+        cases = {
+            "setext": (
+                "Use `open\nHeading\n=======\n\n"
+                "[bad](MISSING-SETEXT.svg)"
+            ),
+            "thematic": (
+                "Use `open\n\n***\n\n"
+                "[bad](MISSING-THEMATIC.svg)"
+            ),
+            "indented": (
+                "Use `open\n\n    [hidden](MISSING-HIDDEN.svg)\n\n"
+                "[bad](MISSING-INDENTED.svg)"
+            ),
+            "html": (
+                "<div>\n[hidden](MISSING-HIDDEN.svg)\n</div>\n\n"
+                "[bad](MISSING-HTML.svg)"
+            ),
+        }
+        for name, body in cases.items():
+            with self.subTest(name=name):
+                code, out = self.body(body)
+                self.assertEqual(code, 1)
+                self.assertIn(f"MISSING-{name.upper()}.svg", out)
+                self.assertNotIn("MISSING-HIDDEN.svg", out)
+
+    def test_noninterrupting_ordered_marker_stays_in_its_inline_block(self) -> None:
+        code, out = self.body(
+            "Use `open\n2. [example](MISSING-ORDERED.svg)`"
+        )
+        self.assertEqual(code, 0, out)
+
+    def test_line_leading_triple_code_span_is_not_a_fence(self) -> None:
+        body = (
+            "```[example](MISSING-TRIPLE-SPAN.svg)```\n"
+            "See [real](MISSING-REAL.svg)."
+        )
+        code, out = self.body(body)
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-REAL.svg", out)
+        self.assertNotIn("MISSING-TRIPLE-SPAN.svg", out)
+
+    def test_unequal_code_span_delimiters_do_not_create_a_path(self) -> None:
+        body = (
+            "Use `../real-skill/refs/gone.md`` as literal prose; "
+            "see [real](MISSING-REAL.svg)."
+        )
+        code, out = self.body(body)
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-REAL.svg", out)
+        self.assertNotIn("gone.md", out)
+
+    def test_code_span_mask_does_not_join_a_link_destination(self) -> None:
+        body = (
+            "Use [label]`code`(MISSING-JOINED.svg) and "
+            "see [real](MISSING-REAL.svg)."
+        )
+        code, out = self.body(body)
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-REAL.svg", out)
+        self.assertNotIn("MISSING-JOINED.svg", out)
 
     def test_resolving_link_passes(self) -> None:
         self.assertEqual(self.body("See `../real-skill/SKILL.md`.")[0], 0)
@@ -152,7 +452,12 @@ class ContentLint(Tree):
         self.assertIn("gone:bar.md", out)
         self.assertNotIn("foo:bar.md", out)
 
-    def test_escaped_delimiters_remain_part_of_the_filename(self) -> None:
+    def test_encoded_null_reports_a_finding_instead_of_crashing(self) -> None:
+        code, out = self.body("See [bad](references/gone%00.svg).")
+        self.assertEqual(code, 1)
+        self.assertIn("relative-link", out)
+
+    def test_escaped_delimiters_still_have_uri_semantics(self) -> None:
         code, out = self.body(
             r"See [hash](../real-skill/refs/my\#notes.md), "
             r"[query](../real-skill/refs/my\?notes.md), "
@@ -160,8 +465,7 @@ class ContentLint(Tree):
             r"[bad-query](../real-skill/refs/gone\?notes.md)."
         )
         self.assertEqual(code, 1)
-        self.assertIn("gone#notes.md", out)
-        self.assertIn("gone?notes.md", out)
+        self.assertIn("target does not exist: ../real-skill/refs/gone", out)
         self.assertNotIn("my#notes.md", out)
         self.assertNotIn("my?notes.md", out)
 
@@ -183,6 +487,15 @@ class ContentLint(Tree):
         self.assertEqual(code, 1)
         self.assertIn("references/MISSING.svg", out)
         self.assertNotIn("../real-skill/LICENSE", out)
+
+    def test_duplicate_reference_definition_targets_are_checked(self) -> None:
+        code, out = self.body(
+            "[x]: ../real-skill/LICENSE\n"
+            "[x]: references/MISSING-DUPLICATE.svg\n\n"
+            "See [x]."
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("references/MISSING-DUPLICATE.svg", out)
 
     def test_angle_reference_targets_with_spaces_are_checked(self) -> None:
         code, out = self.body(
@@ -208,6 +521,109 @@ class ContentLint(Tree):
         self.assertIn("references/MISSING.svg", out)
         self.assertNotIn("../real-skill/LICENSE", out)
 
+    def test_defined_reference_link_precedes_a_literal_parenthesis(self) -> None:
+        body = (
+            "[bar]: ../real-skill/LICENSE\n\n"
+            "Use [foo][bar](MISSING-LITERAL.svg) and "
+            "see [real](MISSING-REAL.svg)."
+        )
+        code, out = self.body(body)
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-REAL.svg", out)
+        self.assertNotIn("MISSING-LITERAL.svg", out)
+
+    def test_collapsed_and_nested_reference_links_precede_parentheses(self) -> None:
+        body = (
+            "[bar]: ../real-skill/LICENSE\n\n"
+            "Use [bar][](MISSING-COLLAPSED.svg), "
+            "[foo [nested]][bar](MISSING-NESTED-REFERENCE.svg), and "
+            "[real](MISSING-REAL.svg)."
+        )
+        code, out = self.body(body)
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-REAL.svg", out)
+        self.assertNotIn("MISSING-COLLAPSED.svg", out)
+        self.assertNotIn("MISSING-NESTED-REFERENCE.svg", out)
+
+    def test_empty_text_reference_links_precede_parentheses(self) -> None:
+        body = (
+            "[bar]: ../real-skill/LICENSE\n\n"
+            "Use [][bar](MISSING-EMPTY.svg), "
+            "![][bar](MISSING-EMPTY-IMAGE.svg), and "
+            "[real](MISSING-REAL.svg)."
+        )
+        code, out = self.body(body)
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-REAL.svg", out)
+        self.assertNotIn("MISSING-EMPTY.svg", out)
+        self.assertNotIn("MISSING-EMPTY-IMAGE.svg", out)
+
+    def test_reference_chain_leaves_the_final_inline_link_active(self) -> None:
+        body = (
+            "[baz]: ../real-skill/LICENSE\n"
+            "[bar]: ../real-skill/LICENSE\n\n"
+            "Use [foo][baz][bar](MISSING-FINAL-INLINE.svg)."
+        )
+        code, out = self.body(body)
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-FINAL-INLINE.svg", out)
+
+    def test_longer_reference_chains_follow_renderer_precedence(self) -> None:
+        definition = "[a]: ../real-skill/LICENSE\n\n"
+        code, out = self.body(
+            definition + "Use [x][a][a][a](MISSING-LITERAL.svg)."
+        )
+        self.assertEqual(code, 0, out)
+
+        code, out = self.body(
+            definition + "Use [x][a][a][a][a](MISSING-ACTIVE.svg)."
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-ACTIVE.svg", out)
+
+    def test_ordered_list_continuation_reference_definition_is_checked(self) -> None:
+        code, out = self.body(
+            "10. item\n\n"
+            "    [existing]: ../real-skill/LICENSE\n"
+            "    [missing]: MISSING-ORDERED-CONT.svg"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-ORDERED-CONT.svg", out)
+        self.assertNotIn("../real-skill/LICENSE", out)
+
+    def test_bullet_list_continuation_reference_definition_is_checked(self) -> None:
+        code, out = self.body(
+            "-    item\n\n"
+            "     [existing]: ../real-skill/LICENSE\n"
+            "     [missing]: MISSING-BULLET-CONT.svg"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-BULLET-CONT.svg", out)
+        self.assertNotIn("../real-skill/LICENSE", out)
+
+    def test_reference_label_rejects_unescaped_open_bracket(self) -> None:
+        self.assertEqual(self.body("[draft[note]: MISSING-INVALID-LABEL.svg")[0], 0)
+        code, out = self.body(r"[draft\[note]: MISSING-ESCAPED-LABEL.svg")
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-ESCAPED-LABEL.svg", out)
+
+    def test_reference_label_requires_non_whitespace_text(self) -> None:
+        self.assertEqual(self.body("[   ]: MISSING-WHITESPACE-LABEL.svg")[0], 0)
+        code, out = self.body("[x]: MISSING-SINGLE-LABEL.svg")
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-SINGLE-LABEL.svg", out)
+
+    def test_long_reference_labels_do_not_hide_destinations(self) -> None:
+        valid = "v" * 999
+        invalid = "i" * 1000
+        code, out = self.body(
+            f"[{valid}]: MISSING-999-LABEL.svg\n"
+            f"[{invalid}]: MISSING-1000-LABEL.svg"
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-999-LABEL.svg", out)
+        self.assertIn("MISSING-1000-LABEL.svg", out)
+
     def test_reference_definition_inside_blockquote_fence_is_ignored(self) -> None:
         body = "> ```markdown\n> [example]: MISSING\n> ```"
         self.assertEqual(self.body(body)[0], 0)
@@ -215,6 +631,117 @@ class ContentLint(Tree):
     def test_reference_definition_inside_list_fence_is_ignored(self) -> None:
         body = "- ```markdown\n  [example]: MISSING\n  ```"
         self.assertEqual(self.body(body)[0], 0)
+
+    def test_blockquote_fence_does_not_hide_following_prose(self) -> None:
+        body = "> ```markdown\n> example\n\n[bad]: MISSING.svg\n```"
+        code, out = self.body(body)
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING.svg", out)
+
+    def test_list_fence_does_not_hide_following_prose(self) -> None:
+        body = "- ```markdown\n  example\n\n[bad]: MISSING.svg\n```"
+        code, out = self.body(body)
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING.svg", out)
+
+    def test_container_boundary_implicitly_closes_a_fence(self) -> None:
+        cases = (
+            "> ```markdown\n> example\n\nOutside.",
+            "- ```markdown\n  example\n\nOutside.",
+        )
+        for body in cases:
+            with self.subTest(body=body):
+                code, out = self.body(body)
+                self.assertEqual(code, 0, out)
+
+    def test_unclosed_container_fence_at_eof_is_reported(self) -> None:
+        cases = (
+            "> ```markdown\n> hidden\n> Use **fake-skill** skill.",
+            "- ```markdown\n  hidden\n  Use **fake-skill** skill.",
+        )
+        for body in cases:
+            with self.subTest(body=body):
+                code, out = self.body(body)
+                self.assertEqual(code, 1)
+                self.assertIn("unclosed-fence", out)
+
+    def test_bullet_list_continuation_fence_is_ignored(self) -> None:
+        body = "- item\n\n  ```markdown\n  [example]: MISSING\n  ```"
+        self.assertEqual(self.body(body)[0], 0)
+
+    def test_bullet_list_continuation_fence_ends_on_deindent(self) -> None:
+        body = "- item\n\n  ```markdown\n  example\n\n[bad]: MISSING-BULLET.svg"
+        code, out = self.body(body)
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-BULLET.svg", out)
+        self.assertNotIn("unclosed-fence", out)
+
+    def test_ordered_list_continuation_fence_is_ignored(self) -> None:
+        body = "1. item\n\n   ```markdown\n   [example]: MISSING\n   ```"
+        self.assertEqual(self.body(body)[0], 0)
+
+    def test_ordered_list_continuation_fence_ends_on_deindent(self) -> None:
+        body = "1. item\n\n   ```markdown\n   example\n\n[bad]: MISSING-ORDERED.svg"
+        code, out = self.body(body)
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-ORDERED.svg", out)
+        self.assertNotIn("unclosed-fence", out)
+
+    def test_list_blockquote_fence_keeps_reference_examples_hidden(self) -> None:
+        body = "- > ```markdown\n  > [example]: MISSING\n  > ```"
+        self.assertEqual(self.body(body)[0], 0)
+
+    def test_blockquote_list_fence_keeps_reference_examples_hidden(self) -> None:
+        body = "> - ```markdown\n>   [example]: MISSING\n>   ```"
+        self.assertEqual(self.body(body)[0], 0)
+
+    def test_bullet_fence_uses_its_full_padding_width(self) -> None:
+        hidden = "-  ```markdown\n   [example]: MISSING\n   ```"
+        self.assertEqual(self.body(hidden)[0], 0)
+
+        exposed = "-  ```markdown\n   example\n  [bad]: MISSING.svg\n  ```"
+        code, out = self.body(exposed)
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING.svg", out)
+
+    def test_ordered_fence_uses_its_full_padding_width(self) -> None:
+        hidden = "1.  ```markdown\n    [example]: MISSING\n    ```"
+        self.assertEqual(self.body(hidden)[0], 0)
+
+        exposed = "1.  ```markdown\n    example\n   [bad]: MISSING.svg\n   ```"
+        code, out = self.body(exposed)
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING.svg", out)
+
+    def test_tabbed_bullet_fence_uses_the_expanded_content_column(self) -> None:
+        hidden = "-\t```markdown\n    [example]: MISSING\n    ```"
+        self.assertEqual(self.body(hidden)[0], 0)
+
+        exposed = "-\t```markdown\n    example\n   [bad]: MISSING-TAB.svg\n   ```"
+        code, out = self.body(exposed)
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-TAB.svg", out)
+
+    def test_tabbed_ordered_fence_uses_the_expanded_content_column(self) -> None:
+        hidden = "1.\t```markdown\n    [example]: MISSING\n    ```"
+        self.assertEqual(self.body(hidden)[0], 0)
+
+        exposed = "1.\t```markdown\n    example\n   [bad]: MISSING-TAB.svg\n   ```"
+        code, out = self.body(exposed)
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-TAB.svg", out)
+
+    def test_five_space_bullet_padding_does_not_create_a_fence(self) -> None:
+        body = "-     ```markdown\n  [bad]: MISSING-SHORT.svg\n  ```"
+        code, out = self.body(body)
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-SHORT.svg", out)
+
+    def test_five_space_ordered_padding_does_not_create_a_fence(self) -> None:
+        body = "1.     ```markdown\n   [bad]: MISSING-SHORT.svg\n   ```"
+        code, out = self.body(body)
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-SHORT.svg", out)
 
     def test_trailing_prose_does_not_form_a_reference_definition(self) -> None:
         body = (
@@ -244,6 +771,54 @@ class ContentLint(Tree):
         self.assertIn("MISSING-DOUBLE", out)
         self.assertIn("MISSING-SINGLE", out)
         self.assertIn("MISSING-PAREN", out)
+
+    def test_inline_angle_destination_requires_space_before_title(self) -> None:
+        for title in ('"Title"', "'Title'", "(Title)"):
+            with self.subTest(title=title):
+                adjacent = f"See [invalid](<MISSING-ADJACENT.svg>{title})."
+                self.assertEqual(self.body(adjacent)[0], 0)
+
+                spaced = f"See [valid](<MISSING-SPACED.svg> {title})."
+                code, out = self.body(spaced)
+                self.assertEqual(code, 1)
+                self.assertIn("MISSING-SPACED.svg", out)
+
+    def test_inline_destination_allows_leading_and_trailing_whitespace(self) -> None:
+        body = (
+            "See [existing]( <../real-skill/LICENSE> ) and "
+            "[missing]( <MISSING-PADDED.svg> )."
+        )
+        code, out = self.body(body)
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-PADDED.svg", out)
+        self.assertNotIn("../real-skill/LICENSE", out)
+
+    def test_inline_angle_destination_rejects_unescaped_open_angle(self) -> None:
+        body = (
+            "See [invalid](<MISSING<INVALID.svg>) and "
+            r"[escaped](<MISSING\<ESCAPED.svg>)."
+        )
+        code, out = self.body(body)
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING<ESCAPED.svg", out)
+        self.assertNotIn("MISSING<INVALID.svg", out)
+
+    def test_reference_angle_destination_requires_space_before_title(self) -> None:
+        for title in ('"Title"', "'Title'", "(Title)"):
+            with self.subTest(title=title):
+                adjacent = f"[invalid]: <MISSING-ADJACENT.svg>{title}"
+                self.assertEqual(self.body(adjacent)[0], 0)
+
+                spaced = f"[valid]: <MISSING-SPACED.svg> {title}"
+                code, out = self.body(spaced)
+                self.assertEqual(code, 1)
+                self.assertIn("MISSING-SPACED.svg", out)
+
+    def test_reference_angle_destination_rejects_unescaped_open_angle(self) -> None:
+        self.assertEqual(self.body("[invalid]: <MISSING<INVALID.svg>")[0], 0)
+        code, out = self.body(r"[escaped]: <MISSING\<ESCAPED.svg>")
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING<ESCAPED.svg", out)
 
     def test_escaped_closing_marker_is_ignored_but_a_real_peer_fires(self) -> None:
         code, out = self.body(r"See [example\](ESCAPED-CLOSE) and [bad](MISSING).")
@@ -343,18 +918,6 @@ class FenceHandling(Tree):
     def test_scripts_parse(self) -> None:
         for script in (CONTENT, FRONTMATTER):
             compile(script.read_text(encoding="utf-8"), str(script), "exec")
-
-    def test_only_one_function_reads_the_fence_rule(self) -> None:
-        import ast
-
-        tree = ast.parse(CONTENT.read_text(encoding="utf-8"))
-        readers = [
-            fn.name
-            for fn in ast.walk(tree)
-            if isinstance(fn, ast.FunctionDef)
-            and any(isinstance(n, ast.Name) and n.id == "FENCE" for n in ast.walk(fn))
-        ]
-        self.assertEqual(readers, ["scan_blocks"], "a second fence walker will drift from the first")
 
     def test_four_backtick_fence_survives_an_inner_fence(self) -> None:
         code, out = self.body("````\n```\nSee [x](../gone/n.md).\n```\n````")
