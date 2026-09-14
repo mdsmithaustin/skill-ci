@@ -19,7 +19,9 @@ Activation wires one target repository into the shared skill testing home. It wr
 
 1. Workflow. Write `.github/workflows/skill-checks.yml` in the target, or add the `skills` job to an existing lint workflow. Reference the reusable workflow. Do not copy its body. Resolve the full commit SHA of the published skill-ci revision before writing the caller. Write that SHA in `uses`. Keep every existing `with` input that the target uses. Remove `skill-ci-ref` when present because the reusable workflow accepts it only for compatibility and ignores it. Set `skills-dir` to `SKILLS_DIR` and `evals-dir` to `EVALS_DIR`. Set `content-link-exceptions-file` only when the target has the reviewed policy described in `README.md`. Omit `evals-dir` only for a target whose manifests stay inside the skills tree. The job fails when `evals-dir` names a directory that does not exist.
 
-   Inspect `.github/dependabot.yml` and `.github/dependabot.yaml`. Keep an existing `github-actions` update entry for directory `/` unchanged. Add one only when neither file has it. Preserve the existing file spelling and every other ecosystem, schedule, group, and label.
+   Inspect `.github/dependabot.yml` and `.github/dependabot.yaml`. Reuse an existing `github-actions` update entry for directory `/` only when it covers the default branch, permits version-update PRs, and includes `mdsmithaustin/skill-ci`. Check `target-branch`, `open-pull-requests-limit`, and any `allow` or `ignore` rules. A matching ecosystem and directory alone do not prove updates are enabled. Add an entry when neither file has one. Preserve the existing file spelling and unrelated ecosystems, schedules, groups, and labels.
+
+   Repair a rule scoped only to `mdsmithaustin/skill-ci` when activation authorizes that change. If a broader or intentional policy blocks updates, leave it intact and report the exact blocker. Do not claim automatic updates are active until an eligible default-branch entry includes this dependency.
 
    ```yaml
    version: 2

@@ -1,11 +1,1 @@
-# The one place the behavioral runner is pinned. The reusable workflow, the
-# mise tasks, and the activation steps all read this file.
-#
-# It points at the fork github.com/mdsmithaustin/skill-eval-harness. The fork
-# carries five patches on branch mds/blind-judge-and-codex-rollout: blind judge
-# payload, Codex rollout-file skill-load detection, skill mount keyed by
-# directory name, lenient parsing of an agent CLI's own event stream, and
-# manifest resolution for a manifest under evals/<skill>, outside the skills
-# tree. The SHA is that branch's head. Move it only after the fork's tests pass
-# at the new commit and this repository's tests pass against it.
-git+https://github.com/mdsmithaustin/skill-eval-harness.git@687094c397a4fc3962ecc08fb986c1e3f71cb1c2
+git+https://github.com/mdsmithaustin/skill-eval-harness.git@c2a1735983fd7827491ad4d89f9bebe9e8e229a0
