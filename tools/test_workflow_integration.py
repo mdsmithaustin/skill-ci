@@ -178,7 +178,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
         self.assertEqual(invalid.returncode, 2, invalid.stdout + invalid.stderr)
         self.assertIn("version", invalid.stderr)
 
-    @unittest.skipUnless(shutil.which("mise"), "requires mise")
+    @unittest.skipUnless(shutil.which("mise") and shutil.which("dash"), "requires mise and dash")
     def test_mise_lint_task_applies_the_optional_link_policy(self) -> None:
         source = self.package()
         with (source / "SKILL.md").open("a") as skill:
@@ -189,6 +189,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
             "inline_link_exceptions": {"example/SKILL.md": ["output.md"]},
         }))
         self.environment["MISE_TRUSTED_CONFIG_PATHS"] = os.pathsep.join((str(self.root), str(REPOSITORY)))
+        self.environment["MISE_UNIX_DEFAULT_INLINE_SHELL_ARGS"] = f"{shutil.which('dash')} -c"
         tools = tomllib.loads((REPOSITORY / "mise.toml").read_text())["tools"]
         (self.root / "mise.toml").write_text(
             "[tools]\n"

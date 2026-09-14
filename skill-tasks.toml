@@ -18,6 +18,7 @@
 
 [skill-lint]
 description = "Frontmatter, links, references, port substitutions (model-free)"
+shell = "bash -c"
 run = '''
 set -euo pipefail
 : "${SKILL_CI:?set SKILL_CI to the skill-ci checkout}"
