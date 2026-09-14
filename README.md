@@ -18,7 +18,7 @@ Why this repository is shaped this way, and when to abandon the dependency it pi
 
 ## Local tasks
 
-`skill-tasks.toml` is a mise task file. A target includes it or copies its tables. Every task reads `SKILL_CI` (this checkout) and `SKILLS_DIR` (default `skills`).
+`skill-tasks.toml` is a mise task file. A target includes it or copies its tables. Every task reads `SKILL_CI` (this checkout) and `SKILLS_DIR` (default `skills`). A target whose manifests live outside the skills tree sets `EVALS_DIR`, and every task that reads a manifest honors it. Unset, each one searches the skills tree as before. A task fails rather than checking nothing when `EVALS_DIR` names a directory that does not exist.
 
 | Task | Runs where | What it does |
 | --- | --- | --- |
