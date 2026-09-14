@@ -114,8 +114,72 @@ class ContentLint(Tree):
         )
         code, out = run(CONTENT, self.root, "--link-exceptions-file", str(policy))
         self.assertEqual(code, 1)
-        self.assertNotIn("SKILL.md:5", out)
-        self.assertIn("SKILL.md:6", out)
+        self.assertNotIn("SKILL.md:6", out)
+        self.assertIn("SKILL.md:7", out)
+
+    def test_inline_link_exception_is_scoped_to_its_source_file(self) -> None:
+        policy = self.link_exceptions(
+            """{
+  "version": 1,
+  "inline_link_exceptions": {
+    "a/SKILL.md": ["MISSING.md"]
+  }
+}
+"""
+        )
+        self.skill("a", 'name: a\ndescription: "d"', "See [allowed](MISSING.md).")
+        self.skill("b", 'name: b\ndescription: "d"', "See [blocked](MISSING.md).")
+        code, out = run(CONTENT, self.root, "--link-exceptions-file", str(policy))
+        self.assertEqual(code, 1)
+        self.assertNotIn("a/SKILL.md", out)
+        self.assertIn("b/SKILL.md", out)
+
+    def test_inline_link_exception_does_not_allow_images_or_references(self) -> None:
+        policy = self.link_exceptions(
+            """{
+  "version": 1,
+  "inline_link_exceptions": {
+    "a/SKILL.md": ["MISSING-LINK.md"]
+  }
+}
+"""
+        )
+        self.skill(
+            "a",
+            'name: a\ndescription: "d"',
+            "See [allowed](MISSING-LINK.md).\n"
+            "See ![image](MISSING-LINK.md).\n\n"
+            "[reference]: MISSING-REFERENCE.md\n"
+            "See [reference].",
+        )
+        code, out = run(CONTENT, self.root, "--link-exceptions-file", str(policy))
+        self.assertEqual(code, 1)
+        self.assertIn("MISSING-LINK.md", out)
+        self.assertIn("MISSING-REFERENCE.md", out)
+
+    def test_link_exceptions_reject_an_unknown_version(self) -> None:
+        policy = self.link_exceptions(
+            """{
+  "version": 2,
+  "inline_link_exceptions": {}
+}
+"""
+        )
+        code, _out = run(CONTENT, self.root, "--link-exceptions-file", str(policy))
+        self.assertEqual(code, 2)
+
+    def test_link_exceptions_reject_a_noncanonical_source_path(self) -> None:
+        policy = self.link_exceptions(
+            """{
+  "version": 1,
+  "inline_link_exceptions": {
+    "a/../a/SKILL.md": ["MISSING.md"]
+  }
+}
+"""
+        )
+        code, _out = run(CONTENT, self.root, "--link-exceptions-file", str(policy))
+        self.assertEqual(code, 2)
 
     def test_multiline_explicit_placeholders_are_ignored(self) -> None:
         body = (

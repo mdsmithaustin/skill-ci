@@ -35,6 +35,11 @@ on:
         type: string
         required: false
         default: ''
+      content-link-exceptions-file:
+        description: optional path to a version-1 JSON file of exact missing direct inline Markdown links that are created at output time
+        type: string
+        required: false
+        default: ''
       evals-dir:
         description: directory holding eval manifests when they live outside the skills tree; the default searches the skills tree for backward compatibility
         type: string
@@ -129,13 +134,17 @@ jobs:
         env:
           SKILLS_DIR: ${{ inputs.skills-dir }}
           IGNORE_FILE: ${{ inputs.content-ignore-file }}
+          LINK_EXCEPTIONS_FILE: ${{ inputs.content-link-exceptions-file }}
         run: |
+          command=(python3 .skill-ci/tools/check-skill-content.py "$SKILLS_DIR")
           if [ -n "$IGNORE_FILE" ]; then
             ignore=$(grep -v '^[[:space:]]*#' "$IGNORE_FILE" | grep -v '^[[:space:]]*$' | paste -sd, -)
-            python3 .skill-ci/tools/check-skill-content.py "$SKILLS_DIR" --ignore "$ignore"
-          else
-            python3 .skill-ci/tools/check-skill-content.py "$SKILLS_DIR"
+            command+=(--ignore "$ignore")
           fi
+          if [ -n "$LINK_EXCEPTIONS_FILE" ]; then
+            command+=(--link-exceptions-file "$LINK_EXCEPTIONS_FILE")
+          fi
+          "${command[@]}"
 
   manifests:
     runs-on: ubuntu-latest

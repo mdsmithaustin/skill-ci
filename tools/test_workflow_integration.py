@@ -32,6 +32,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
             EVALS_DIR="",
             REQUIRE_MANIFESTS="false",
             INSTALLED_SKILLS_DIR="",
+            LINK_EXCEPTIONS_FILE="",
             RUNNER_LOG=str(self.log),
             RUNNER_EXIT="0",
         )
@@ -54,6 +55,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
             (REPOSITORY / ".github/workflows/skill-checks.yml").read_text(),
             Loader=yaml.BaseLoader,
         )
+        self.workflow = workflow
         self.steps = {
             step.get("name"): step
             for job in workflow["jobs"].values()
@@ -142,6 +144,19 @@ class WorkflowIntegrationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("not a directory", result.stdout)
         self.assertFalse(self.log.exists())
+
+    def test_link_exception_workflow_input_reaches_the_content_checker(self) -> None:
+        inputs = self.workflow["on"]["workflow_call"]["inputs"]
+        self.assertIn("content-link-exceptions-file", inputs)
+        step = self.steps["Skill links, references, and port substitutions"]
+        self.assertEqual(
+            step["env"]["LINK_EXCEPTIONS_FILE"],
+            "${{ inputs.content-link-exceptions-file }}",
+        )
+        self.assertIn(
+            'command+=(--link-exceptions-file "$LINK_EXCEPTIONS_FILE")',
+            step["run"],
+        )
 
     def package(self, name: str = "example") -> Path:
         package = self.root / self.environment["SKILLS_DIR"] / name

@@ -18,11 +18,12 @@ fence is itself a finding because it would otherwise hide the rest of the file.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Callable, Iterator
+from pathlib import Path, PurePosixPath
+from typing import Any, Callable, Iterator, Mapping
 from urllib.parse import unquote
 
 from markdown_it import MarkdownIt
@@ -60,6 +61,7 @@ def source_positioned(
             for token in created:
                 if token.type == token_type:
                     token.meta["source_offset"] = start
+                    token.meta["source_end"] = state.pos
                     source_newlines = state.src[start : state.pos].count("\n")
                     if token_type == "link_open":
                         represented = rendered_newlines(created)
@@ -110,6 +112,21 @@ class ParsedFile:
     duplicate_references: list[dict[str, Any]]
 
 
+@dataclass(frozen=True)
+class InlineLinkExceptions:
+    destinations_by_source: Mapping[PurePosixPath, frozenset[str]]
+
+    def permits(self, path: Path, raw_destination: str) -> bool:
+        try:
+            source = PurePosixPath(path.relative_to(ROOT).as_posix())
+        except ValueError:
+            return False
+        return raw_destination in self.destinations_by_source.get(source, frozenset())
+
+
+INLINE_LINK_EXCEPTIONS = InlineLinkExceptions({})
+
+
 CODE_PATH = re.compile(r"\.\.?/[^\s<>]+")
 QUOTED_CODE_PATH = re.compile(
     r'(?:"(?P<double>\.\.?/[^"\r\n<>]+)"|'
@@ -134,19 +151,99 @@ REFERENCE_PLACEHOLDER = re.compile(
 
 
 def protect_explicit_placeholders(text: str) -> str:
-    """Keep the suite's raw `{name}` destinations out of filesystem checks."""
-
     def replacement(match: re.Match[str]) -> str:
-        return match.group("space") + "placeholder:ignored"
+        space = match.group("space")
+        destination = match.group(0)[len(space) :]
+        if destination.startswith("<") and destination.endswith(">"):
+            replacement = "<" + same_length_placeholder_sentinel(
+                len(destination) - 2
+            ) + ">"
+        else:
+            replacement = same_length_placeholder_sentinel(len(destination))
+        return space + replacement
 
     text = INLINE_PLACEHOLDER.sub(replacement, text)
     return REFERENCE_PLACEHOLDER.sub(replacement, text)
+
+
+def same_length_placeholder_sentinel(length: int) -> str:
+    return "x:" + "x" * (length - 2)
+
+
+def raw_inline_destination(source: str, start: int, end: int) -> str | None:
+    text = source[start:end]
+    if not text.startswith("["):
+        return None
+    position = 0
+    depth = 0
+    while position < len(text):
+        char = text[position]
+        if char == "\\":
+            position += 2
+            continue
+        if char == "[":
+            depth += 1
+        elif char == "]":
+            depth -= 1
+            if depth == 0:
+                position += 1
+                break
+        position += 1
+    else:
+        return None
+    while position < len(text) and text[position].isspace():
+        position += 1
+    if position == len(text) or text[position] != "(":
+        return None
+    position += 1
+    while position < len(text) and text[position].isspace():
+        position += 1
+    destination_start = position
+    if position < len(text) and text[position] == "<":
+        position += 1
+        while position < len(text):
+            if text[position] == "\\":
+                position += 2
+                continue
+            if text[position] == ">":
+                return text[destination_start : position + 1]
+            position += 1
+        return None
+    depth = 0
+    while position < len(text):
+        char = text[position]
+        if char == "\\":
+            position += 2
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            if depth == 0:
+                return text[destination_start:position]
+            depth -= 1
+        elif char.isspace() and depth == 0:
+            return text[destination_start:position]
+        position += 1
+    return None
 
 
 def parse_file(path: Path) -> ParsedFile:
     text = path.read_text(encoding="utf-8")
     env: dict[str, Any] = {}
     tokens = MARKDOWN.parse(protect_explicit_placeholders(text), env)
+    for token in tokens:
+        if token.type != "inline":
+            continue
+        for child in token.children or []:
+            if child.type != "link_open":
+                continue
+            raw_destination = raw_inline_destination(
+                token.content,
+                int(child.meta.get("source_offset", 0)),
+                int(child.meta.get("source_end", 0)),
+            )
+            if raw_destination is not None:
+                child.meta["raw_destination"] = raw_destination
     references = env.get("references", {})
     return ParsedFile(
         path=path,
@@ -163,6 +260,53 @@ def relative_target(href: str, *, markdown: bool) -> str | None:
         return None
     target = unquote(source) if markdown else source
     return None if target.startswith("/") else target
+
+
+def load_inline_link_exceptions(path: Path | None) -> InlineLinkExceptions:
+    if path is None:
+        return InlineLinkExceptions({})
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as error:
+        raise ValueError(f"cannot read link exceptions file {path}: {error}") from error
+    except json.JSONDecodeError as error:
+        raise ValueError(f"invalid link exceptions JSON in {path}: {error.msg}") from error
+    if not isinstance(document, dict) or set(document) != {
+        "version",
+        "inline_link_exceptions",
+    }:
+        raise ValueError(
+            "link exceptions must contain only version and inline_link_exceptions"
+        )
+    if type(document["version"]) is not int or document["version"] != 1:
+        raise ValueError("link exceptions version must be 1")
+    entries = document["inline_link_exceptions"]
+    if not isinstance(entries, dict):
+        raise ValueError("inline_link_exceptions must be an object")
+    destinations_by_source: dict[PurePosixPath, frozenset[str]] = {}
+    for source, destinations in entries.items():
+        if not isinstance(source, str) or not source:
+            raise ValueError("link exception source paths must be nonempty strings")
+        source_path = PurePosixPath(source)
+        if (
+            source_path.as_posix() != source
+            or source_path.is_absolute()
+            or any(part in {".", ".."} for part in source_path.parts)
+        ):
+            raise ValueError(f"link exception source path is not root-relative: {source}")
+        if not isinstance(destinations, list) or not destinations:
+            raise ValueError(f"link exception destinations must be a nonempty list: {source}")
+        if any(
+            not isinstance(destination, str) or not destination
+            for destination in destinations
+        ):
+            raise ValueError(
+                f"link exception destinations must be nonempty strings: {source}"
+            )
+        if len(set(destinations)) != len(destinations):
+            raise ValueError(f"link exception destinations must not repeat: {source}")
+        destinations_by_source[source_path] = frozenset(destinations)
+    return InlineLinkExceptions(destinations_by_source)
 
 
 def inline_code_path(content: str) -> str | None:
@@ -242,7 +386,13 @@ def check_relative_links(parsed: ParsedFile) -> Iterator[Finding]:
                 href = child.attrGet(attribute) or ""
                 if href not in reference_hrefs:
                     finding = finding_for_target(parsed, line, href)
-                    if finding is not None:
+                    if finding is not None and not (
+                        child.type == "link_open"
+                        and INLINE_LINK_EXCEPTIONS.permits(
+                            parsed.path,
+                            str(child.meta.get("raw_destination", "")),
+                        )
+                    ):
                         yield finding
                 if child.type == "image" and child.children:
                     image_offset = int(child.meta.get("source_offset", 0)) + 2
@@ -377,17 +527,28 @@ def iter_markdown_files(root: Path) -> Iterator[Path]:
 
 
 def main() -> int:
-    global ROOT, IGNORE
+    global ROOT, IGNORE, INLINE_LINK_EXCEPTIONS
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--ignore",
         default="",
         help="comma-separated bolded names to never treat as skill references",
     )
+    ap.add_argument(
+        "--link-exceptions-file",
+        type=Path,
+        help="JSON file that allows exact missing direct inline Markdown links",
+    )
     ap.add_argument("root", nargs="?", default="skills")
     args = ap.parse_args()
     ROOT = Path(args.root)
     IGNORE = frozenset(n for n in args.ignore.split(",") if n)
+    try:
+        INLINE_LINK_EXCEPTIONS = load_inline_link_exceptions(
+            args.link_exceptions_file
+        )
+    except ValueError as error:
+        ap.error(str(error))
 
     findings: list[Finding] = []
     files_checked = 0
