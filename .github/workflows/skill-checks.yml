@@ -65,6 +65,21 @@ jobs:
         run: |
           echo "::error::strict-frontmatter is not implemented; the allowed-keys policy is tracked in skill-ci TODO.md"
           exit 1
+      - name: Local copies match the shared checkers
+        run: |
+          drift=0
+          for f in check-skill-frontmatter.py check-skill-content.py check-pii.py; do
+            if [ -f "tools/$f" ]; then
+              if cmp -s "tools/$f" ".skill-ci/tools/$f"; then
+                echo "tools/$f matches the shared copy"
+              else
+                echo "tools/$f has drifted from skill-ci's copy" >&2
+                drift=1
+              fi
+            fi
+          done
+          exit $drift
+
       - name: Reject PII
         env:
           SKILLS_DIR: ${{ inputs.skills-dir }}
