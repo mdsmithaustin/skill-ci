@@ -12,6 +12,10 @@ Why this repository is shaped this way, and when to abandon the dependency it pi
 
 3. One pinned external runner. `runner.lock` holds a single `git+https` spec pointing at github.com/mdsmithaustin/skill-eval-harness at one commit. The workflow, the mise tasks, and activation all read it. Behavioral runs (`skill-trigger`, `skill-run`) are operator-local: they drive the installed `claude` and `codex` binaries on the host's own logins, spend model budget, and never run in CI or as a pull request gate.
 
+An optional [package check](docs/packages.md) inventories every file in a skill and can compare it with an installed copy. It leaves the existing lint policies unchanged. The [evidence guide](docs/evidence.md) explains what format checks, package identity, installer probes, native activation, and paired runs can each establish.
+
+Set `package-check: true` in the reusable workflow caller to inspect package trees in CI. Set `require-manifests: true` to fail when the manifest job checks zero files. Both inputs default to false. An empty scaffolded manifest counts as a file and still skips the readiness audit.
+
 ## Activation flow
 
 `SKILL.md` is the contract; this is the shape. The agent locates this checkout and the target's skills directory, writes a caller workflow that references the reusable one, adds the `[env]` and `task_config.includes` lines to the target's `mise.toml`, installs the runner from `runner.lock` (or reports that the lock still says `PIN_ME`), scaffolds one empty manifest per skill with `tools/scaffold_manifest.py`, runs the model-free tasks, and stops with a report. It never runs a paid step, never writes a case, and never commits or pushes. Running it twice converges to the same state: existing manifests, jobs, and includes are kept.
@@ -23,6 +27,7 @@ Why this repository is shaped this way, and when to abandon the dependency it pi
 | Task | Runs where | What it does |
 | --- | --- | --- |
 | `skill-lint` | CI and local | Both checkers over `SKILLS_DIR` |
+| `skill-package` | CI when enabled, and local | Read-only package inventory, plus copy comparison when `INSTALLED_SKILLS_DIR` is set locally |
 | `skill-validate` | CI and local | `skill-benchmark validate --strict-leakage` on every manifest |
 | `skill-audit` | CI and local | `skill-benchmark audit-manifest --fail-on-blockers` on every manifest |
 | `skill-trigger <skill>` | Local only | Trigger matrix on Claude and Codex, host logins, paid |
@@ -50,6 +55,8 @@ Seventh. Make the judge count, and make it say why. On a prose or judgement skil
 
 Eighth. Prefer the calibration you already have to a new dependency. The harness ships judge alignment against human labels, judge robustness probes with negative controls, multi-judge panels with quorum, and repeated judging. Before adopting an external scoring framework, check whether the thing it improves is actually your bottleneck. Resolution and variance in the score are rarely the limit. Case discrimination and sample size usually are.
 
+For review and repair skills, also include a healthy control that should remain unchanged. The [evidence guide](docs/evidence.md#author-cases-that-can-distinguish-behavior) explains how that control catches an audit that criticizes every input, and how to separate case definitions from executed results.
+
 ## Layout
 
 ```text
@@ -62,18 +69,25 @@ skill-tasks.toml                  mise tasks a target includes
 mise.toml                         this repository's own tools and tasks
 lefthook.yml                      pre-commit rejects PII and runs the unit tests
 .github/workflows/skill-checks.yml  reusable workflow_call workflow
+.github/workflows/test.yml         Linux and macOS unit tests on pull requests and main
 .github/dependabot.yml            weekly actions and pip updates
+docs/packages.md                 package inspection and copy comparison
+docs/evidence.md                 evidence limits and healthy controls
+docs/harvest-skill-optimizer.md   source and disposition of the peer-repo imports
 tools/check-skill-frontmatter.py  verbatim from mds-pstack
 tools/check-skill-content.py      verbatim from mds-pstack
 tools/check-pii.py                verbatim from mds-pstack
+tools/check-skill-package.py      read-only package inventory and copy comparison
 tools/scaffold_manifest.py        writes an empty manifest per skill, either layout
-tools/test_*.py                   unit tests for the three scripts
+tools/test_*.py                   checker, scaffold, and workflow regression tests
 tools/requirements.txt            hashed PyYAML pin for the checkers
 tools/claude-project-only         Claude with user skills hidden, writes allowed
 tools/codex-project-only          Codex with user skills hidden, login kept
 ```
 
 ## Running the tests here
+
+The repository test workflow runs the same `mise run test` command on Linux and macOS. It is separate from the reusable consumer workflow and does not call a model.
 
 `mise run test`, or without mise:
 
