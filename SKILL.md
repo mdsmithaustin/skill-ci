@@ -11,6 +11,7 @@ Activation wires one target repository into the shared skill testing home. It wr
 
 - `SKILL_CI` is the absolute path of the directory holding this file. Every command below uses it.
 - `SKILLS_DIR` is the target's skills directory: the one whose children each hold a `SKILL.md`. Default `skills`. If the target has no such directory, stop and say so.
+- `EVALS_DIR` is where the target's manifests live. Default `evals` at the repository root, outside `SKILLS_DIR`. A skill installer copies a skill directory verbatim, so a manifest kept beside a skill ships that skill's trigger queries, expected answers, and oracle scripts to everyone who installs it. Keep manifests out of `SKILLS_DIR` unless the target already has them there, in which case leave them where they are and skip `EVALS_DIR` everywhere below.
 - Read `$SKILL_CI/runner.lock`. Its last line is the runner spec. If the spec ends in `PIN_ME`, the fork has no pin yet. Step 3 reports that instead of installing.
 
 ## Steps
@@ -30,20 +31,24 @@ Activation wires one target repository into the shared skill testing home. It wr
        uses: mdsmithaustin/skill-ci/.github/workflows/skill-checks.yml@main
        with:
          skills-dir: skills
+         evals-dir: evals
          skill-ci-ref: main
    ```
 
-   Set `skills-dir` to `SKILLS_DIR`. Replace `main` in both places with the same tag or SHA once one exists.
+   Set `skills-dir` to `SKILLS_DIR` and `evals-dir` to `EVALS_DIR`. Omit `evals-dir` only for a target whose manifests stay inside the skills tree; the job then searches that tree, as it always did. The job fails when `evals-dir` names a directory that does not exist, because a search that finds nothing would otherwise pass green. Replace `main` in both places with the same tag or SHA once one exists.
 
 2. mise tasks. In the target's `mise.toml` (create it if absent) add the env and the include. If `task_config.includes` already exists, append to it.
 
    ```toml
    [env]
    SKILL_CI = "{{ config_root }}/../skill-ci"
+   EVALS_DIR = "evals"
 
    [task_config]
    includes = ["../skill-ci/skill-tasks.toml"]
    ```
+
+   Omit `EVALS_DIR` for a target whose manifests stay inside the skills tree. Every task that reads a manifest honors it, so a task run without it would check nothing.
 
    Use the real relative path from the target to this checkout. Confirm with `mise tasks ls` that `skill-lint`, `skill-validate`, `skill-audit`, `skill-trigger`, and `skill-run` are listed.
 
@@ -55,14 +60,16 @@ Activation wires one target repository into the shared skill testing home. It wr
 
    When the spec ends in `PIN_ME`, skip this and say so in the report. Never install from an unpinned ref or from upstream.
 
-4. Manifests. Scaffold one empty manifest beside each skill:
+4. Manifests. Scaffold one empty manifest per skill:
 
    ```sh
    uv run --no-project --with-requirements "$SKILL_CI/tools/requirements.txt" \
-     python "$SKILL_CI/tools/scaffold_manifest.py" "$SKILLS_DIR"/*/
+     python "$SKILL_CI/tools/scaffold_manifest.py" --evals-dir "$EVALS_DIR" "$SKILLS_DIR"/*/
    ```
 
-   This writes `evals/shared-benchmark.json` with an empty `cases` list and refuses to touch a manifest that already exists. Leave `cases` empty. Trigger rows come from the reviewed session harvest. Outcome cases are the skill author's.
+   This writes `$EVALS_DIR/<skill>/shared-benchmark.json` with an empty `cases` list and `skill_paths` relative to the repository root, and refuses to touch a manifest that already exists. `EVALS_DIR` must be named `evals`, because that is the name the runner resolves the repository root from. Drop `--evals-dir` for a target whose manifests stay inside the skills tree, which writes `evals/shared-benchmark.json` under each skill with `skill_paths` relative to the skill directory. Leave `cases` empty. Trigger rows come from the reviewed session harvest. Outcome cases are the skill author's.
+
+   Case files, `prompt_ref`, and script-oracle paths resolve against the manifest's own directory, not the repository root, so they belong next to the manifest.
 
 5. Check. Run `mise run skill-lint`, and `mise run skill-validate` when the runner is installed. Fix only what activation introduced. A lint finding inside an existing skill belongs to its author: list it in the report and leave it.
 
