@@ -47,10 +47,13 @@ fi
 
 [skill-validate]
 description = "skill-benchmark validate --strict-leakage on every manifest (model-free)"
+shell = "bash -c"
 run = '''
 set -euo pipefail
+: "${SKILL_CI:?set SKILL_CI to the skill-ci checkout}"
 SKILLS_DIR="${SKILLS_DIR:-skills}"
 EVALS_DIR="${EVALS_DIR:-}"
+runner() { uv run --no-project python "$SKILL_CI/tools/run_runner.py" "$@"; }
 if [ -n "$EVALS_DIR" ] && [ ! -d "$EVALS_DIR" ]; then
   echo "EVALS_DIR is set to '$EVALS_DIR', which is not a directory; no manifest would be checked" >&2
   exit 1
@@ -63,16 +66,19 @@ find_manifests() {
   fi
 }
 find_manifests | sort | while IFS= read -r manifest; do
-  skill-benchmark validate --strict-leakage "$manifest"
+  runner skill-benchmark validate --strict-leakage "$manifest"
 done
 '''
 
 [skill-audit]
 description = "Readiness audit on every manifest, judge independence included (model-free)"
+shell = "bash -c"
 run = '''
 set -euo pipefail
+: "${SKILL_CI:?set SKILL_CI to the skill-ci checkout}"
 SKILLS_DIR="${SKILLS_DIR:-skills}"
 EVALS_DIR="${EVALS_DIR:-}"
+runner() { uv run --no-project python "$SKILL_CI/tools/run_runner.py" "$@"; }
 if [ -n "$EVALS_DIR" ] && [ ! -d "$EVALS_DIR" ]; then
   echo "EVALS_DIR is set to '$EVALS_DIR', which is not a directory; no manifest would be checked" >&2
   exit 1
@@ -85,14 +91,17 @@ find_manifests() {
   fi
 }
 find_manifests | sort | while IFS= read -r manifest; do
-  skill-benchmark audit-manifest --fail-on-blockers --strict-judge "$manifest"
+  runner skill-benchmark audit-manifest --fail-on-blockers --strict-judge "$manifest"
 done
 '''
 
 [skill-trigger]
 description = "Operator-local trigger matrix for one skill on the host's claude and codex logins (paid, never CI)"
+shell = "bash -c"
 run = '''
 set -euo pipefail
+: "${SKILL_CI:?set SKILL_CI to the skill-ci checkout}"
+runner() { uv run --no-project python "$SKILL_CI/tools/run_runner.py" "$@"; }
 skill="{{arg(name="skill", help="skill directory, e.g. skills/unslop")}}"
 if [ -n "${EVALS_DIR:-}" ]; then
   manifest="$EVALS_DIR/$(basename "$skill")/shared-benchmark.json"
@@ -101,7 +110,7 @@ else
 fi
 out="${OUT:-$skill/eval-runs/trigger-$(date +%Y%m%d-%H%M%S)}"
 mkdir -p "$out"
-skill-trigger-matrix "$manifest" --agent claude --agent codex \
+runner skill-trigger-matrix "$manifest" --agent claude --agent codex \
   --claude-bin "$SKILL_CI/tools/claude-project-only" \
   --codex-cmd "${CODEX_CMD:-$SKILL_CI/tools/codex-project-only exec --json --skip-git-repo-check --sandbox read-only}" \
   --runs-per-query "${RUNS:-3}" ${MODEL:+--model "$MODEL"} \
@@ -110,8 +119,11 @@ skill-trigger-matrix "$manifest" --agent claude --agent codex \
 
 [skill-run]
 description = "Operator-local paired with/without run for one skill on the host's own logins (paid, never CI)"
+shell = "bash -c"
 run = '''
 set -euo pipefail
+: "${SKILL_CI:?set SKILL_CI to the skill-ci checkout}"
+runner() { uv run --no-project python "$SKILL_CI/tools/run_runner.py" "$@"; }
 skill="{{arg(name="skill", help="skill directory, e.g. skills/unslop")}}"
 if [ -n "${EVALS_DIR:-}" ]; then
   manifest="$EVALS_DIR/$(basename "$skill")/shared-benchmark.json"
@@ -122,19 +134,19 @@ out="${OUT:-$skill/eval-runs/run-$(date +%Y%m%d-%H%M%S)}"
 claude_bin="$SKILL_CI/tools/claude-project-only"
 codex_cmd="${CODEX_CMD:-$SKILL_CI/tools/codex-project-only exec --json --skip-git-repo-check --sandbox read-only}"
 
-skill-benchmark audit-manifest "$manifest" --fail-on-blockers --strict-judge
+runner skill-benchmark audit-manifest "$manifest" --fail-on-blockers --strict-judge
 mkdir -p "$out"
-skill-benchmark prepare "$manifest" --split tune --runs-per-variant "${RUNS:-3}" --out "$out/tasks.jsonl"
+runner skill-benchmark prepare "$manifest" --split tune --runs-per-variant "${RUNS:-3}" --out "$out/tasks.jsonl"
 
 for agent in ${AGENTS:-claude codex}; do
   case "$agent" in
     claude)
-      skill-benchmark run-agent --agent claude --model "${MODEL:-sonnet}" \
+      runner skill-benchmark run-agent --agent claude --model "${MODEL:-sonnet}" \
         --claude-bin "$claude_bin" \
         --tasks "$out/tasks.jsonl" --runs "$out/claude" --timeout "${TIMEOUT:-240}"
       ;;
     codex)
-      skill-benchmark run-agent --agent codex --model "${CODEX_MODEL:-gpt-5.6-sol}" \
+      runner skill-benchmark run-agent --agent codex --model "${CODEX_MODEL:-gpt-5.6-sol}" \
         --codex-cmd "$codex_cmd" \
         --tasks "$out/tasks.jsonl" --runs "$out/codex" --timeout "${TIMEOUT:-240}"
       ;;
@@ -143,12 +155,12 @@ for agent in ${AGENTS:-claude codex}; do
       exit 2
       ;;
   esac
-  skill-benchmark grade "$manifest" --runs "$out/$agent" --allow-scripts
-  skill-benchmark judge "$manifest" --runs "$out/$agent" --judge-backend claude \
+  runner skill-benchmark grade "$manifest" --runs "$out/$agent" --allow-scripts
+  runner skill-benchmark judge "$manifest" --runs "$out/$agent" --judge-backend claude \
     --judge-model "${JUDGE_MODEL:-opus}" --claude-bin "$claude_bin" \
     --judge-runs "${JUDGE_RUNS:-3}" --out "$out/$agent-judge.jsonl"
-  skill-benchmark benchmark "$manifest" --runs "$out/$agent" --split tune --allow-scripts \
+  runner skill-benchmark benchmark "$manifest" --runs "$out/$agent" --split tune --allow-scripts \
     --judge-results "$out/$agent-judge.jsonl" --out "$out/$agent-benchmark.json"
-  skill-benchmark report --benchmark "$out/$agent-benchmark.json" --format github
+  runner skill-benchmark report --benchmark "$out/$agent-benchmark.json" --format github
 done
 '''

@@ -14,6 +14,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  reusable-workflow-contract:
+    uses: ./.github/workflows/skill-checks.yml
+    with:
+      skills-dir: .github/fixtures/skills
+      evals-dir: .github/fixtures/evals
+      require-manifests: true
+      skill-ci-ref: ffffffffffffffffffffffffffffffffffffffff
   test:
     strategy:
       matrix:

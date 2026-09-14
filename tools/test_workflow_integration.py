@@ -41,10 +41,16 @@ class WorkflowIntegrationTests(unittest.TestCase):
         (self.root / ".skill-ci").symlink_to(REPOSITORY, target_is_directory=True)
         self.executable("python3", "import os, sys\nos.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n")
         self.executable(
-            "skill-benchmark",
+            "uv",
             "import json, os, sys\n"
+            "arguments = sys.argv[1:]\n"
+            "if arguments[:2] == ['run', '--no-project'] and 'python' in arguments:\n"
+            "    os.execv(sys.executable, [sys.executable, *arguments[arguments.index('python') + 1:]])\n"
+            "if arguments[:2] != ['tool', 'run']:\n"
+            "    raise SystemExit(9)\n"
+            "command = next(value for value in arguments if value in {'skill-benchmark', 'skill-trigger-matrix'})\n"
             "with open(os.environ['RUNNER_LOG'], 'a') as log:\n"
-            "    log.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+            "    log.write(json.dumps(arguments[arguments.index(command) + 1:]) + '\\n')\n"
             "raise SystemExit(int(os.environ['RUNNER_EXIT']))\n",
         )
         self.executable(
@@ -147,6 +153,92 @@ class WorkflowIntegrationTests(unittest.TestCase):
         self.assertIn("not a directory", result.stdout)
         self.assertFalse(self.log.exists())
 
+    def test_runner_tasks_use_the_dispatcher_for_each_stage(self) -> None:
+        manifest = self.root / "evals/example/shared-benchmark.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text('{"cases": [{"id": "a"}]}')
+        self.environment.update(EVALS_DIR="evals", OUT="run output", AGENTS="claude codex")
+        for name in ("skill-validate", "skill-audit", "skill-trigger", "skill-run"):
+            with self.subTest(name=name):
+                tasks = tomllib.loads((REPOSITORY / "skill-tasks.toml").read_text())
+                self.assertEqual(tasks[name]["shell"], "bash -c")
+                self.assertIn('run_runner.py" "$@"', tasks[name]["run"])
+        self.assertEqual(self.runner_task("skill-validate").returncode, 0)
+        self.assertEqual(self.runner_calls(), [["validate", "--strict-leakage", "evals/example/shared-benchmark.json"]])
+        self.log.unlink()
+        self.assertEqual(self.runner_task("skill-audit").returncode, 0)
+        self.assertEqual(self.runner_calls(), [["audit-manifest", "--fail-on-blockers", "--strict-judge", "evals/example/shared-benchmark.json"]])
+        self.log.unlink()
+        self.assertEqual(self.runner_task("skill-trigger").returncode, 0)
+        self.assertEqual(self.runner_calls()[0][:3], ["evals/example/shared-benchmark.json", "--agent", "claude"])
+        self.log.unlink()
+        self.assertEqual(self.runner_task("skill-run").returncode, 0)
+        calls = self.runner_calls()
+        self.assertEqual(calls[0], ["audit-manifest", "evals/example/shared-benchmark.json", "--fail-on-blockers", "--strict-judge"])
+        self.assertEqual(calls[1][:2], ["prepare", "evals/example/shared-benchmark.json"])
+        self.assertEqual([call[0] for call in calls[2:]], ["run-agent", "grade", "judge", "benchmark", "report"] * 2)
+
+    def test_runner_task_failure_stops_later_skill_run_stages(self) -> None:
+        manifest = self.root / "evals/example/shared-benchmark.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text('{"cases": [{"id": "a"}]}')
+        self.environment.update(EVALS_DIR="evals", OUT="run output", RUNNER_EXIT="7")
+        result = self.runner_task("skill-run")
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assertEqual(self.runner_calls(), [["audit-manifest", "evals/example/shared-benchmark.json", "--fail-on-blockers", "--strict-judge"]])
+
+    def test_runner_tasks_require_skill_ci(self) -> None:
+        self.environment.pop("SKILL_CI")
+        for name in ("skill-validate", "skill-audit", "skill-trigger", "skill-run"):
+            with self.subTest(name=name):
+                result = self.runner_task(name)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("SKILL_CI", result.stderr)
+
+    def test_workflow_uses_its_own_identity_and_ignores_the_legacy_input(self) -> None:
+        inputs = self.workflow["on"]["workflow_call"]["inputs"]
+        self.assertEqual(inputs["skill-ci-ref"]["default"], "")
+        self.assertIn("Deprecated", inputs["skill-ci-ref"]["description"])
+        checkouts = [
+            step["with"]
+            for job in self.workflow["jobs"].values()
+            for step in job["steps"]
+            if step.get("with", {}).get("path") == ".skill-ci"
+        ]
+        self.assertEqual(len(checkouts), 2)
+        for checkout in checkouts:
+            self.assertEqual(checkout["repository"], "${{ job.workflow_repository }}")
+            self.assertEqual(checkout["ref"], "${{ job.workflow_sha }}")
+            self.assertEqual(checkout["persist-credentials"], "false")
+        source = (REPOSITORY / ".github/workflows/skill-checks.yml").read_text()
+        self.assertNotIn("inputs.skill-ci-ref", source)
+        guards = [self.steps["Check lint workflow identity"], self.steps["Check manifest workflow identity"]]
+        for guard in guards:
+            with self.subTest(guard=guard["name"]):
+                self.environment.update(WORKFLOW_REPOSITORY="", WORKFLOW_SHA="")
+                missing = self.run_body(guard["run"])
+                self.assertEqual(missing.returncode, 1)
+                self.environment.update(WORKFLOW_REPOSITORY="mdsmithaustin/skill-ci", WORKFLOW_SHA="main")
+                malformed = self.run_body(guard["run"])
+                self.assertEqual(malformed.returncode, 1)
+                self.environment["WORKFLOW_SHA"] = "0123456789abcdef0123456789abcdef01234567"
+                valid = self.run_body(guard["run"])
+                self.assertEqual(valid.returncode, 0, valid.stderr)
+
+    def test_repository_workflow_exercises_the_reusable_contract(self) -> None:
+        workflow = yaml.load(
+            (REPOSITORY / ".github/workflows/test.yml").read_text(),
+            Loader=yaml.BaseLoader,
+        )
+        contract = workflow["jobs"]["reusable-workflow-contract"]
+        self.assertEqual(contract["uses"], "./.github/workflows/skill-checks.yml")
+        self.assertEqual(contract["with"]["skills-dir"], ".github/fixtures/skills")
+        self.assertEqual(contract["with"]["evals-dir"], ".github/fixtures/evals")
+        self.assertEqual(contract["with"]["require-manifests"], "true")
+        self.assertEqual(contract["with"]["skill-ci-ref"], "ffffffffffffffffffffffffffffffffffffffff")
+        self.assertTrue((REPOSITORY / ".github/fixtures/skills/example/SKILL.md").is_file())
+        self.assertTrue((REPOSITORY / ".github/fixtures/evals/example/shared-benchmark.json").is_file())
+
     def test_link_exception_workflow_input_reaches_the_content_checker(self) -> None:
         inputs = self.workflow["on"]["workflow_call"]["inputs"]
         self.assertIn("content-link-exceptions-file", inputs)
@@ -216,6 +308,13 @@ class WorkflowIntegrationTests(unittest.TestCase):
     def package_task(self) -> subprocess.CompletedProcess[str]:
         tasks = tomllib.loads((REPOSITORY / "skill-tasks.toml").read_text())
         return self.run_body(tasks["skill-package"]["run"])
+
+    def runner_task(self, name: str, skill: str = "skills/example") -> subprocess.CompletedProcess[str]:
+        tasks = tomllib.loads((REPOSITORY / "skill-tasks.toml").read_text())
+        body = tasks[name]["run"].replace(
+            '{{arg(name="skill", help="skill directory, e.g. skills/unslop")}}', skill,
+        )
+        return self.run_body(body)
 
     def test_package_task_checks_the_default_collection(self) -> None:
         self.package()

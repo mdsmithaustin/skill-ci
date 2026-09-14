@@ -7,7 +7,7 @@ Deliberate gaps, each with the reason it is open.
 
 - `tools/test_check_skill_frontmatter.py` is the mds-pstack file minus one test, `test_shipped_inventory_and_corpus_pass`, which runs the checker over that repository's own `skills/` tree and trigger corpus. This repository has neither. Every other test is unchanged.
 
-- The caller passes `skill-ci-ref` (default `main`) so the workflow can fetch its own tools and `runner.lock`. A reusable workflow cannot read the ref it was called at, so the caller states it twice. A tag replaces `main` in both places once this repository has one.
+- Existing callers may still pass `skill-ci-ref`. The reusable workflow accepts and ignores it while callers move to one full SHA on the reusable workflow line. Remove the legacy input after the adopted callers migrate.
 
 - Trigger-row harvesting from local Claude and Codex session history is not in this repository. The decision record says the user reviews the harvest before use; the tool that produces it has not been written.
 
@@ -24,6 +24,6 @@ Deliberate gaps, each with the reason it is open.
 
 - A harvest review sheet quotes real user prompts, and those quotes contain text shaped like markdown links and bold skill names. `check-skill-content.py` reads them as real links and fails. Nothing is broken while review sheets stay untracked, which is where they belong, but committing one needs the quoted text escaped or the sheet kept out of the skills tree. Measured on three sheets under mds-pstack on 2026-09-13.
 
-- The reusable workflow's first hosted run on 2026-09-13, against mdsmithaustin/pstack pull request 40, checked 52 skills but zero manifests. Consumers still need committed manifests to exercise their own validate and audit paths in CI. The job fails when `evals-dir` names a directory that does not exist. Set `require-manifests: true` to also reject an existing but empty search tree. Its default remains false for activation compatibility. Empty scaffolded manifests satisfy the inventory requirement and skip readiness audit. Local integration tests exercise both layouts and the guard, and the workflow shell body has validated a real scaffold with the runner pinned in `runner.lock`.
+- Consumers still need committed manifests to exercise their own validate and audit paths in CI. The job fails when `evals-dir` names a directory that does not exist. Set `require-manifests: true` to also reject an existing but empty search tree. Its default remains false for activation compatibility. Empty scaffolded manifests satisfy the inventory requirement and skip readiness audit. This repository's reusable-workflow contract job exercises one fixture skill and one empty manifest with a stale legacy input.
 
 - `skill-trigger` and `skill-run` still write run output under the skill directory, at `<skill>/eval-runs/`, in both manifest layouts. It is gitignored, so it never reaches a consumer through the repository, but a skill installer copying a working tree would pick it up. Moving the default output beside the manifest is the obvious fix and has not been done.

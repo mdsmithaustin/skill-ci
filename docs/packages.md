@@ -48,15 +48,10 @@ The task reads `SKILL_CI` and `SKILLS_DIR`, which defaults to `skills`. Set `INS
 Add `package-check: true` to the reusable workflow caller's `with` block. It defaults to false because existing consumers may intentionally use symlinks or broader directory layouts.
 
 ```yaml
-jobs:
-  skills:
-    uses: mdsmithaustin/skill-ci/.github/workflows/skill-checks.yml@main
-    with:
-      skills-dir: skills
-      package-check: true
-      skill-ci-ref: main
+with:
+  package-check: true
 ```
 
-Use the same tag or SHA in both ref positions when pinning a release. CI inspects source packages only. Installed-copy comparison is a local operation because the reusable workflow has no deployed package tree.
+Set `jobs.skills.uses` to `mdsmithaustin/skill-ci/.github/workflows/skill-checks.yml` at the published skill-ci revision's full SHA. CI inspects source packages only. Installed-copy comparison is a local operation because the reusable workflow has no deployed package tree.
 
 Package inspection supports the file-integrity and deployment-parity claims described in [the evidence guide](evidence.md). A pass does not prove metadata conformance, installer compatibility, native activation, or behavioral utility.

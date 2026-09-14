@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "skill_name": "example",
+  "skill_description": "Use when asked for an example.",
+  "harness": {
+    "name": "skill-eval-harness",
+    "url": "https://github.com/mdsmithaustin/skill-eval-harness",
+    "version": ">=0.6.0"
+  },
+  "skill_paths": [
+    ".github/fixtures/skills/example/SKILL.md"
+  ],
+  "variants": [
+    "with_skill",
+    "without_skill"
+  ],
+  "cases": []
+}
