@@ -182,6 +182,39 @@ class WorkflowIntegrationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("inventory is empty", result.stdout)
 
+    @unittest.skipUnless(shutil.which("mise") and shutil.which("dash"), "requires mise and dash")
+    def test_mise_package_task_overrides_a_posix_default_shell(self) -> None:
+        self.environment["SKILLS_DIR"] = "source skills"
+        source = self.package("an example")
+        destination = self.root / "installed skills" / "an example"
+        shutil.copytree(source, destination)
+        self.environment.update(
+            INSTALLED_SKILLS_DIR="installed skills",
+            MISE_UNIX_DEFAULT_INLINE_SHELL_ARGS=f"{shutil.which('dash')} -c",
+            MISE_TRUSTED_CONFIG_PATHS=os.pathsep.join((str(self.root), str(REPOSITORY))),
+        )
+        (self.root / "mise.toml").write_text(
+            f"[task_config]\nincludes = [{json.dumps(str(REPOSITORY / 'skill-tasks.toml'))}]\n"
+        )
+
+        for changed in (False, True):
+            with self.subTest(changed=changed):
+                if changed:
+                    (destination / "SKILL.md").write_text("changed")
+                result = subprocess.run(
+                    ["mise", "run", "skill-package"],
+                    cwd=self.root,
+                    env=self.environment,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, int(changed), result.stdout + result.stderr)
+                self.assertIn("copies compared: 1", result.stdout)
+                if changed:
+                    self.assertIn("content changed: SKILL.md", result.stdout)
+
     def test_package_workflow_step_passes_then_rejects_a_symlink(self) -> None:
         source = self.package()
         body = self.steps["Skill package integrity"]["run"]

@@ -41,7 +41,7 @@ mise run skill-package
 INSTALLED_SKILLS_DIR=.agents/skills mise run skill-package
 ```
 
-The task reads `SKILL_CI` and `SKILLS_DIR`, which defaults to `skills`. Set `INSTALLED_SKILLS_DIR` only when comparing copies. The task uses collection selection. Use the Python command for a standalone package.
+The task reads `SKILL_CI` and `SKILLS_DIR`, which defaults to `skills`. Set `INSTALLED_SKILLS_DIR` only when comparing copies. The task selects Bash explicitly and uses collection selection. Use the Python command for a standalone package.
 
 ## Enable CI inspection
 

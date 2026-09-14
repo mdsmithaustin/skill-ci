@@ -29,6 +29,7 @@ py "$SKILL_CI/tools/check-skill-content.py" "$SKILLS_DIR"
 
 [skill-package]
 description = "Inspect package trees and optionally compare installed copies (model-free)"
+shell = "bash -c"
 run = '''
 set -euo pipefail
 : "${SKILL_CI:?set SKILL_CI to the skill-ci checkout}"

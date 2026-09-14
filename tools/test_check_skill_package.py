@@ -156,6 +156,29 @@ class PackageChecker(unittest.TestCase):
         self.assertIn("alpha sha256:", output)
         self.assertIn("copies compared: 1", output)
 
+    def test_read_failure_reports_the_path_and_summary_without_a_traceback(self) -> None:
+        package = self.skill("alpha")
+        driver = (
+            "import errno, os, runpy, sys\n"
+            "from unittest.mock import patch\n"
+            "sys.argv = sys.argv[1:]\n"
+            "with patch('os.read', side_effect=OSError(errno.EIO, 'Input/output error')):\n"
+            "    runpy.run_path(sys.argv[0], run_name='__main__')\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", driver, str(CHECKER), "--skill", str(package)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("cannot read file SKILL.md: Input/output error", result.stdout, result.stderr)
+        self.assertIn("packages checked: 1; passed: 0; failed: 1; copies compared: 0", result.stdout)
+        self.assertNotIn("sha256:", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+
     def test_comparison_reports_missing_added_content_executable_and_empty_directory_drift(self) -> None:
         package = self.skill("alpha")
         (package / "missing.txt").write_text("source", encoding="utf-8")

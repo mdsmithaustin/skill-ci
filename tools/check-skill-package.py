@@ -115,6 +115,8 @@ def read_identity(directory: int, name: str, relative: bytes, expected: os.stat_
         digest = hashlib.sha256()
         while block := os.read(descriptor, 65536):
             digest.update(block)
+    except OSError as exc:
+        raise CheckError(f"cannot read file {escaped(relative)}: {exc.strerror}") from exc
     finally:
         os.close(descriptor)
     return FileIdentity(digest.digest(), opened.st_mode & 0o111)
