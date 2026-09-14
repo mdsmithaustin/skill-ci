@@ -39,20 +39,22 @@ Set `package-check: true` in the reusable workflow caller to inspect package tre
 
 Use a link-exceptions file only when a copied template names an output file that does not exist in the installed skill. The checker keeps all other content checks active. It does not exempt images, reference definitions, inline-code paths, sibling skill names, fences, or port substitutions.
 
-The file is version-1 JSON. Each key in `inline_link_exceptions` is a path relative to `SKILLS_DIR`. Each value is a nonempty list of unique exact destination spellings from direct inline Markdown links. A policy entry for `../DESIGN-[AREA].md` does not permit `<../DESIGN-[AREA].md>` or a similar destination in another source file.
+The file is version-1 JSON. Each key in `inline_link_exceptions` is a path relative to `SKILLS_DIR`. Each value is a nonempty list of unique exact destination spellings from direct inline Markdown links. A policy entry for `../REPORT-[TOPIC].md` does not permit `<../REPORT-[TOPIC].md>` or a similar destination in another source file.
 
 ```json
 {
   "version": 1,
   "inline_link_exceptions": {
-    "sie-mode/assets/design-set/BLUEPRINT.template.md": [
-      "../DESIGN-[AREA].md"
+    "example-skill/assets/report.template.md": [
+      "../REPORT-[TOPIC].md"
     ]
   }
 }
 ```
 
 The checker reads the policy through `--link-exceptions-file PATH`. For local linting, set `CONTENT_LINK_EXCEPTIONS_FILE` to the policy path before you run `mise run skill-lint`. For the reusable workflow, set `content-link-exceptions-file` to the same path. Omit the option, the variable, and the workflow input when every relative link resolves in the checked skill tree.
+
+If your repository keeps a local copy of `tools/check-skill-content.py`, copy the checker from the same skill-ci revision you select for the workflow. The workflow rejects drift between the local and shared checkers.
 
 ## Authoring conventions
 
@@ -94,7 +96,7 @@ docs/packages.md                 package inspection and copy comparison
 docs/evidence.md                 evidence limits and healthy controls
 docs/harvest-skill-optimizer.md   source and disposition of the peer-repo imports
 tools/check-skill-frontmatter.py  verbatim from mds-pstack
-tools/check-skill-content.py      verbatim from mds-pstack
+tools/check-skill-content.py      content checks and exact output-time link exceptions
 tools/check-pii.py                verbatim from mds-pstack
 tools/check-skill-package.py      read-only package inventory and copy comparison
 tools/scaffold_manifest.py        writes an empty manifest per skill, either layout

@@ -31,9 +31,9 @@ Activation wires one target repository into the shared skill testing home. It wr
      skills:
        uses: mdsmithaustin/skill-ci/.github/workflows/skill-checks.yml@main
        with:
-        skills-dir: skills
-        evals-dir: evals
-        skill-ci-ref: main
+         skills-dir: skills
+         evals-dir: evals
+         skill-ci-ref: main
    ```
 
    Set `skills-dir` to `SKILLS_DIR` and `evals-dir` to `EVALS_DIR`. Set `content-link-exceptions-file` only when the target has the reviewed policy described in `README.md`. Omit `evals-dir` only for a target whose manifests stay inside the skills tree; the job then searches that tree, as it always did. The job fails when `evals-dir` names a directory that does not exist, because a search that finds nothing would otherwise pass green. Replace `main` in both places with the same tag or SHA once one exists.
@@ -49,7 +49,7 @@ Activation wires one target repository into the shared skill testing home. It wr
    includes = ["../skill-ci/skill-tasks.toml"]
    ```
 
-   Omit `EVALS_DIR` for a target whose manifests stay inside the skills tree. Set `CONTENT_LINK_EXCEPTIONS_FILE` only when the target has the reviewed policy described in `README.md`. Every task that reads a manifest honors it, so a task run without it would check nothing.
+   Omit `EVALS_DIR` for a target whose manifests stay inside the skills tree. Every task that reads a manifest honors it, so a task run without it would check nothing. Set `CONTENT_LINK_EXCEPTIONS_FILE` only when the target has the reviewed policy described in `README.md`.
 
    Use the real relative path from the target to this checkout. Confirm with `mise tasks ls` that `skill-lint`, `skill-validate`, `skill-audit`, `skill-trigger`, and `skill-run` are listed.
 

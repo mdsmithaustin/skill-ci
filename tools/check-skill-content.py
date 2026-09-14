@@ -61,9 +61,11 @@ def source_positioned(
             for token in created:
                 if token.type == token_type:
                     token.meta["source_offset"] = start
-                    token.meta["source_end"] = state.pos
                     source_newlines = state.src[start : state.pos].count("\n")
                     if token_type == "link_open":
+                        raw_destination = raw_inline_destination(state, start, state.pos)
+                        if raw_destination is not None:
+                            token.meta["raw_destination"] = raw_destination
                         represented = rendered_newlines(created)
                         for item in reversed(created):
                             if item.type == "link_close":
@@ -152,98 +154,28 @@ REFERENCE_PLACEHOLDER = re.compile(
 
 def protect_explicit_placeholders(text: str) -> str:
     def replacement(match: re.Match[str]) -> str:
-        space = match.group("space")
-        destination = match.group(0)[len(space) :]
-        if destination.startswith("<") and destination.endswith(">"):
-            replacement = "<" + same_length_placeholder_sentinel(
-                len(destination) - 2
-            ) + ">"
-        else:
-            replacement = same_length_placeholder_sentinel(len(destination))
-        return space + replacement
+        return match.group("space") + "placeholder:ignored"
 
     text = INLINE_PLACEHOLDER.sub(replacement, text)
     return REFERENCE_PLACEHOLDER.sub(replacement, text)
 
 
-def same_length_placeholder_sentinel(length: int) -> str:
-    return "x:" + "x" * (length - 2)
-
-
-def raw_inline_destination(source: str, start: int, end: int) -> str | None:
-    text = source[start:end]
-    if not text.startswith("["):
-        return None
-    position = 0
-    depth = 0
-    while position < len(text):
-        char = text[position]
-        if char == "\\":
-            position += 2
-            continue
-        if char == "[":
-            depth += 1
-        elif char == "]":
-            depth -= 1
-            if depth == 0:
-                position += 1
-                break
-        position += 1
-    else:
-        return None
-    while position < len(text) and text[position].isspace():
-        position += 1
-    if position == len(text) or text[position] != "(":
+def raw_inline_destination(state: StateInline, start: int, end: int) -> str | None:
+    label_end = state.md.helpers.parseLinkLabel(state, start, True)
+    position = label_end + 1
+    if label_end < 0 or position >= end or state.src[position] != "(":
         return None
     position += 1
-    while position < len(text) and text[position].isspace():
+    while position < end and state.src[position] in " \t\n":
         position += 1
-    destination_start = position
-    if position < len(text) and text[position] == "<":
-        position += 1
-        while position < len(text):
-            if text[position] == "\\":
-                position += 2
-                continue
-            if text[position] == ">":
-                return text[destination_start : position + 1]
-            position += 1
-        return None
-    depth = 0
-    while position < len(text):
-        char = text[position]
-        if char == "\\":
-            position += 2
-            continue
-        if char == "(":
-            depth += 1
-        elif char == ")":
-            if depth == 0:
-                return text[destination_start:position]
-            depth -= 1
-        elif char.isspace() and depth == 0:
-            return text[destination_start:position]
-        position += 1
-    return None
+    destination = state.md.helpers.parseLinkDestination(state.src, position, end)
+    return state.src[position : destination.pos] if destination.ok else None
 
 
 def parse_file(path: Path) -> ParsedFile:
     text = path.read_text(encoding="utf-8")
     env: dict[str, Any] = {}
     tokens = MARKDOWN.parse(protect_explicit_placeholders(text), env)
-    for token in tokens:
-        if token.type != "inline":
-            continue
-        for child in token.children or []:
-            if child.type != "link_open":
-                continue
-            raw_destination = raw_inline_destination(
-                token.content,
-                int(child.meta.get("source_offset", 0)),
-                int(child.meta.get("source_end", 0)),
-            )
-            if raw_destination is not None:
-                child.meta["raw_destination"] = raw_destination
     references = env.get("references", {})
     return ParsedFile(
         path=path,
