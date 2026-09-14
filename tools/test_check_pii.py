@@ -2,6 +2,7 @@
 """Regression tests for the repository PII gate."""
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -156,23 +157,53 @@ class PiiCheck(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout), (0, ""))
 
     def test_staged_mode_scans_index_contents_not_working_tree(self) -> None:
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
         with tempfile.TemporaryDirectory() as tmp:
             repository = Path(tmp)
-            subprocess.run(["git", "init", "--quiet"], cwd=repository, check=True)
+            subprocess.run(["git", "init", "--quiet"], cwd=repository, env=environment, check=True)
             target = repository / "fixture.txt"
             address = "grace" + "@" + "private.test"
             target.write_text(f"Contact {address}.\n", encoding="utf-8")
-            subprocess.run(["git", "add", target.name], cwd=repository, check=True)
+            subprocess.run(["git", "add", target.name], cwd=repository, env=environment, check=True)
             target.write_text("Clean working tree content.\n", encoding="utf-8")
             result = subprocess.run(
                 [sys.executable, str(PII_CHECK), "--staged"],
                 cwd=repository,
+                env=environment,
                 capture_output=True,
                 text=True,
             )
         self.assertEqual(result.returncode, 1)
         self.assertIn("fixture.txt:1: possible email address", result.stdout)
         self.assertNotIn(address, result.stdout)
+
+    def test_staged_fixture_preserves_the_calling_hooks_repository(self) -> None:
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        with tempfile.TemporaryDirectory() as tmp:
+            caller = Path(tmp)
+            subprocess.run(["git", "init", "--quiet"], cwd=caller, env=environment, check=True)
+            (caller / "sentinel.txt").write_text("Keep this staged content.\n", encoding="utf-8")
+            subprocess.run(["git", "add", "sentinel.txt"], cwd=caller, env=environment, check=True)
+            git_dir = caller / ".git"
+            config_before = (git_dir / "config").read_bytes()
+            index_before = (git_dir / "index").read_bytes()
+            hook_environment = environment | {
+                "GIT_DIR": str(git_dir),
+                "GIT_WORK_TREE": ".",
+                "GIT_INDEX_FILE": str(git_dir / "index"),
+            }
+            result = subprocess.run(
+                [sys.executable, str(Path(__file__).resolve()), "PiiCheck.test_staged_mode_scans_index_contents_not_working_tree"],
+                cwd=caller,
+                env=hook_environment,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((git_dir / "config").read_bytes(), config_before)
+            self.assertEqual((git_dir / "index").read_bytes(), index_before)
 
 
 if __name__ == "__main__":

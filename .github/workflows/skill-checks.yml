@@ -40,6 +40,14 @@ on:
         type: string
         required: false
         default: ''
+      require-manifests:
+        description: Fail when no manifest files are found. Empty scaffolded manifests still validate.
+        type: boolean
+        default: false
+      package-check:
+        description: Inspect every package entry and reject symlinks and special files. Does not run an installer or model.
+        type: boolean
+        default: false
       strict-frontmatter:
         description: Reject frontmatter keys outside name and description. Not implemented yet; see TODO.md.
         type: boolean
@@ -89,6 +97,12 @@ jobs:
             fi
           done
           exit $drift
+
+      - name: Skill package integrity
+        if: inputs.package-check
+        env:
+          SKILLS_DIR: ${{ inputs.skills-dir }}
+        run: python3 .skill-ci/tools/check-skill-package.py --skills-dir "$SKILLS_DIR"
 
       - name: Reject PII
         env:
@@ -151,6 +165,7 @@ jobs:
         env:
           SKILLS_DIR: ${{ inputs.skills-dir }}
           EVALS_DIR: ${{ inputs.evals-dir }}
+          REQUIRE_MANIFESTS: ${{ inputs.require-manifests }}
         run: |
           set -euo pipefail
           if [ -n "$EVALS_DIR" ]; then
@@ -173,3 +188,7 @@ jobs:
             fi
           done < <("${search[@]}" | sort)
           echo "manifests checked: $count"
+          if [ "$REQUIRE_MANIFESTS" = true ] && [ "$count" -eq 0 ]; then
+            echo "::error::require-manifests is enabled, but no manifest files were checked"
+            exit 1
+          fi
