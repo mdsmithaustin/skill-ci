@@ -13,8 +13,12 @@ CONTENT = TOOLS / "check-skill-content.py"
 FRONTMATTER = TOOLS / "check-skill-frontmatter.py"
 
 
-def run(script: Path, root: Path) -> tuple[int, str]:
-    p = subprocess.run([sys.executable, str(script), str(root)], capture_output=True, text=True)
+def run(script: Path, root: Path, *args: str) -> tuple[int, str]:
+    p = subprocess.run(
+        [sys.executable, str(script), *args, str(root)],
+        capture_output=True,
+        text=True,
+    )
     return p.returncode, p.stdout
 
 
@@ -53,6 +57,11 @@ class ContentLint(Tree):
         self.skill("a", 'name: a\ndescription: "d"', body)
         return run(CONTENT, self.root)
 
+    def link_exceptions(self, text: str) -> Path:
+        path = Path(self.tmp.name) / "link-exceptions.json"
+        path.write_text(text, encoding="utf-8")
+        return path
+
     def test_clean_tree_passes(self) -> None:
         self.assertEqual(run(CONTENT, self.root), (0, ""))
 
@@ -86,6 +95,27 @@ class ContentLint(Tree):
         self.assertEqual(code, 1)
         self.assertIn("MISSING", out)
         self.assertNotIn("{url}", out)
+
+    def test_inline_link_exception_matches_the_original_destination_spelling(self) -> None:
+        policy = self.link_exceptions(
+            """{
+  "version": 1,
+  "inline_link_exceptions": {
+    "a/SKILL.md": ["../real-skill/refs/missing%20file.md"]
+  }
+}
+"""
+        )
+        self.skill(
+            "a",
+            'name: a\ndescription: "d"',
+            "See [allowed](../real-skill/refs/missing%20file.md).\n"
+            "See [blocked](<../real-skill/refs/missing file.md>).",
+        )
+        code, out = run(CONTENT, self.root, "--link-exceptions-file", str(policy))
+        self.assertEqual(code, 1)
+        self.assertNotIn("SKILL.md:5", out)
+        self.assertIn("SKILL.md:6", out)
 
     def test_multiline_explicit_placeholders_are_ignored(self) -> None:
         body = (
