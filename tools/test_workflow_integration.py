@@ -193,8 +193,11 @@ class WorkflowIntegrationTests(unittest.TestCase):
             MISE_UNIX_DEFAULT_INLINE_SHELL_ARGS=f"{shutil.which('dash')} -c",
             MISE_TRUSTED_CONFIG_PATHS=os.pathsep.join((str(self.root), str(REPOSITORY))),
         )
+        tools = tomllib.loads((REPOSITORY / "mise.toml").read_text())["tools"]
         (self.root / "mise.toml").write_text(
-            f"[task_config]\nincludes = [{json.dumps(str(REPOSITORY / 'skill-tasks.toml'))}]\n"
+            "[tools]\n"
+            + "".join(f"{name} = {json.dumps(version)}\n" for name, version in tools.items())
+            + f"[task_config]\nincludes = [{json.dumps(str(REPOSITORY / 'skill-tasks.toml'))}]\n"
         )
 
         for changed in (False, True):
