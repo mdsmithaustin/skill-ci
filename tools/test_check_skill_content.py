@@ -2,6 +2,7 @@
 """Both lints must fire on planted defects and stay quiet on valid input."""
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import tempfile
@@ -13,8 +14,12 @@ CONTENT = TOOLS / "check-skill-content.py"
 FRONTMATTER = TOOLS / "check-skill-frontmatter.py"
 
 
-def run(script: Path, root: Path) -> tuple[int, str]:
-    p = subprocess.run([sys.executable, str(script), str(root)], capture_output=True, text=True)
+def run(script: Path, root: Path, *args: str) -> tuple[int, str]:
+    p = subprocess.run(
+        [sys.executable, str(script), *args, str(root)],
+        capture_output=True,
+        text=True,
+    )
     return p.returncode, p.stdout
 
 
@@ -53,6 +58,11 @@ class ContentLint(Tree):
         self.skill("a", 'name: a\ndescription: "d"', body)
         return run(CONTENT, self.root)
 
+    def link_exceptions(self, text: str) -> Path:
+        path = Path(self.tmp.name) / "link-exceptions.json"
+        path.write_text(text, encoding="utf-8")
+        return path
+
     def test_clean_tree_passes(self) -> None:
         self.assertEqual(run(CONTENT, self.root), (0, ""))
 
@@ -86,6 +96,150 @@ class ContentLint(Tree):
         self.assertEqual(code, 1)
         self.assertIn("MISSING", out)
         self.assertNotIn("{url}", out)
+
+    def test_inline_link_exception_matches_the_original_destination_spelling(self) -> None:
+        policy = self.link_exceptions(
+            """{
+  "version": 1,
+  "inline_link_exceptions": {
+    "a/SKILL.md": ["../real-skill/refs/missing%20file.md"]
+  }
+}
+"""
+        )
+        self.skill(
+            "a",
+            'name: a\ndescription: "d"',
+            "See [allowed](../real-skill/refs/missing%20file.md).\n"
+            "See [blocked](<../real-skill/refs/missing file.md>).",
+        )
+        code, out = run(CONTENT, self.root, "--link-exceptions-file", str(policy))
+        self.assertEqual(code, 1)
+        self.assertNotIn("SKILL.md:6", out)
+        self.assertIn("SKILL.md:7", out)
+
+    def test_inline_link_exception_is_scoped_to_its_source_file(self) -> None:
+        policy = self.link_exceptions(
+            """{
+  "version": 1,
+  "inline_link_exceptions": {
+    "a/SKILL.md": ["MISSING.md"]
+  }
+}
+"""
+        )
+        self.skill("a", 'name: a\ndescription: "d"', "See [allowed](MISSING.md).")
+        self.skill("b", 'name: b\ndescription: "d"', "See [blocked](MISSING.md).")
+        code, out = run(CONTENT, self.root, "--link-exceptions-file", str(policy))
+        self.assertEqual(code, 1)
+        self.assertNotIn("a/SKILL.md", out)
+        self.assertIn("b/SKILL.md", out)
+
+    def test_inline_link_exceptions_support_commonmark_labels(self) -> None:
+        policy = self.link_exceptions(json.dumps({
+            "version": 1,
+            "inline_link_exceptions": {"a/SKILL.md": ["MISSING.md"]},
+        }))
+        for label in (
+            "a `]` b", "a `[` b", 'a <span title="]">b</span>', "a [nested] b",
+            "![image](../real-skill/refs/diagram(1).svg)",
+        ):
+            with self.subTest(label=label):
+                self.skill("a", 'name: a\ndescription: "d"', f"[{label}](MISSING.md)")
+                code, out = run(CONTENT, self.root)
+                self.assertEqual(code, 1)
+                self.assertIn("MISSING.md", out)
+                self.assertEqual(
+                    run(CONTENT, self.root, "--link-exceptions-file", str(policy)),
+                    (0, ""),
+                )
+
+    def test_inline_link_exceptions_keep_exact_destination_delimiters_and_escapes(self) -> None:
+        for destination, other_spelling in (
+            (r"MISSING\(draft\).md", "MISSING(draft).md"),
+            ("<MISSING.md>", "MISSING.md"),
+            ("MISSING&amp;draft.md", "MISSING&draft.md"),
+        ):
+            with self.subTest(destination=destination):
+                policy = self.link_exceptions(json.dumps({
+                    "version": 1,
+                    "inline_link_exceptions": {"a/SKILL.md": [destination]},
+                }))
+                self.skill(
+                    "a", 'name: a\ndescription: "d"',
+                    f'[a `]` b](\n {destination}\n "title")\n[blocked]({other_spelling})',
+                )
+                code, out = run(CONTENT, self.root, "--link-exceptions-file", str(policy))
+                self.assertEqual(code, 1)
+                self.assertEqual(len(out.splitlines()), 1, out)
+                self.assertIn("SKILL.md:9: relative-link", out)
+
+    def test_inline_link_exception_does_not_allow_images_or_references(self) -> None:
+        policy = self.link_exceptions(
+            """{
+  "version": 1,
+  "inline_link_exceptions": {
+    "a/SKILL.md": ["MISSING-LINK.md"]
+  }
+}
+"""
+        )
+        self.skill(
+            "a",
+            'name: a\ndescription: "d"',
+            "See [allowed](MISSING-LINK.md).\n"
+            "See ![image](MISSING-LINK.md).\n\n"
+            "[reference]: MISSING-REFERENCE.md\n"
+            "See [reference].",
+        )
+        code, out = run(CONTENT, self.root, "--link-exceptions-file", str(policy))
+        self.assertEqual(code, 1)
+        self.assertNotIn("SKILL.md:6", out)
+        self.assertIn("SKILL.md:7: relative-link: target does not exist: MISSING-LINK.md", out)
+        self.assertIn("SKILL.md:9: relative-link: target does not exist: MISSING-REFERENCE.md", out)
+
+    def test_inline_link_exception_keeps_other_checks_active(self) -> None:
+        policy = self.link_exceptions(json.dumps({
+            "version": 1,
+            "inline_link_exceptions": {"a/SKILL.md": ["MISSING.md"]},
+        }))
+        cases = (
+            ("`./MISSING.md`", "relative-link"),
+            ("**principle-nope**", "sibling-skill"),
+            ("```\nunfinished", "unclosed-fence"),
+            ("Read pstack/skills/example/SKILL.md.", "port-substitution"),
+        )
+        for body, kind in cases:
+            with self.subTest(kind=kind):
+                self.skill("a", 'name: a\ndescription: "d"', "[allowed](MISSING.md)\n" + body)
+                code, out = run(CONTENT, self.root, "--link-exceptions-file", str(policy))
+                self.assertEqual(code, 1, out)
+                self.assertIn(kind, out)
+                self.assertNotIn("SKILL.md:6", out)
+
+    def test_link_exceptions_reject_an_unknown_version(self) -> None:
+        policy = self.link_exceptions(
+            """{
+  "version": 2,
+  "inline_link_exceptions": {}
+}
+"""
+        )
+        code, _out = run(CONTENT, self.root, "--link-exceptions-file", str(policy))
+        self.assertEqual(code, 2)
+
+    def test_link_exceptions_reject_a_noncanonical_source_path(self) -> None:
+        policy = self.link_exceptions(
+            """{
+  "version": 1,
+  "inline_link_exceptions": {
+    "a/../a/SKILL.md": ["MISSING.md"]
+  }
+}
+"""
+        )
+        code, _out = run(CONTENT, self.root, "--link-exceptions-file", str(policy))
+        self.assertEqual(code, 2)
 
     def test_multiline_explicit_placeholders_are_ignored(self) -> None:
         body = (

@@ -32,11 +32,14 @@ class WorkflowIntegrationTests(unittest.TestCase):
             EVALS_DIR="",
             REQUIRE_MANIFESTS="false",
             INSTALLED_SKILLS_DIR="",
+            LINK_EXCEPTIONS_FILE="",
+            CONTENT_LINK_EXCEPTIONS_FILE="",
+            IGNORE_FILE="",
             RUNNER_LOG=str(self.log),
             RUNNER_EXIT="0",
         )
         (self.root / ".skill-ci").symlink_to(REPOSITORY, target_is_directory=True)
-        (self.bin / "python3").symlink_to(sys.executable)
+        self.executable("python3", "import os, sys\nos.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n")
         self.executable(
             "skill-benchmark",
             "import json, os, sys\n"
@@ -54,6 +57,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
             (REPOSITORY / ".github/workflows/skill-checks.yml").read_text(),
             Loader=yaml.BaseLoader,
         )
+        self.workflow = workflow
         self.steps = {
             step.get("name"): step
             for job in workflow["jobs"].values()
@@ -142,6 +146,66 @@ class WorkflowIntegrationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("not a directory", result.stdout)
         self.assertFalse(self.log.exists())
+
+    def test_link_exception_workflow_input_reaches_the_content_checker(self) -> None:
+        inputs = self.workflow["on"]["workflow_call"]["inputs"]
+        self.assertIn("content-link-exceptions-file", inputs)
+        step = self.steps["Skill links, references, and port substitutions"]
+        self.assertEqual(
+            step["env"]["LINK_EXCEPTIONS_FILE"],
+            "${{ inputs.content-link-exceptions-file }}",
+        )
+        source = self.package()
+        (source / "SKILL.md").write_text("[report](output.md)\n")
+        policy = self.root / "link exceptions.json"
+        policy.write_text(json.dumps({
+            "version": 1,
+            "inline_link_exceptions": {"example/SKILL.md": ["output.md"]},
+        }))
+        missing = self.run_body(step["run"])
+        self.assertEqual(missing.returncode, 1, missing.stdout + missing.stderr)
+        self.assertIn("target does not exist: output.md", missing.stdout)
+        self.environment["LINK_EXCEPTIONS_FILE"] = str(policy)
+        allowed = self.run_body(step["run"])
+        self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
+        self.assertEqual(allowed.stdout, "")
+        (source / "SKILL.md").write_text("[report](output.md)\n![image](output.md)\n")
+        blocked = self.run_body(step["run"])
+        self.assertEqual(blocked.returncode, 1, blocked.stdout + blocked.stderr)
+        self.assertIn("SKILL.md:2: relative-link: target does not exist: output.md", blocked.stdout)
+        policy.write_text('{"version": 2, "inline_link_exceptions": {}}')
+        invalid = self.run_body(step["run"])
+        self.assertEqual(invalid.returncode, 2, invalid.stdout + invalid.stderr)
+        self.assertIn("version", invalid.stderr)
+
+    @unittest.skipUnless(shutil.which("mise") and shutil.which("dash"), "requires mise and dash")
+    def test_mise_lint_task_applies_the_optional_link_policy(self) -> None:
+        source = self.package()
+        with (source / "SKILL.md").open("a") as skill:
+            skill.write("[report](output.md)\n")
+        policy = self.root / "link exceptions.json"
+        policy.write_text(json.dumps({
+            "version": 1,
+            "inline_link_exceptions": {"example/SKILL.md": ["output.md"]},
+        }))
+        self.environment["MISE_TRUSTED_CONFIG_PATHS"] = os.pathsep.join((str(self.root), str(REPOSITORY)))
+        self.environment["MISE_UNIX_DEFAULT_INLINE_SHELL_ARGS"] = f"{shutil.which('dash')} -c"
+        tools = tomllib.loads((REPOSITORY / "mise.toml").read_text())["tools"]
+        (self.root / "mise.toml").write_text(
+            "[tools]\n"
+            + "".join(f"{name} = {json.dumps(version)}\n" for name, version in tools.items())
+            + f"[task_config]\nincludes = [{json.dumps(str(REPOSITORY / 'skill-tasks.toml'))}]\n"
+        )
+        for configured in (False, True):
+            with self.subTest(configured=configured):
+                self.environment["CONTENT_LINK_EXCEPTIONS_FILE"] = str(policy) if configured else ""
+                result = subprocess.run(
+                    ["mise", "run", "skill-lint"], cwd=self.root, env=self.environment,
+                    capture_output=True, text=True, timeout=30, check=False,
+                )
+                self.assertEqual(result.returncode, 0 if configured else 1, result.stdout + result.stderr)
+                if not configured:
+                    self.assertIn("target does not exist: output.md", result.stdout)
 
     def package(self, name: str = "example") -> Path:
         package = self.root / self.environment["SKILLS_DIR"] / name

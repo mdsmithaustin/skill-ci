@@ -12,6 +12,7 @@ Activation wires one target repository into the shared skill testing home. It wr
 - `SKILL_CI` is the absolute path of the directory holding this file. Every command below uses it.
 - `SKILLS_DIR` is the target's skills directory: the one whose children each hold a `SKILL.md`. Default `skills`. If the target has no such directory, stop and say so.
 - `EVALS_DIR` is where the target's manifests live. Default `evals` at the repository root, outside `SKILLS_DIR`. A skill installer copies a skill directory verbatim, so a manifest kept beside a skill ships that skill's trigger queries, expected answers, and oracle scripts to everyone who installs it. Keep manifests out of `SKILLS_DIR` unless the target already has them there, in which case leave them where they are and skip `EVALS_DIR` everywhere below.
+- `CONTENT_LINK_EXCEPTIONS_FILE` is an optional path to a version-1 JSON policy. `skill-lint` passes it to `check-skill-content.py --link-exceptions-file`. It permits listed missing direct inline Markdown links that target files created after a template is copied. Its source paths are relative to `SKILLS_DIR`. See `README.md` for the policy shape.
 - Read `$SKILL_CI/runner.lock`. Its last line is the runner spec. If the spec ends in `PIN_ME`, the fork has no pin yet. Step 3 reports that instead of installing.
 
 ## Steps
@@ -35,7 +36,7 @@ Activation wires one target repository into the shared skill testing home. It wr
          skill-ci-ref: main
    ```
 
-   Set `skills-dir` to `SKILLS_DIR` and `evals-dir` to `EVALS_DIR`. Omit `evals-dir` only for a target whose manifests stay inside the skills tree; the job then searches that tree, as it always did. The job fails when `evals-dir` names a directory that does not exist, because a search that finds nothing would otherwise pass green. Replace `main` in both places with the same tag or SHA once one exists.
+   Set `skills-dir` to `SKILLS_DIR` and `evals-dir` to `EVALS_DIR`. Set `content-link-exceptions-file` only when the target has the reviewed policy described in `README.md`. Omit `evals-dir` only for a target whose manifests stay inside the skills tree; the job then searches that tree, as it always did. The job fails when `evals-dir` names a directory that does not exist, because a search that finds nothing would otherwise pass green. Replace `main` in both places with the same tag or SHA once one exists.
 
 2. mise tasks. In the target's `mise.toml` (create it if absent) add the env and the include. If `task_config.includes` already exists, append to it.
 
@@ -48,7 +49,7 @@ Activation wires one target repository into the shared skill testing home. It wr
    includes = ["../skill-ci/skill-tasks.toml"]
    ```
 
-   Omit `EVALS_DIR` for a target whose manifests stay inside the skills tree. Every task that reads a manifest honors it, so a task run without it would check nothing.
+   Omit `EVALS_DIR` for a target whose manifests stay inside the skills tree. Every task that reads a manifest honors it, so a task run without it would check nothing. Set `CONTENT_LINK_EXCEPTIONS_FILE` only when the target has the reviewed policy described in `README.md`.
 
    Use the real relative path from the target to this checkout. Confirm with `mise tasks ls` that `skill-lint`, `skill-validate`, `skill-audit`, `skill-trigger`, and `skill-run` are listed.
 
