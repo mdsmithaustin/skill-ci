@@ -164,9 +164,9 @@ docs/link-exceptions.md             the link-exceptions policy
 docs/packages.md                    package inspection and copy comparison
 docs/evidence.md                    what each kind of check can prove
 docs/harvest-skill-optimizer.md     what was imported from skill-optimizer, and why
-tools/check-skill-frontmatter.py    frontmatter checker, copied unchanged from mds-pstack
+tools/check-skill-frontmatter.py    frontmatter checker
 tools/check-skill-content.py        link, reference, and fence checker
-tools/check-pii.py                  personal-data checker, copied unchanged from mds-pstack
+tools/check-pii.py                  personal-data checker
 tools/check-skill-package.py        package inventory and copy comparison
 tools/run_runner.py                 runs the runner pinned in runner.lock
 tools/scaffold_manifest.py          writes one empty manifest per skill
