@@ -1,120 +1,186 @@
 # skill-ci
 
-The single home for testing Agent Skills across this maintainer's skill repositories. It is itself an Agent Skill: say "activate skill-ci" in any repository that holds skills and the agent wires that repository up by following `SKILL.md`. No new harness lives here. The behavioral runner is a pinned fork of skill-eval-harness; this repository holds the case convention, the shared lints, the reusable workflow, the mise tasks, and the scaffold.
+skill-ci tests Agent Skills. A skill is a directory with a `SKILL.md` file that tells an AI coding agent, such as Claude Code or Codex, how to do a task. If a repository holds skills, skill-ci gives it two kinds of checks:
 
-Why this repository is shaped this way, and when to abandon the dependency it pins, is in `DECISIONS.md`.
+- **Free checks in CI.** A GitHub Actions workflow runs on every push and pull request. It lints each `SKILL.md`, finds broken links, rejects personal data, and validates the test-case files. No model is called.
+- **Paid checks on your machine.** Two mise tasks run Claude and Codex on test prompts with and without the skill, then grade whether the skill loaded and whether it helped. They use your own logins and spend model budget. They never run in CI.
 
-## Three layers
+skill-ci does not have its own test runner. It pins a fork of [skill-eval-harness](https://github.com/mdsmithaustin/skill-eval-harness) in `runner.lock` and runs that. `DECISIONS.md` explains why, and when to stop using the fork.
 
-1. One case convention, one manifest per skill. Each skill owns a `shared-benchmark.json`, a skill-eval-harness manifest (format version 1) with `skill_name`, a `harness` block naming the fork, `skill_paths`, the `with_skill` and `without_skill` variants, and a `cases` list. Prefer `evals/<skill>/shared-benchmark.json` at the repository root, outside the skills tree, with `skill_paths` relative to the repository root. A skill installer copies a skill directory verbatim, so a manifest at `<skills-dir>/<skill>/evals/shared-benchmark.json` ships that skill's trigger queries and oracle scripts to everyone who installs it. That older layout still resolves, with `skill_paths` relative to the skill directory, and the reusable workflow's `evals-dir` input selects which tree it searches. Case files, `prompt_ref`, and script-oracle paths resolve against the manifest's own directory in both layouts, so they move with the manifest rather than staying beside the skill. Trigger rows (`kind: trigger`, `should_trigger` true or false) are harvested from local Claude and Codex session history with observed ground truth and reviewed before use. Outcome cases are written by the skill's author. Gated skills (the ones a model may not invoke on its own) get outcome cases only, invoked by explicit `/name` or `$name`; description-triggerable skills get the trigger matrix too.
+skill-ci is also a skill itself. In a repository that holds skills, tell your agent "activate skill-ci" and it sets the repository up by following `SKILL.md`.
 
-2. One lint set, owned here and consumed everywhere. `tools/check-skill-frontmatter.py` validates agentskills.io metadata and the Codex invocation policy, and with the `trigger-cases` input also verifies every skill is declared in a trigger corpus. `tools/check-skill-content.py` fails on dangling relative links, unknown bold skill references, unclosed fences, and retired port paths. A repository whose skills reference skills living elsewhere declares them through the `content-ignore-file` input, so a real cross-repository mention is not read as a broken one. A reviewed `content-link-exceptions-file` policy can permit exact direct inline links in a copied template when its target exists only in the future output. `tools/check-pii.py` rejects likely personal data, which matters because harvested cases are cut from real session transcripts. It scans tracked files in the skills tree by default, because a shared skills workflow owns skill hygiene and not a consumer's application code. Tracked, not every file, because a behavioral run writes raw agent transcripts under the skill it exercised and those must never be committed. Set the `pii-scope` input to `repository` where a whole-repo scan is wanted, as mds-pstack does today. A consumer may keep its own copy of any of the three for a pre-commit hook, which a shared workflow cannot run, and the workflow fails if such a copy has drifted from the shared one. The checkers began as mds-pstack copies and are parametrized on a skills root. The content checker now also owns the output-time link policy described below. The reusable workflow `.github/workflows/skill-checks.yml` runs them on every push and pull request, then runs `skill-benchmark validate --strict-leakage` on every manifest and `skill-benchmark audit-manifest --fail-on-blockers` on every manifest that has at least one case. A scaffolded manifest with no cases is validated but not audited, because readiness is a question about a manifest someone has started to write. All of this is model-free.
+## Terms
 
-3. One pinned external runner. `runner.lock` holds a single `git+https` spec pointing at github.com/mdsmithaustin/skill-eval-harness at one commit. `tools/run_runner.py` validates that pin and runs the named runner entrypoint from uv's isolated environment, so a command on `PATH` cannot replace it. The workflow checks out its own immutable revision through `job.workflow_repository` and `job.workflow_sha`; callers pin only the reusable workflow and Dependabot updates that dependency. Behavioral runs (`skill-trigger`, `skill-run`) are operator-local: they drive the installed `claude` and `codex` binaries on the host's own logins, spend model budget, and never run in CI or as a pull request gate.
+| Term | Meaning |
+| --- | --- |
+| Skills directory | The directory whose children each hold a `SKILL.md`. Set by `SKILLS_DIR` locally and `skills-dir` in CI. Default `skills`. |
+| Manifest | The test file for one skill, `shared-benchmark.json`, in skill-eval-harness format version 1. It names the skill, its files (`skill_paths`), the two variants, and a list of cases. |
+| Case | One test prompt in a manifest, with the assertions that grade it. |
+| Trigger case | A case that checks whether the agent loads the skill for a prompt. `should_trigger` says whether it should. |
+| Outcome case | A case that checks whether the skill made the agent's result better. |
+| Variant | One side of a paired run. `with_skill` has the skill installed. `without_skill` does not. |
+| Oracle | A script that grades a run's output. |
+| Judge | A model that grades a run against a rubric. |
+| Readiness audit | `skill-benchmark audit-manifest`. It fails a manifest that is not ready for a paid run, for example one with no near-miss negative cases. |
 
-An optional [package check](docs/packages.md) inventories every file in a skill and can compare it with an installed copy. It leaves the existing lint policies unchanged. The [evidence guide](docs/evidence.md) explains what format checks, package identity, installer probes, native activation, and paired runs can each establish.
+## Add skill-ci to a repository
 
-Set `package-check: true` in the reusable workflow caller to inspect package trees in CI. Set `require-manifests: true` to fail when the manifest job checks zero files. Both inputs default to false. An empty scaffolded manifest counts as a file and still skips the readiness audit.
+You need `mise` and `uv` on your machine. The CI workflow needs GitHub.com. GitHub Enterprise Server does not provide the job fields the workflow uses to find its own revision.
 
-CI uses the workflow SHA pinned by each adopter. A Dependabot update takes effect after its PR merges. Local tasks use the `SKILL_CI` checkout, so update that checkout to receive its latest runner pin. Workflow self-identification requires GitHub.com; GitHub Enterprise Server does not provide these job fields.
+1. Clone skill-ci next to the repository that holds your skills.
 
-## Activation flow
+2. In that repository, ask your agent to "activate skill-ci". The agent follows `SKILL.md`, which is the full procedure. It does the following:
 
-`SKILL.md` is the contract; this is the shape. The agent locates this checkout and the target's skills directory, writes a caller workflow with one full SHA pin, preserves existing workflow inputs, adds the `[env]` and `task_config.includes` lines to the target's `mise.toml`, warms the runner through `tools/run_runner.py`, scaffolds one empty manifest per skill with `tools/scaffold_manifest.py`, runs the model-free tasks, and stops with a report. It keeps an existing Dependabot configuration and adds a root `github-actions` entry only when needed. It never runs a paid step, never writes a case, and never commits or pushes. Running it twice keeps existing manifests, jobs, inputs, includes, and Dependabot entries.
+   - Writes `.github/workflows/skill-checks.yml`, which calls this repository's reusable workflow at one full commit SHA.
+   - Adds a Dependabot `github-actions` entry if none covers the workflow, so the SHA gets update pull requests.
+   - Adds `SKILL_CI`, `EVALS_DIR`, and the `skill-tasks.toml` include to your `mise.toml`.
+   - Downloads the pinned runner.
+   - Writes one empty manifest per skill at `evals/<skill>/shared-benchmark.json`.
+   - Adds run-output directories to `.gitignore`, because runs save raw agent transcripts.
+   - Runs `mise run skill-lint` and `mise run skill-validate`, and reports the results.
 
-## Local tasks
+   Activation never runs a paid task, never writes a case, and never commits or pushes. You can run it again safely. It keeps existing manifests, workflow inputs, includes, and Dependabot entries.
 
-`skill-tasks.toml` is a mise task file. A target includes it or copies its tables. Every task reads `SKILL_CI` (this checkout) and `SKILLS_DIR` (default `skills`). A target whose manifests live outside the skills tree sets `EVALS_DIR`, and every task that reads a manifest honors it. Unset, each one searches the skills tree as before. A task fails rather than checking nothing when `EVALS_DIR` names a directory that does not exist.
+3. Write cases in each manifest. See [Write test cases for a skill](docs/authoring-cases.md).
 
-| Task | Runs where | What it does |
-| --- | --- | --- |
-| `skill-lint` | CI and local | Both checkers over `SKILLS_DIR` |
-| `skill-package` | CI when enabled, and local | Read-only package inventory, plus copy comparison when `INSTALLED_SKILLS_DIR` is set locally |
-| `skill-validate` | CI and local | Runs `skill-benchmark validate --strict-leakage` on every manifest through the locked dispatcher |
-| `skill-audit` | CI and local | Runs `skill-benchmark audit-manifest --fail-on-blockers` on every manifest through the locked dispatcher |
-| `skill-trigger <skill>` | Local only | Trigger matrix on Claude and Codex, host logins, paid |
-| `skill-run <skill>` | Local only | Readiness audit, then paired with and without runs on Claude and Codex, graded, judged and reported, host logins, paid |
+4. Run the paid checks when you choose:
 
-`skill-run` refuses to start when the readiness audit reports a blocker. Set `AGENTS` to limit which harnesses run, `RUNS` for repetitions, `MODEL` and `CODEX_MODEL` for the answering models and `JUDGE_MODEL` for the judge, `JUDGE_RUNS` for how many times each judge task repeats before the verdicts are merged, `TIMEOUT` for the per-run ceiling, `OUT` for the output directory, and `CODEX_CMD` to override the Codex command prefix (the prefix names no model; `CODEX_MODEL` sets it, because the configured default on this host is rejected by the current codex-cli). This repository's own `mise.toml` includes the same task file and adds `test`, which runs the unit tests.
+   ```sh
+   mise run skill-trigger skills/my-skill
+   mise run skill-run skills/my-skill
+   ```
 
-## Output-time links
+If you set the repository up by hand, the caller workflow looks like this. Replace the SHA with the full commit SHA of the skill-ci revision you want.
 
-Use a link-exceptions file only when a copied template names an output file that does not exist in the installed skill. The checker keeps all other content checks active. It does not exempt images, reference definitions, inline-code paths, sibling skill names, fences, or port substitutions.
-
-The file is version-1 JSON. Each key in `inline_link_exceptions` is a path relative to `SKILLS_DIR`. Each value is a nonempty list of unique exact destination spellings from direct inline Markdown links. A policy entry for `../REPORT-[TOPIC].md` does not permit `<../REPORT-[TOPIC].md>` or a similar destination in another source file.
-
-```json
-{
-  "version": 1,
-  "inline_link_exceptions": {
-    "example-skill/assets/report.template.md": [
-      "../REPORT-[TOPIC].md"
-    ]
-  }
-}
+```yaml
+name: skill-checks
+on: [push, pull_request]
+jobs:
+  skills:
+    uses: mdsmithaustin/skill-ci/.github/workflows/skill-checks.yml@<full-commit-sha>
+    with:
+      skills-dir: skills
+      evals-dir: evals
 ```
 
-The checker reads the policy through `--link-exceptions-file PATH`. For local linting, set `CONTENT_LINK_EXCEPTIONS_FILE` to the policy path before you run `mise run skill-lint`. For the reusable workflow, set `content-link-exceptions-file` to the same path. Omit the option, the variable, and the workflow input when every relative link resolves in the checked skill tree.
+## Keep manifests outside the skills directory
 
-If your repository keeps a local copy of `tools/check-skill-content.py`, copy the checker from the same skill-ci revision you select for the workflow. The workflow rejects drift between the local and shared checkers.
+Put each manifest at `evals/<skill>/shared-benchmark.json` at the repository root. Skill installers copy a skill's whole directory to every user. A manifest inside the skill directory would ship your test prompts, expected answers, and oracle scripts to everyone who installs the skill.
 
-## Authoring conventions
+The older layout, `<skills-dir>/<skill>/evals/shared-benchmark.json`, still works. In that layout, leave `EVALS_DIR` and `evals-dir` unset, and `skill_paths` are relative to the skill directory instead of the repository root.
 
-Eight rules for anyone writing cases. The first five come from the research that chose this shape. The last three were paid for by the runs that followed.
+In both layouts, case files, `prompt_ref`, and oracle script paths are relative to the manifest's own directory. Keep them next to the manifest.
 
-1. Describe the world in prose instead of fixtures. A case states what the repository, the files, and the situation look like in a few sentences the agent reads as context. Build a fixture tree only when an assertion has to read a real file that was placed there before the run. A file the agent itself writes is not readable by an assertion on the `run-agent` path, per convention six.
+## Tasks
 
-2. Grade the trace, not the message. The final reply is the easiest thing to fake. Assertions look at what the agent did, which files it read, which commands it ran, and whether the skill loaded. Trace evidence is the durable kind. A file the agent wrote is not, on the `run-agent` path, for the reason convention six gives. A trace assertion on a read of a referenced file is also the only proof that the reference resolves and loads.
+`skill-tasks.toml` defines these mise tasks. Your repository includes that file from its `mise.toml`.
 
-3. One result assertion and one path assertion per case. The result assertion says what must be true of the outcome. The path assertion says what must be true of how the agent got there. A case with five assertions is five cases with worse names. A case with only a result assertion passes when the agent guesses.
+| Task | Where it runs | Cost | What it does |
+| --- | --- | --- | --- |
+| `skill-lint` | CI and local | Free | Runs the frontmatter checker and the content checker over the skills directory. |
+| `skill-package` | Local, and CI when `package-check` is on | Free | Lists every file in each skill package. If `INSTALLED_SKILLS_DIR` is set, also compares each package with its installed copy. See [Check package files and installed copies](docs/packages.md). |
+| `skill-validate` | CI and local | Free | Runs `skill-benchmark validate --strict-leakage` on every manifest. |
+| `skill-audit` | CI and local | Free | Runs the readiness audit on every manifest. |
+| `skill-trigger <skill>` | Local only | Paid | Runs every trigger case on Claude and Codex and records whether the skill loaded. |
+| `skill-run <skill>` | Local only | Paid | Runs the readiness audit, then runs every outcome case with and without the skill on Claude and Codex. It grades the runs, judges them, and writes a report. It stops if the audit finds a blocker. |
 
-4. Near-miss negatives. Every trigger matrix needs prompts that look like they want the skill and do not, and every outcome set needs a case where the right move is to scope down, refuse, or hold a rule under pressure. The readiness audit calls these adversarial cases and will not pass a manifest without them.
+In CI, the audit skips a manifest that has no cases yet. A scaffolded empty manifest is validated but not audited.
 
-5. Readiness audit before any paid run. `skill-benchmark audit-manifest --fail-on-blockers --strict-judge` runs before any command that spends model budget, so a manifest whose judge is also a model under test stops the run. It is wired into `skill-run` and into CI. A manifest that fails it is not ready, whatever the author believes about it.
+This repository's own `mise.toml` adds a `test` task that runs the unit tests.
 
-Sixth, learned the hard way on 2026-09-13. Assert on the skill's product, never on the whole reply. A skill that works often explains what it did, and the explanation quotes the very thing the skill removed. A substring gate over the reply then fails the good run and passes the silent one, and the report reads as negative lift when the skill actually performed better. Do not solve this by asking for a file. On the `run-agent` path the agent's working directory is temporary and is discarded, and nothing copies its files into the run directory, so a written artifact never reaches an assertion. Have the case ask for the product inside a delimiter and have a `script` oracle extract it from `output.md`. Use tags rather than code fences, because content containing a fenced code block closes an outer fence early. A script oracle must be a real file in its own subdirectory and must take `{output_dir}` as an argument, because it runs with the manifest directory as its working directory. One more rule from the same run. Encode the skill's rule, not a crude substring of it.
+## Configuration
 
-Seventh. Make the judge count, and make it say why. On a prose or judgement skill the judge is usually the only assertion that discriminates, because deterministic gates sit at ceiling once a case is easy enough for the base model. Three settings decide whether that signal reaches the report. Give the assertion gate severity when the judge is the instrument you trust, since a soft judge contributes nothing to the headline score and a run can separate the arms cleanly while still reporting no lift. Score anchored dimensions rather than one flat rubric, so a failure names the property that fell instead of returning a number nobody can act on. Repeat the judge and let the harness merge the verdicts, because a single sampled verdict hides its own variance.
+### Workflow inputs
 
-Eighth. Prefer the calibration you already have to a new dependency. The harness ships judge alignment against human labels, judge robustness probes with negative controls, multi-judge panels with quorum, and repeated judging. Before adopting an external scoring framework, check whether the thing it improves is actually your bottleneck. Resolution and variance in the score are rarely the limit. Case discrimination and sample size usually are.
+Set these under `with:` in your caller workflow.
 
-For review and repair skills, also include a healthy control that should remain unchanged. The [evidence guide](docs/evidence.md#author-cases-that-can-distinguish-behavior) explains how that control catches an audit that criticizes every input, and how to separate case definitions from executed results.
+| Input | Default | Effect |
+| --- | --- | --- |
+| `skills-dir` | `skills` | The skills directory. |
+| `evals-dir` | empty | Where manifests live. Empty means search inside the skills directory. The job fails if this names a directory that does not exist. |
+| `require-manifests` | `false` | Fail when no manifest files are found. An empty scaffolded manifest counts as a file. |
+| `package-check` | `false` | Run the package check. Rejects symlinks and special files in skill packages. |
+| `pii-scope` | `skills` | `skills` scans tracked files in the skills directory for personal data. `repository` scans every tracked file. |
+| `trigger-cases` | empty | Path to a version-1 trigger declaration file. When set, the frontmatter check also fails for any skill that the file does not declare. |
+| `content-ignore-file` | empty | Path to a list of skill names that live in another repository, one per line, with `#` comments allowed. The content checker does not report mentions of them as broken. |
+| `content-link-exceptions-file` | empty | Path to a link-exceptions policy. See [Allow links to files a template creates](docs/link-exceptions.md). |
+| `strict-frontmatter` | `false` | Not implemented. Setting it fails the job. See `TODO.md`. |
+| `skill-ci-ref` | empty | Deprecated and ignored. Remove it from your caller. |
 
-## Layout
+If your repository keeps its own copy of `check-skill-frontmatter.py`, `check-skill-content.py`, `check-pii.py`, or `requirements.txt` under `tools/`, for example for a pre-commit hook, the workflow fails when that copy differs from the skill-ci copy.
+
+### Environment variables for local tasks
+
+| Variable | Default | Used by | Effect |
+| --- | --- | --- | --- |
+| `SKILL_CI` | required | all | Path to your skill-ci checkout. |
+| `SKILLS_DIR` | `skills` | all | The skills directory. |
+| `EVALS_DIR` | unset | tasks that read manifests | Where manifests live. Unset means search inside the skills directory. A task fails if this names a directory that does not exist. |
+| `CONTENT_LINK_EXCEPTIONS_FILE` | unset | `skill-lint` | Path to a link-exceptions policy. |
+| `INSTALLED_SKILLS_DIR` | unset | `skill-package` | Installed skills to compare against. |
+| `AGENTS` | `claude codex` | `skill-run` | Which agents to run. |
+| `RUNS` | `3` | `skill-trigger`, `skill-run` | Repetitions per case. |
+| `MODEL` | `sonnet` for `skill-run` | `skill-trigger`, `skill-run` | Claude model that answers the prompts. |
+| `CODEX_MODEL` | `gpt-5.6-sol` | `skill-run` | Codex model that answers the prompts. |
+| `JUDGE_MODEL` | `opus` | `skill-run` | Model that judges the runs. |
+| `JUDGE_RUNS` | `3` | `skill-run` | How many times each judge task repeats before the verdicts are merged. |
+| `TIMEOUT` | `240` | `skill-run` | Seconds allowed per run. |
+| `OUT` | `<skill>/eval-runs/<timestamp>` | `skill-trigger`, `skill-run` | Output directory. |
+| `CODEX_CMD` | `tools/codex-project-only exec ...` | `skill-trigger`, `skill-run` | Command prefix that starts Codex. It does not name a model. `CODEX_MODEL` does. |
+
+The paid tasks start Claude and Codex through `tools/claude-project-only` and `tools/codex-project-only`. Those wrappers hide the skills in your home directory, so a run sees only the skill under test.
+
+## Update skill-ci
+
+- **CI.** Each repository's workflow uses the skill-ci SHA it pins. Dependabot opens a pull request when skill-ci changes, and the new SHA takes effect when you merge it.
+- **Local tasks.** They use whatever your `SKILL_CI` checkout contains. Pull that checkout to get the latest runner pin.
+
+## What a passing check proves
+
+A green CI run means the lints passed and the manifests are well formed. It does not mean any paid run happened, or that the skill helps. [What a passing check proves](docs/evidence.md) lists what each kind of check can and cannot show.
+
+## Repository layout
 
 ```text
-SKILL.md                          activation contract for an agent
-README.md                         this file
-DECISIONS.md                      why the repository is shaped this way
-TODO.md                           what is deliberately not done yet
-runner.lock                       the one runner pin
-skill-tasks.toml                  mise tasks a target includes
-mise.toml                         this repository's own tools and tasks
-lefthook.yml                      pre-commit rejects PII and runs the unit tests
-.github/workflows/skill-checks.yml  reusable workflow_call workflow
-.github/workflows/test.yml         Linux and macOS unit tests on pull requests and main
-.github/dependabot.yml            weekly actions and pip updates
-docs/packages.md                 package inspection and copy comparison
-docs/evidence.md                 evidence limits and healthy controls
-docs/harvest-skill-optimizer.md   source and disposition of the peer-repo imports
-tools/check-skill-frontmatter.py  verbatim from mds-pstack
-tools/check-skill-content.py      content checks and exact output-time link exceptions
-tools/check-pii.py                verbatim from mds-pstack
-tools/check-skill-package.py      read-only package inventory and copy comparison
-tools/scaffold_manifest.py        writes an empty manifest per skill, either layout
-tools/test_*.py                   checker, scaffold, and workflow regression tests
-tools/requirements.txt            hashed PyYAML pin for the checkers
-tools/claude-project-only         Claude with user skills hidden, writes allowed
-tools/codex-project-only          Codex with user skills hidden, login kept
+SKILL.md                            instructions an agent follows to activate skill-ci
+DECISIONS.md                        why the repository is shaped this way
+TODO.md                             known gaps, each with its reason
+runner.lock                         the one runner pin
+skill-tasks.toml                    mise tasks that a repository includes
+mise.toml                           this repository's own tools and tasks
+lefthook.yml                        pre-commit hook: rejects personal data, runs the unit tests
+.github/workflows/skill-checks.yml  the reusable workflow that callers pin
+.github/workflows/test.yml          unit tests on Linux and macOS, plus a run of the reusable workflow
+.github/fixtures/                   one example skill and manifest for that run
+.github/dependabot.yml              weekly updates for actions and pip
+docs/authoring-cases.md             how to write test cases
+docs/link-exceptions.md             the link-exceptions policy
+docs/packages.md                    package inspection and copy comparison
+docs/evidence.md                    what each kind of check can prove
+docs/harvest-skill-optimizer.md     what was imported from skill-optimizer, and why
+tools/check-skill-frontmatter.py    frontmatter checker, copied unchanged from mds-pstack
+tools/check-skill-content.py        link, reference, and fence checker
+tools/check-pii.py                  personal-data checker, copied unchanged from mds-pstack
+tools/check-skill-package.py        package inventory and copy comparison
+tools/run_runner.py                 runs the runner pinned in runner.lock
+tools/scaffold_manifest.py          writes one empty manifest per skill
+tools/claude-project-only           starts Claude with your personal skills hidden
+tools/codex-project-only            starts Codex with your personal skills hidden
+tools/requirements.txt              hashed PyYAML pin for the checkers
+tools/test_*.py                     unit tests
 ```
 
-## Running the tests here
+## Run this repository's tests
 
-The repository test workflow runs the same `mise run test` command on Linux and macOS. It is separate from the reusable consumer workflow and does not call a model.
+```sh
+mise run test
+```
 
-`mise run test`, or without mise:
+Without mise:
 
 ```sh
 uv run --no-project --with-requirements tools/requirements.txt \
-  python -m unittest discover -s tools -p 'test_*.py'
+	python -m unittest discover -s tools -p 'test_*.py'
 ```
+
+The tests do not call a model.

@@ -21,7 +21,7 @@ Keep evaluation definitions separate from executed results. A scaffold with case
 
 For skills that audit, review, or repair, include a healthy control where the correct result is to keep the input unchanged or report no findings. Pair it with a concrete defect. An audit that criticizes every input must fail the healthy control.
 
-Test positive, near-miss negative, and ambiguous trigger requests separately from outcome quality. Keep a held-out set when tuning a description. Preserve failures and repeat runs to expose variance. The [authoring conventions](../README.md#authoring-conventions) describe how to write cases in the existing manifest format.
+Test positive, near-miss negative, and ambiguous trigger requests separately from outcome quality. Keep a held-out set when tuning a description. Preserve failures and repeat runs to expose variance. The [authoring conventions](authoring-cases.md) describe how to write cases in the existing manifest format.
 
 Do not turn the optimizer's audit-focus categories into required coverage for every skill. Choose the cases that distinguish the particular skill's promised behavior, and use the pinned runner's readiness audit for its existing checks.
 

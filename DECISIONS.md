@@ -66,7 +66,7 @@ Outcome cases are the skill author's. The readiness audit refuses a paid run on 
 
 ## Judges
 
-A judge assertion carries gate severity, anchored dimensions, and repeats. The reasons are in `README.md` under the authoring conventions, and they were paid for by a measured run where the judge was the only assertion that discriminated while every deterministic gate sat at ceiling.
+A judge assertion carries gate severity, anchored dimensions, and repeats. The reasons are in `docs/authoring-cases.md`, rule 7, and they were paid for by a measured run where the judge was the only assertion that discriminated while every deterministic gate sat at ceiling.
 
 An external scoring framework, LLM-as-a-Verifier, was evaluated and declined. Its method needs token log probabilities, which the Claude Messages API does not expose at all. It improves score resolution, which the measured evidence says is not the limit. The limit is case discrimination and sample size. The harness already ships the calibration machinery that framework does not claim, including alignment against human labels, robustness probes with negative controls, panels with quorum, and repeated judging.
 

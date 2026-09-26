@@ -12,12 +12,12 @@ Activation wires one target repository into the shared skill testing home. It wr
 - `SKILL_CI` is the absolute path of the directory holding this file. Every command below uses it.
 - `SKILLS_DIR` is the target's skills directory: the one whose children each hold a `SKILL.md`. Default `skills`. If the target has no such directory, stop and say so.
 - `EVALS_DIR` is where the target's manifests live. Default `evals` at the repository root, outside `SKILLS_DIR`. A skill installer copies a skill directory verbatim, so a manifest kept beside a skill ships that skill's trigger queries, expected answers, and oracle scripts to everyone who installs it. Keep manifests out of `SKILLS_DIR` unless the target already has them there, in which case leave them where they are and skip `EVALS_DIR` everywhere below.
-- `CONTENT_LINK_EXCEPTIONS_FILE` is an optional path to a version-1 JSON policy. `skill-lint` passes it to `check-skill-content.py --link-exceptions-file`. It permits listed missing direct inline Markdown links that target files created after a template is copied. Its source paths are relative to `SKILLS_DIR`. See `README.md` for the policy shape.
+- `CONTENT_LINK_EXCEPTIONS_FILE` is an optional path to a version-1 JSON policy. `skill-lint` passes it to `check-skill-content.py --link-exceptions-file`. It permits listed missing direct inline Markdown links that target files created after a template is copied. Its source paths are relative to `SKILLS_DIR`. See `docs/link-exceptions.md` for the policy shape.
 - `runner.lock` is the only runner pin. Local tasks read it at execution time through `$SKILL_CI/tools/run_runner.py`.
 
 ## Steps
 
-1. Workflow. Write `.github/workflows/skill-checks.yml` in the target, or add the `skills` job to an existing lint workflow. Reference the reusable workflow. Do not copy its body. Resolve the full commit SHA of the published skill-ci revision before writing the caller. Write that SHA in `uses`. Keep every existing `with` input that the target uses. Remove `skill-ci-ref` when present because the reusable workflow accepts it only for compatibility and ignores it. Set `skills-dir` to `SKILLS_DIR` and `evals-dir` to `EVALS_DIR`. Set `content-link-exceptions-file` only when the target has the reviewed policy described in `README.md`. Omit `evals-dir` only for a target whose manifests stay inside the skills tree. The job fails when `evals-dir` names a directory that does not exist.
+1. Workflow. Write `.github/workflows/skill-checks.yml` in the target, or add the `skills` job to an existing lint workflow. Reference the reusable workflow. Do not copy its body. Resolve the full commit SHA of the published skill-ci revision before writing the caller. Write that SHA in `uses`. Keep every existing `with` input that the target uses. Remove `skill-ci-ref` when present because the reusable workflow accepts it only for compatibility and ignores it. Set `skills-dir` to `SKILLS_DIR` and `evals-dir` to `EVALS_DIR`. Set `content-link-exceptions-file` only when the target has the reviewed policy described in `docs/link-exceptions.md`. Omit `evals-dir` only for a target whose manifests stay inside the skills tree. The job fails when `evals-dir` names a directory that does not exist.
 
    Inspect `.github/dependabot.yml` and `.github/dependabot.yaml`. Reuse an existing `github-actions` update entry for directory `/` only when it covers the default branch, permits version-update PRs, and includes `mdsmithaustin/skill-ci`. Check `target-branch`, `open-pull-requests-limit`, and any `allow` or `ignore` rules. A matching ecosystem and directory alone do not prove updates are enabled. Add an entry when neither file has one. Preserve the existing file spelling and unrelated ecosystems, schedules, groups, and labels.
 
@@ -43,7 +43,7 @@ Activation wires one target repository into the shared skill testing home. It wr
    includes = ["../skill-ci/skill-tasks.toml"]
    ```
 
-   Omit `EVALS_DIR` for a target whose manifests stay inside the skills tree. Every task that reads a manifest honors it, so a task run without it would check nothing. Set `CONTENT_LINK_EXCEPTIONS_FILE` only when the target has the reviewed policy described in `README.md`.
+   Omit `EVALS_DIR` for a target whose manifests stay inside the skills tree. Every task that reads a manifest honors it, so a task run without it would check nothing. Set `CONTENT_LINK_EXCEPTIONS_FILE` only when the target has the reviewed policy described in `docs/link-exceptions.md`.
 
    Use the real relative path from the target to this checkout. Confirm with `mise tasks ls` that `skill-lint`, `skill-validate`, `skill-audit`, `skill-trigger`, and `skill-run` are listed.
 
@@ -78,5 +78,5 @@ Activation wires one target repository into the shared skill testing home. It wr
 - Re-activation is safe. Every step converges: existing workflow jobs, includes, and manifests are kept, not rewritten.
 - The pin lives in `runner.lock` only. Do not write the runner version anywhere else.
 - New callers pin only the reusable workflow. Dependabot updates that full SHA through its `github-actions` entry.
-- `README.md` in this checkout owns the three-layer shape and the authoring conventions. Point authors there instead of restating them.
+- `README.md` in this checkout owns the overview and configuration reference. `docs/authoring-cases.md` owns the authoring conventions. Point authors there instead of restating them.
 - `DECISIONS.md` owns the rationale, including why the runner is a pinned fork and the test for when to stop using it. Point a reader there rather than explaining it in a run report.
