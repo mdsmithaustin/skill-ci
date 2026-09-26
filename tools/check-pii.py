@@ -14,7 +14,7 @@ from pathlib import Path
 EXAMPLE_EMAIL_DOMAINS = {"example.com", "example.net", "example.org"}
 ALLOWED_EMAILS = {"git@github.com"}
 EMAIL = re.compile(
-    r"(?<![A-Za-z0-9.!#$%&'*+=?^_`{|}~/-])"
+    r"(?<![A-Za-z0-9.!#$%&'*=?^_`{|}~/])"
     r"(?=[A-Za-z0-9])"
     r"[A-Za-z0-9!#$%&'*+=?^_`{|}~-]+"
     r"(?:\.[A-Za-z0-9!#$%&'*+=?^_`{|}~-]+)*"
