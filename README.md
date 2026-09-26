@@ -82,17 +82,17 @@ In both layouts, case files, `prompt_ref`, and oracle script paths are relative 
 | `skill-validate` | CI and local | Free | Runs `skill-benchmark validate --strict-leakage` on every manifest. |
 | `skill-audit` | CI and local | Free | Runs the readiness audit on every manifest. |
 | `skill-trigger <skill>` | Local only | Paid | Runs every trigger case on Claude and Codex and records whether the skill loaded. |
-| `skill-run <skill>` | Local only | Paid | Runs the readiness audit, then runs the outcome cases in the manifest's `tune` split with and without the skill on Claude and Codex. It grades the runs, judges them, and writes a report. It stops if the audit finds a blocker. |
+| `skill-run <skill>` | Local only | Paid | Runs the readiness audit, then runs the cases in the manifest's `tune` split with and without the skill on Claude and Codex. It grades the runs, judges them, and writes a report. It stops if the audit finds a blocker. |
+
+In CI, the audit skips a manifest that has no cases yet. A scaffolded empty manifest is validated but not audited.
+
+This repository's own `mise.toml` adds a `test` task that runs the unit tests.
 
 ### What the lints check
 
 - `check-skill-frontmatter.py` validates each `SKILL.md` against the agentskills.io metadata rules and the Codex invocation policy. With `trigger-cases` set, it also fails for any skill missing from the trigger declaration file.
 - `check-skill-content.py` fails on relative links whose target does not exist, bold skill names that match no known skill, unclosed code fences, and retired port paths.
 - `check-pii.py` fails on likely personal data. This matters because trigger cases are cut from real session transcripts.
-
-In CI, the audit skips a manifest that has no cases yet. A scaffolded empty manifest is validated but not audited.
-
-This repository's own `mise.toml` adds a `test` task that runs the unit tests.
 
 ## Configuration
 
