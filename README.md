@@ -3,7 +3,7 @@
 skill-ci tests Agent Skills. A skill is a directory with a `SKILL.md` file that tells an AI coding agent, such as Claude Code or Codex, how to do a task. If a repository holds skills, skill-ci gives it two kinds of checks:
 
 - **Free checks in CI.** A GitHub Actions workflow runs on every push and pull request. It lints each `SKILL.md`, finds broken links, rejects personal data, and validates the test-case files. No model is called.
-- **Paid checks on your machine.** Two mise tasks run Claude and Codex on test prompts with and without the skill, then grade whether the skill loaded and whether it helped. They use your own logins and spend model budget. They never run in CI.
+- **Paid checks on your machine.** Two mise tasks run Claude and Codex on test prompts. One checks whether the skill loads when it should. The other runs each prompt with and without the skill and grades whether the skill helped. They use your own logins and spend model budget. They never run in CI.
 
 skill-ci does not have its own test runner. It pins a fork of [skill-eval-harness](https://github.com/mdsmithaustin/skill-eval-harness) in `runner.lock` and runs that. `DECISIONS.md` explains why, and when to stop using the fork.
 
@@ -82,7 +82,13 @@ In both layouts, case files, `prompt_ref`, and oracle script paths are relative 
 | `skill-validate` | CI and local | Free | Runs `skill-benchmark validate --strict-leakage` on every manifest. |
 | `skill-audit` | CI and local | Free | Runs the readiness audit on every manifest. |
 | `skill-trigger <skill>` | Local only | Paid | Runs every trigger case on Claude and Codex and records whether the skill loaded. |
-| `skill-run <skill>` | Local only | Paid | Runs the readiness audit, then runs every outcome case with and without the skill on Claude and Codex. It grades the runs, judges them, and writes a report. It stops if the audit finds a blocker. |
+| `skill-run <skill>` | Local only | Paid | Runs the readiness audit, then runs the outcome cases in the manifest's `tune` split with and without the skill on Claude and Codex. It grades the runs, judges them, and writes a report. It stops if the audit finds a blocker. |
+
+### What the lints check
+
+- `check-skill-frontmatter.py` validates each `SKILL.md` against the agentskills.io metadata rules and the Codex invocation policy. With `trigger-cases` set, it also fails for any skill missing from the trigger declaration file.
+- `check-skill-content.py` fails on relative links whose target does not exist, bold skill names that match no known skill, unclosed code fences, and retired port paths.
+- `check-pii.py` fails on likely personal data. This matters because trigger cases are cut from real session transcripts.
 
 In CI, the audit skips a manifest that has no cases yet. A scaffolded empty manifest is validated but not audited.
 
@@ -114,18 +120,18 @@ If your repository keeps its own copy of `check-skill-frontmatter.py`, `check-sk
 | Variable | Default | Used by | Effect |
 | --- | --- | --- | --- |
 | `SKILL_CI` | required | all | Path to your skill-ci checkout. |
-| `SKILLS_DIR` | `skills` | all | The skills directory. |
-| `EVALS_DIR` | unset | tasks that read manifests | Where manifests live. Unset means search inside the skills directory. A task fails if this names a directory that does not exist. |
+| `SKILLS_DIR` | `skills` | `skill-lint`, `skill-package`, `skill-validate`, `skill-audit` | The skills directory. `skill-trigger` and `skill-run` take the skill directory as an argument instead. |
+| `EVALS_DIR` | unset | tasks that read manifests | Where manifests live. Unset means search inside the skills directory. The directory must be named `evals`, because the runner finds the repository root from that name. A task fails if this names a directory that does not exist. |
 | `CONTENT_LINK_EXCEPTIONS_FILE` | unset | `skill-lint` | Path to a link-exceptions policy. |
 | `INSTALLED_SKILLS_DIR` | unset | `skill-package` | Installed skills to compare against. |
 | `AGENTS` | `claude codex` | `skill-run` | Which agents to run. |
 | `RUNS` | `3` | `skill-trigger`, `skill-run` | Repetitions per case. |
-| `MODEL` | `sonnet` for `skill-run` | `skill-trigger`, `skill-run` | Claude model that answers the prompts. |
-| `CODEX_MODEL` | `gpt-5.6-sol` | `skill-run` | Codex model that answers the prompts. |
+| `MODEL` | `sonnet` for `skill-run`, the runner's default for `skill-trigger` | `skill-trigger`, `skill-run` | Model that answers the prompts. In `skill-run` it applies to Claude only. |
+| `CODEX_MODEL` | `gpt-5.6-sol` | `skill-run` | Codex model that answers the prompts. `skill-run` sets it explicitly because the current codex-cli rejects the default model configured on the maintainer's machine. |
 | `JUDGE_MODEL` | `opus` | `skill-run` | Model that judges the runs. |
 | `JUDGE_RUNS` | `3` | `skill-run` | How many times each judge task repeats before the verdicts are merged. |
 | `TIMEOUT` | `240` | `skill-run` | Seconds allowed per run. |
-| `OUT` | `<skill>/eval-runs/<timestamp>` | `skill-trigger`, `skill-run` | Output directory. |
+| `OUT` | `<skill>/eval-runs/trigger-<timestamp>` or `<skill>/eval-runs/run-<timestamp>` | `skill-trigger`, `skill-run` | Output directory. |
 | `CODEX_CMD` | `tools/codex-project-only exec ...` | `skill-trigger`, `skill-run` | Command prefix that starts Codex. It does not name a model. `CODEX_MODEL` does. |
 
 The paid tasks start Claude and Codex through `tools/claude-project-only` and `tools/codex-project-only`. Those wrappers hide the skills in your home directory, so a run sees only the skill under test.
