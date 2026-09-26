@@ -139,6 +139,13 @@ class PiiCheck(unittest.TestCase):
         card = "4242" + " " + "4242" + " " + "4242" + " " + "4241"
         self.assertEqual(self.check(f"Reference {card}.\n"), (0, ""))
 
+    def test_digits_inside_a_hex_hash_pass(self) -> None:
+        digest = "sha256:513a" + "37841" + "04839770" + "d690e0"
+        self.assertEqual(self.check(f"hash = {digest}\n"), (0, ""))
+
+    def test_decorator_on_an_added_diff_line_passes(self) -> None:
+        self.assertEqual(self.check("+@pytest.mark.parametrize(\n", suffix=".patch"), (0, ""))
+
     def test_north_american_phone_number_fails(self) -> None:
         phone = "415" + "-" + "555" + "-" + "2671"
         code, output = self.check(f"Call {phone}.\n")
