@@ -37,8 +37,8 @@ Patches 2 to 7 are adapter edge. Patch 1 is a bug fix. Before it, the runner alr
 
 Patch 8 has two parts.
 
-- **Arm instructions.** `old_skill` said it was the "old/baseline version", and `with_skill` called its skill "the skill under test". The runner already gives a blind ablation arm the `with_skill` instruction (`Arm(..., blind=True)`) so that it cannot tell which arm it is in. Applying that rule to `old_skill` and `with_skill` is a bug fix.
-- **Grading words.** The answer prompt dropped "hidden answer keys" and Eval vocabulary, and a new test bans those words. The runner had no rule against telling the answering agent it is graded. This part is the third kind, and it is the first patch of that kind.
+- **Arm instructions.** `old_skill` said it was the "old/baseline version". The runner already gives a blind ablation arm the `with_skill` instruction (`Arm(..., blind=True)`) so that it cannot tell which arm it is in. Giving `old_skill` the same instruction applies that rule, so this part is a bug fix.
+- **Grading words.** The answer prompt dropped "hidden answer keys" and Eval vocabulary, `with_skill` stopped calling its skill "the skill under test", and a new test bans those words. The runner had no rule against telling the answering agent it is graded. This part is the third kind, and it is the first patch of that kind.
 
 It moves `instruction_sha256` for the `with_skill`, `old_skill`, and blind ablation arms.
 
