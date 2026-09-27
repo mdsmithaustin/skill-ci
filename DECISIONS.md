@@ -30,10 +30,19 @@ Building our own would have reproduced about twenty thousand lines to add two th
 The original exit test counted patches. That measured the wrong thing, because driving two command line tools that ship weekly produces a steady trickle of adapter fixes. The test is now where a patch lands, and a patch lands in one of three places.
 
 - A fix at the adapter edge is the ordinary cost of the dependency.
-- A fix that applies the tool's own evaluation rules to a path that missed them is a bug fix in the tool.
-- A fix that has to change grading, aggregation, the case model, or prompt design against the tool's own rules means the tool disagrees with us about evaluation. That is when to leave.
+- A fix that applies one of the tool's own evaluation rules to a path that missed it is a bug fix in the tool. The rule must exist in the tool's code or docs before the patch, and the classification must cite it by symbol.
+- Any other fix that changes grading, aggregation, the case model, or prompt design means the tool disagrees with us about evaluation. That is when to leave.
 
-Patches 2 to 7 are adapter edge. Patches 1 and 8 are bug fixes in the tool. Patch 1 changes the judge prompt. Patch 8 changes the answering agent's prompt and moves `instruction_sha256` for the `with_skill`, `old_skill`, and blind ablation arms. Both remove information that tells a model which arm it is in or that it is being graded. The tool already has that rule. It blinds its judge payload (`blind_judge_payload_text`) and its materialized ablation arms (`Arm(..., blind=True)`). None of the eight patches is the third kind.
+Patches 2 to 7 are adapter edge. Patch 1 is a bug fix. Before it, the runner already hid the arm from the model in blind A/B comparison (`compare-tasks`, keyed by `blind_nonce`). Patch 1 applies that rule to the judge that grades a single run, and adds `blind_judge_payload_text` to do it.
+
+Patch 8 has two parts.
+
+- **Arm instructions.** `old_skill` said it was the "old/baseline version", and `with_skill` called its skill "the skill under test". The runner already gives a blind ablation arm the `with_skill` instruction (`Arm(..., blind=True)`) so that it cannot tell which arm it is in. Applying that rule to `old_skill` and `with_skill` is a bug fix.
+- **Grading words.** The answer prompt dropped "hidden answer keys" and Eval vocabulary, and a new test bans those words. The runner had no rule against telling the answering agent it is graded. This part is the third kind, and it is the first patch of that kind.
+
+It moves `instruction_sha256` for the `with_skill`, `old_skill`, and blind ablation arms.
+
+By this test, the fork decision is open again as of 2026-09-27. `TODO.md` tracks it.
 
 ## Why execution derives from the lock
 
