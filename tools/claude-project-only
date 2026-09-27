@@ -6,9 +6,9 @@
 #                            (--bare would drop the login too).
 # --permission-mode acceptEdits  lets a case use tools that write inside the
 #                            runner's disposable workspace. A -p run is
-#                            otherwise denied outright. It does NOT make a
-#                            written file gradable; the workspace is discarded
-#                            and never harvested, which is why cases return
-#                            their product inside tags (docs/authoring-cases.md rule 6).
+#                            otherwise denied outright. The runner saves the
+#                            edits as candidate.patch in the run directory,
+#                            but cases still return their product inside tags
+#                            (docs/authoring-cases.md rule 6).
 # Verified 2026-09-13 on Claude Code 2.1.270.
 exec claude --setting-sources project --permission-mode acceptEdits "$@"

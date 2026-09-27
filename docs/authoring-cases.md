@@ -12,7 +12,7 @@ A case is one test prompt in `shared-benchmark.json`. A trigger case asks whethe
 
 ## Rules
 
-1. **Describe the world in prose, not fixtures.** A case says in a few sentences what the repository, the files, and the situation look like. The agent reads that as context. Build a fixture tree only when an assertion has to read a real file that exists before the run starts. An assertion cannot read a file the agent writes during the run. Rule 6 explains why.
+1. **Describe the world in prose, not fixtures.** A case says in a few sentences what the repository, the files, and the situation look like. The agent reads that as context. Build a fixture tree only when an assertion has to read a real file that exists before the run starts. Rule 6 covers files the agent writes during the run.
 
 2. **Grade what the agent did, not what it said.** The final reply is the easiest thing to fake. Assert on the trace: which files the agent read, which commands it ran, and whether the skill loaded. A trace assertion that a referenced file was read is also the only proof that the reference resolves and loads.
 
@@ -24,9 +24,9 @@ A case is one test prompt in `shared-benchmark.json`. A trigger case asks whethe
 
 6. **Assert on the skill's product, not on the whole reply.** A skill that works often explains what it did, and the explanation quotes the text the skill removed. A substring check over the whole reply then fails the good run and passes the silent one. The report shows negative lift when the skill did better.
 
-   Do not fix this by asking the agent to write a file. The `run-agent` command runs the agent in a temporary directory, discards it afterwards, and copies nothing into the run directory. A file the agent writes never reaches an assertion.
+   The tested fix is to ask for the product inside tags, and use a `script` oracle to extract it from `output.md`. Use tags, not code fences, because a fenced code block inside the product closes the outer fence early. Put the oracle script in its own subdirectory next to the manifest, and have it take `{output_dir}` as an argument. The script runs with the manifest directory as its working directory. Encode the skill's actual rule in the oracle, not a rough substring of it.
 
-   Instead, ask for the product inside tags, and use a `script` oracle to extract it from `output.md`. Use tags, not code fences, because a fenced code block inside the product closes the outer fence early. Put the oracle script in its own subdirectory next to the manifest, and have it take `{output_dir}` as an argument. The script runs with the manifest directory as its working directory. Encode the skill's actual rule in the oracle, not a rough substring of it.
+   Grading from a written file is not tested yet. Since the runner pin of 2026-09-27, `run-agent` saves the agent's file edits in the run directory as `workspace-changes.json`, `candidate.patch`, and `candidate-files/`. A script oracle receives that directory as `{output_dir}`, so it can read `candidate.patch`. That comes from reading the runner's code, and no case here does it yet. Codex runs under `skill-run` use a read-only sandbox, so they record no edits.
 
    Learned on 2026-09-13.
 
