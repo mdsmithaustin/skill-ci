@@ -16,7 +16,7 @@ Building our own would have reproduced about twenty thousand lines to add two th
 
 ## Why a fork, and when to leave it
 
-`runner.lock` pins a fork rather than the upstream release. The fork carries eight patches, all at the boundary where the runner meets something outside itself.
+`runner.lock` pins a fork rather than the upstream release. The fork carries eight patches. The first seven sit at the boundary where the runner meets something outside itself.
 
 1. The judge prompt no longer reveals which arm it is grading.
 2. Codex skill loads are read from the session rollout, because an explicit mention injects the skill with no tool event.
@@ -25,9 +25,9 @@ Building our own would have reproduced about twenty thousand lines to add two th
 5. A manifest under `evals/<skill>/` resolves to the repository above it, so a manifest can sit outside the tree a skill installer copies.
 6. A Codex `file_change` event counts as a file write, because Codex reports edits under a type name the generic reader did not recognize.
 7. An answer run saves the agent's file edits before the runner deletes its temporary workspace. Scoring does not read them.
-8. The answer prompt and arm instructions no longer tell the answering agent it is being graded or name the skill under test.
+8. The answer prompt and arm instructions no longer tell the answering agent it is being graded or call its skill "the skill under test".
 
-The original exit test counted patches. That measured the wrong thing, because driving two command line tools that ship weekly produces a steady trickle of adapter fixes. The test is now where a patch lands. A fix in the adapter edge is the ordinary cost of the dependency. A fix that has to change grading, aggregation, or the case model means the tool disagrees with us about evaluation, and that is when to leave. The first five were adapter edge. Patches 6 and 7 are adapter edge too. Patch 8 changes the text the answering agent sees, but not the case text, grading, or aggregation, so it stays inside the test.
+The original exit test counted patches. That measured the wrong thing, because driving two command line tools that ship weekly produces a steady trickle of adapter fixes. The test is now where a patch lands. A fix in the adapter edge is the ordinary cost of the dependency. A fix that has to change grading, aggregation, or the case model means the tool disagrees with us about evaluation, and that is when to leave. Patches 1 to 7 are adapter edge. Patch 8 is the first that is not. It changes the prompt design the answering agent sees and moves `instruction_sha256` for the `with_skill` arm, so it counts as a disagreement about evaluation. It is small, and it moved the tool toward our view rather than away from it. One such patch is a signal to watch, not a reason to leave. A second patch that changes grading, aggregation, the case model, or prompt design is the point to reopen this decision.
 
 ## Why execution derives from the lock
 
