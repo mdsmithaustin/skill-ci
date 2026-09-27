@@ -158,6 +158,15 @@ class PiiCheck(unittest.TestCase):
         digest = "sha256:513a" + "37841" + "04839770" + "d690e0"
         self.assertEqual(self.check(f"hash = {digest}\n", suffix=".md"), (0, ""))
 
+    def test_address_whose_local_part_opens_with_a_symbol_fails(self) -> None:
+        address = "alice" + "@" + "corp.io"
+        finding = (1, "fixture.py:1: possible email address\n")
+        self.assertEqual(self.email_report(f"email = '{address}'\n", ".py"), finding)
+        self.assertEqual(self.email_report(f"owner = `{address}`\n", ".py"), finding)
+        self.assertEqual(self.email_report(f"_{address}\n", ".py"), finding)
+        self.assertEqual(self.email_report("+tag" + "@" + "corp.io\n", ".py"), finding)
+        self.assertEqual(self.check("-@decorator.name\n", suffix=".py"), (0, ""))
+
     def test_north_american_phone_number_fails(self) -> None:
         phone = "415" + "-" + "555" + "-" + "2671"
         code, output = self.check(f"Call {phone}.\n")
