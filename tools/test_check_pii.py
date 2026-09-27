@@ -139,6 +139,34 @@ class PiiCheck(unittest.TestCase):
         card = "4242" + " " + "4242" + " " + "4242" + " " + "4241"
         self.assertEqual(self.check(f"Reference {card}.\n"), (0, ""))
 
+    def email_report(self, content: str, suffix: str) -> tuple[int, str]:
+        code, output = self.check(content, suffix=suffix)
+        return code, output.rpartition("/")[2]
+
+    def test_address_opening_a_diff_line_fails_and_a_decorator_passes(self) -> None:
+        address = "alice" + "@" + "corp.io"
+        finding = (1, "fixture.patch:1: possible email address\n")
+        self.assertEqual(self.email_report(f"+{address}\n", ".patch"), finding)
+        self.assertEqual(self.email_report(f"-{address}\n", ".patch"), finding)
+        self.assertEqual(self.check("+@pytest.mark.parametrize(\n", suffix=".patch"), (0, ""))
+
+    def test_address_after_a_sign_in_markdown_fails_and_a_hex_hash_passes(self) -> None:
+        address = "alice" + "@" + "corp.io"
+        finding = (1, "fixture.md:1: possible email address\n")
+        self.assertEqual(self.email_report(f"+{address}\n", ".md"), finding)
+        self.assertEqual(self.email_report(f"-{address}\n", ".md"), finding)
+        digest = "sha256:513a" + "37841" + "04839770" + "d690e0"
+        self.assertEqual(self.check(f"hash = {digest}\n", suffix=".md"), (0, ""))
+
+    def test_address_whose_local_part_opens_with_a_symbol_fails(self) -> None:
+        address = "alice" + "@" + "corp.io"
+        finding = (1, "fixture.py:1: possible email address\n")
+        self.assertEqual(self.email_report(f"email = '{address}'\n", ".py"), finding)
+        self.assertEqual(self.email_report(f"owner = `{address}`\n", ".py"), finding)
+        self.assertEqual(self.email_report(f"_{address}\n", ".py"), finding)
+        self.assertEqual(self.email_report("+tag" + "@" + "corp.io\n", ".py"), finding)
+        self.assertEqual(self.check("-@decorator.name\n", suffix=".py"), (0, ""))
+
     def test_north_american_phone_number_fails(self) -> None:
         phone = "415" + "-" + "555" + "-" + "2671"
         code, output = self.check(f"Call {phone}.\n")
