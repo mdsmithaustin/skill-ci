@@ -16,7 +16,7 @@ Building our own would have reproduced about twenty thousand lines to add two th
 
 ## Why a fork, and when to leave it
 
-`runner.lock` pins a fork rather than the upstream release. The fork carries eight patches. The first seven sit at the boundary where the runner meets something outside itself.
+`runner.lock` pins a fork rather than the upstream release. The fork carries eight patches. Six sit at the boundary where the runner meets something outside itself. Patches 1 and 8 change what the judge or the answering agent sees.
 
 1. The judge prompt no longer reveals which arm it is grading.
 2. Codex skill loads are read from the session rollout, because an explicit mention injects the skill with no tool event.
@@ -27,7 +27,22 @@ Building our own would have reproduced about twenty thousand lines to add two th
 7. An answer run saves the agent's file edits before the runner deletes its temporary workspace. Scoring does not read them.
 8. The answer prompt and arm instructions no longer tell the answering agent it is being graded or call its skill "the skill under test".
 
-The original exit test counted patches. That measured the wrong thing, because driving two command line tools that ship weekly produces a steady trickle of adapter fixes. The test is now where a patch lands. A fix in the adapter edge is the ordinary cost of the dependency. A fix that has to change grading, aggregation, or the case model means the tool disagrees with us about evaluation, and that is when to leave. Patches 1 to 7 are adapter edge. Patch 8 is the first that is not. It changes the prompt design the answering agent sees and moves `instruction_sha256` for the `with_skill` arm, so it counts as a disagreement about evaluation. It is small, and it moved the tool toward our view rather than away from it. One such patch is a signal to watch, not a reason to leave. A second patch that changes grading, aggregation, the case model, or prompt design is the point to reopen this decision.
+The original exit test counted patches. That measured the wrong thing, because driving two command line tools that ship weekly produces a steady trickle of adapter fixes. The test is now where a patch lands, and a patch lands in one of three places.
+
+- A fix at the adapter edge is the ordinary cost of the dependency.
+- A fix that applies one of the tool's own evaluation rules to a path that missed it is a bug fix in the tool. The rule must exist in the tool's code or docs before the patch, and the classification must cite it by symbol.
+- Any other fix that changes grading, aggregation, the case model, or prompt design means the tool disagrees with us about evaluation. That is when to leave.
+
+Patches 2 to 7 are adapter edge. Patch 1 is a bug fix. Before it, the runner already hid the arm from the model in blind A/B comparison (`compare-tasks`, keyed by `blind_nonce`). Patch 1 applies that rule to the judge that grades a single run, and adds `blind_judge_payload_text` to do it.
+
+Patch 8 has two parts.
+
+- **Arm instructions.** `old_skill` said it was the "old/baseline version". The runner already gives a blind ablation arm the `with_skill` instruction (`Arm(..., blind=True)`) so that it cannot tell which arm it is in. Giving `old_skill` the same instruction applies that rule, so this part is a bug fix.
+- **Grading words.** The answer prompt dropped "hidden answer keys" and Eval vocabulary, `with_skill` stopped calling its skill "the skill under test", and a new test bans those words. The runner had no rule against telling the answering agent it is graded. This part is the third kind, and it is the first patch of that kind.
+
+It moves `instruction_sha256` for the `with_skill`, `old_skill`, and blind ablation arms.
+
+By this test, the fork decision is open again as of 2026-09-27. `TODO.md` tracks it.
 
 ## Why execution derives from the lock
 
