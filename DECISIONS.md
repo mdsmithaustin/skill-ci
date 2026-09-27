@@ -42,7 +42,9 @@ Patch 8 has two parts.
 
 It moves `instruction_sha256` for the `with_skill`, `old_skill`, and blind ablation arms.
 
-By this test, the fork decision is open again as of 2026-09-27. `TODO.md` tracks it.
+The test fired on 2026-09-27. The decision was to stay on the fork and keep the grading-words rule as a permanent fork difference. It changes only the wording of text the answering agent sees, not case text, grading, or aggregation. It moves the runner toward a subject that does not know it is tested. The other seven patches show no wider disagreement. Offering it upstream was set aside. Leaving the fork would cost more than keeping one known difference.
+
+The fork now carries one accepted difference in evaluation. It does not count toward the test again. The next patch of the third kind reopens this decision.
 
 ## Why execution derives from the lock
 
