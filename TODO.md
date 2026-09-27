@@ -19,8 +19,6 @@ Deliberate gaps, each with the reason it is open.
 
 - Dependabot covers the GitHub Actions used by the workflow and the pinned PyYAML in `tools/requirements.txt`. It does not cover the behavioral runner, which `runner.lock` pins as a git commit that no ecosystem reads. Moving that pin stays a judgement call gated on the fork's own tests, so it needs a person or a scheduled check of the fork branch.
 
-- The fork exit test in `DECISIONS.md` fired on 2026-09-27. Patch 8 added a rule the runner did not have: the answer prompt must not tell the agent it is graded. The choices are to offer that rule upstream, to accept it as a lasting fork difference and say so in `DECISIONS.md`, or to plan a move off the fork. A person has to make that call.
-
 - `tools/check-pii.py` is a fourth verbatim copy from mds-pstack. It shares the settled shape of the other checkers, a consumer copy kept for the pre-commit hook and held to the shared version by the drift check.
 
 
