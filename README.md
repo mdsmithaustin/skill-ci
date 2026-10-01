@@ -164,6 +164,7 @@ An answer run refuses to start when a folder above its workspace holds `.claude`
 
 - **CI.** Each repository's workflow uses the skill-ci SHA it pins. Dependabot opens a pull request when skill-ci changes, and the new SHA takes effect when you merge it.
 - **Local tasks.** They use whatever your `SKILL_CI` checkout contains. Pull that checkout to get the latest runner pin.
+- **Earlier run directories.** A runner pin can change what a run records, so re-run `prepare` and every arm before comparing with older runs. The pin to `80e49af` moved `instruction_sha256` for `without_skill` and instruction-simulated ablation rows, moved the trigger protocol hashes, and changed the command line of every Claude and Codex answer run. Run directories from before it do not pair with new ones.
 
 ## What a passing check proves
 
