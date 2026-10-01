@@ -156,12 +156,15 @@ If your repository keeps its own copy of `check-skill-frontmatter.py`, `check-sk
 | `OUT` | `<skill>/eval-runs/trigger-<timestamp>` or `<skill>/eval-runs/run-<timestamp>` | `skill-trigger`, `skill-run` | Output directory. |
 | `CODEX_CMD` | `tools/codex-project-only exec ...` | `skill-trigger`, `skill-run` | Command prefix that starts Codex. It does not name a model. `CODEX_MODEL` does. |
 
-The paid tasks start Claude and Codex through `tools/claude-project-only` and `tools/codex-project-only`. Those wrappers hide the skills in your home directory, so a run sees only the skill under test.
+The runner keeps the skills in your home directory out of every answer and trigger run, so a run sees only the skills it mounts. For Claude it also hides your agents, `CLAUDE.md`, MCP servers, and auto memory. Judge runs are sealed further and see no skills at all. The paid tasks still start Claude through `tools/claude-project-only`, which lets a case write files inside the run's temporary workspace. They start Codex through `tools/codex-project-only`, which moves HOME to an empty directory. That move is now redundant.
+
+An answer run refuses to start when a folder above its workspace holds `.claude`, `.agents`, `CLAUDE.md`, or `AGENTS.md`, because Claude and Codex would read them. The default macOS `TMPDIR` passes. If yours sits inside a repository or under a home directory with `~/.claude`, point `TMPDIR` somewhere else.
 
 ## Update skill-ci
 
 - **CI.** Each repository's workflow uses the skill-ci SHA it pins. Dependabot opens a pull request when skill-ci changes, and the new SHA takes effect when you merge it.
 - **Local tasks.** They use whatever your `SKILL_CI` checkout contains. Pull that checkout to get the latest runner pin.
+- **Earlier run directories.** A runner pin can change what a run records, so re-run `prepare` and every arm before comparing with older runs. The pin to `80e49af` moved `instruction_sha256` for `without_skill` and instruction-simulated ablation rows, moved the trigger protocol hashes, and changed the command line of every Claude and Codex answer run. Run directories from before it do not pair with new ones.
 
 ## What a passing check proves
 
@@ -193,8 +196,8 @@ tools/check-pii.py                  personal-data checker
 tools/check-skill-package.py        package inventory and copy comparison
 tools/run_runner.py                 runs the runner pinned in runner.lock
 tools/scaffold_manifest.py          writes one empty manifest per skill
-tools/claude-project-only           starts Claude with your personal skills hidden
-tools/codex-project-only            starts Codex with your personal skills hidden
+tools/claude-project-only           starts Claude with file edits allowed in the run's workspace
+tools/codex-project-only            starts Codex with HOME moved to an empty directory
 tools/requirements.txt              hashed PyYAML pin for the checkers
 tools/test_*.py                     unit tests
 ```

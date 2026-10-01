@@ -12,9 +12,10 @@
 #
 # skill-lint, skill-validate, skill-audit are model-free and run in CI too.
 # skill-trigger and skill-run drive the host's own claude and codex logins,
-# spend model budget, and never run in CI. Claude runs through tools/claude-project-only
-# and Codex through tools/codex-project-only, so user-level skills stay out of the
-# workspace on both harnesses while the logins keep working.
+# spend model budget, and never run in CI. The runner keeps host skills and other
+# host context out of the run itself. Claude runs through tools/claude-project-only,
+# which lets a case write files in the run's workspace. Codex runs through
+# tools/codex-project-only, whose move of HOME is now redundant.
 
 [skill-lint]
 description = "Frontmatter, links, and skill references; retired text when a conventions file lists it (model-free)"

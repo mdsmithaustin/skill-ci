@@ -16,7 +16,7 @@ Building our own would have reproduced about twenty thousand lines to add two th
 
 ## Why a fork, and when to leave it
 
-`runner.lock` pins a fork rather than the upstream release. The fork carries eight patches. Six sit at the boundary where the runner meets something outside itself. Patches 1 and 8 change what the judge or the answering agent sees.
+`runner.lock` pins a fork rather than the upstream release. The fork carries twenty patches. Patches 1 to 8 were classified on 2026-09-27. Patches 9 to 20 arrived with the pin to `80e49af` and name the fork pull request each came from. Fork #11 and #13 changed only tests and docs, so they are not patches.
 
 1. The judge prompt no longer reveals which arm it is grading.
 2. Codex skill loads are read from the session rollout, because an explicit mention injects the skill with no tool event.
@@ -26,12 +26,25 @@ Building our own would have reproduced about twenty thousand lines to add two th
 6. A Codex `file_change` event counts as a file write, because Codex reports edits under a type name the generic reader did not recognize.
 7. An answer run saves the agent's file edits before the runner deletes its temporary workspace. Scoring does not read them.
 8. The answer prompt and arm instructions no longer tell the answering agent it is being graded or call its skill "the skill under test".
+9. A trace event's provider type name is matched by whole word, so Codex's `thread.started` no longer reads as a file read (fork #6).
+10. A Jetty task file carries only the instruction, prompt, and file lists, and every arm uploads under an opaque name (fork #7).
+11. `run-subagent`'s default backend runs in the prepared workspace and reports only numeric usage (fork #8).
+12. Answer runs hide the operator's host skills, agents, instructions, and MCP servers, and the `without_skill` instruction no longer mentions a skill (fork #9).
+13. An instruction-simulated ablation arm is told what to ignore, but not which regression to expect, and its directive drops the word "ablation" (fork #10).
+14. `run-subagent` saves the agent's file edits before deleting its workspace, as `run-agent` already did (fork #12).
+15. Trigger runs hide the operator's host skills, agents, instructions, and MCP servers (fork #14).
+16. A trigger run detects a Claude skill by its mount folder name, which is the name Claude Code lists and invokes (fork #15).
+17. `judge_task_id` accepts the runner's own `RunNumber`, so `token-overhead` no longer crashes on a judge assertion (fork #16).
+18. A `tool_sequence` assertion scores a run's whole tool trajectory against a reference list (fork #18).
+19. `judge-alignment` reports judge score calibration (fork #17).
+20. Answer and subagent runs use the trigger runs' isolation flags plus `"autoMemoryEnabled":false`, so skills and agents mounted in the workspace stay visible while host context stays hidden. Judges keep patch 12's sealed flags. Codex answer runs redact host skill paths in the saved command and stderr (fork #19).
 
-The original exit test counted patches. That measured the wrong thing, because driving two command line tools that ship weekly produces a steady trickle of adapter fixes. The test is now where a patch lands, and a patch lands in one of three places.
+The original exit test counted patches. That measured the wrong thing, because driving two command line tools that ship weekly produces a steady trickle of adapter fixes. The test is now where a patch lands, and a patch lands in one of four places.
 
 - A fix at the adapter edge is the ordinary cost of the dependency.
 - A fix that applies one of the tool's own evaluation rules to a path that missed it is a bug fix in the tool. The rule must exist in the tool's code or docs before the patch, and the classification must cite it by symbol.
 - Any other fix that changes grading, aggregation, the case model, or prompt design means the tool disagrees with us about evaluation. That is when to leave.
+- An opt-in addition, such as a new assertion type or report, is not the third kind when it changes no existing grading, aggregation, or case meaning. A manifest that does not use it grades exactly as before. The operator added this kind on 2026-10-01.
 
 Patches 2 to 7 are adapter edge. Patch 1 is a bug fix. Before it, the runner already hid the arm from the model in blind A/B comparison (`compare-tasks`, keyed by `blind_nonce`). Patch 1 applies that rule to the judge that grades a single run, and adds `blind_judge_payload_text` to do it.
 
@@ -44,7 +57,18 @@ It moves `instruction_sha256` for the `with_skill`, `old_skill`, and blind ablat
 
 The test fired on 2026-09-27. The decision was to stay on the fork and keep the grading-words rule as a permanent fork difference. It changes only the wording of text the answering agent sees, not case text, grading, or aggregation. It moves the runner toward a subject that does not know it is tested. The other seven patches show no wider disagreement. Offering it upstream was set aside. Leaving the fork would cost more than keeping one known difference.
 
-The fork now carries one accepted difference in evaluation. It does not count toward the test again. The next patch of the third kind reopens this decision.
+The fork now carries one accepted difference in evaluation. It does not count toward the test again.
+
+Patches 9 to 20 were classified on 2026-10-01.
+
+- **Adapter edge.** Patches 9, 11, 14, 15, and 16, and the isolation flags in patches 12 and 20. Patch 20 replaced patch 12's answer-run flags.
+- **Bug fix.** Three parts apply a rule the runner already had. Patch 17 lets `judge_task_id` accept `RunNumber` (`manifest_contracts.py`), the runner's run-identity type, which already rejects booleans and non-positive values. The `old_skill` part of patch 10 gives that arm the opaque upload name that `Arm.upload_token()` (`ablation_model.py`) already gave a blind ablation arm. The word part of patch 13 applies `SubjectVisiblePromptTests._BANNED_RE`, which already banned `ablat\w*` from text the answering agent sees. That rule came from patch 8, so this part extends the fork's own accepted difference.
+- **Opt-in addition.** Patches 18 and 19. Patch 18 adds the `tool_sequence` assertion and patch 19 adds judge calibration to `judge-alignment`. Neither changes how an existing assertion grades, so both fall under the opt-in kind and do not count toward the test.
+- **Third kind.** The model-visible blinding in patches 10, 12, and 13. That is the arm and case names hidden from the Jetty task file, the `without_skill` instruction that no longer mentions a skill, and the expected regression hidden from an ablation arm.
+
+On 2026-10-01 the operator decided that the blinding in patches 10, 12, and 13 is part of the accepted difference, widened from patch 8's grading words to one principle. The answering agent should not know it is being tested or which arm it is in. Those patches do not count toward the test. The next patch of the third kind that falls outside that principle reopens this decision.
+
+Leaving stays cheap to assess. Upstream `adewale/skill-eval-harness` `main` (`2297000`) is still an ancestor of the pinned commit, so the fork is a pure superset of upstream. Measured on 2026-10-01 with `git merge-base --is-ancestor`.
 
 ## Why execution derives from the lock
 
@@ -66,7 +90,7 @@ The cost is that a manifest and its skill no longer share a directory, so nothin
 
 Everything model-free runs in continuous integration on every pull request. That is the lints, manifest validation, the leakage check, and the readiness audit including judge independence.
 
-Behavioral runs are operator-local and never a pull request gate. They drive the installed `claude` and `codex` binaries on the operator's own logins through the launchers in `tools/`, which exist because the runner grants a print-mode run no tool permissions and because both harnesses discover user-level skills from the operator's home directory. Without the launchers an isolated run would silently include every skill the operator has installed.
+Behavioral runs are operator-local and never a pull request gate. They drive the installed `claude` and `codex` binaries on the operator's own logins. Since the runner pin to `80e49af`, the runner keeps the operator's own setup out of answer and trigger runs itself. For Claude that is host skills, agents, `CLAUDE.md`, MCP servers, and auto memory. For Codex it is every skill under `~/.agents/skills`, Codex's bundled skills, and apps. The launchers in `tools/` predate that. `tools/claude-project-only` is still needed, because the runner grants a print-mode run no tool permissions and the launcher grants `acceptEdits`. In answer and trigger runs its `--setting-sources project` repeats the runner's flag and is harmless. Judge runs are sealed instead: the runner passes `--safe-mode --disable-slash-commands`, which hides workspace skills too. Whether the launcher's flag adds anything on a judge run has not been tested. `tools/codex-project-only` only moves HOME, which the runner has made redundant.
 
 Cost is the reason this is not a gate. Fifty-two skills at twenty queries, three runs, and two harnesses is over six thousand command line invocations.
 
