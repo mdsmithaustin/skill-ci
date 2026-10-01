@@ -43,8 +43,8 @@ The original exit test counted patches. That measured the wrong thing, because d
 
 - A fix at the adapter edge is the ordinary cost of the dependency.
 - A fix that applies one of the tool's own evaluation rules to a path that missed it is a bug fix in the tool. The rule must exist in the tool's code or docs before the patch, and the classification must cite it by symbol.
-- An opt-in addition, such as a new assertion type or report, that changes no existing grading, aggregation, or case meaning is not a disagreement and does not count. A manifest that does not use it grades exactly as before. The operator added this kind on 2026-10-01.
 - Any other fix that changes grading, aggregation, the case model, or prompt design means the tool disagrees with us about evaluation. That is when to leave.
+- An opt-in addition, such as a new assertion type or report, is not the third kind when it changes no existing grading, aggregation, or case meaning. A manifest that does not use it grades exactly as before. The operator added this kind on 2026-10-01.
 
 Patches 2 to 7 are adapter edge. Patch 1 is a bug fix. Before it, the runner already hid the arm from the model in blind A/B comparison (`compare-tasks`, keyed by `blind_nonce`). Patch 1 applies that rule to the judge that grades a single run, and adds `blind_judge_payload_text` to do it.
 
