@@ -6,14 +6,19 @@ to something on disk. Whitespace-free paths beginning `./` or `../` and quoted
 paths with spaces that occupy an entire inline-code span follow the same rule.
 Explicit project placeholders such as `[PR]({url})` are skipped.
 
-A bolded name that reads as a skill reference must name a real directory under
-the skills root. A principle- prefix always reads as one. Any other kebab name
-reads as one only when "skill" appears on the same rendered line. On a line that
-mentions a principle, a bare name also resolves against its principle- directory.
+A bolded kebab name reads as a skill reference when "skill" appears on the same
+rendered line, and then it must name a real directory under the skills root.
 
-CommonMark code blocks are skipped for link and sibling checks. Port substitution
-checks scan every raw line, including templates inside code blocks. An unclosed
-fence is itself a finding because it would otherwise hide the rest of the file.
+An optional version-1 conventions file adds two repository-specific rules. Each
+skill prefix, such as "principle-", makes a bold name that starts with it always
+read as a skill reference. On a rendered line that contains the prefix without
+its trailing hyphen, a bare bold name also resolves against the prefixed
+directory. Each port substitution is retired text that is reported, with its
+message, on every raw line that contains it, including templates inside code
+blocks.
+
+CommonMark code blocks are skipped for link and sibling checks. An unclosed fence
+is itself a finding because it would otherwise hide the rest of the file.
 """
 from __future__ import annotations
 
@@ -129,6 +134,15 @@ class InlineLinkExceptions:
 INLINE_LINK_EXCEPTIONS = InlineLinkExceptions({})
 
 
+@dataclass(frozen=True)
+class ContentConventions:
+    port_substitutions: Mapping[str, str]
+    skill_prefixes: tuple[str, ...]
+
+
+CONVENTIONS = ContentConventions({}, ())
+
+
 CODE_PATH = re.compile(r"\.\.?/[^\s<>]+")
 QUOTED_CODE_PATH = re.compile(
     r'(?:"(?P<double>\.\.?/[^"\r\n<>]+)"|'
@@ -136,6 +150,7 @@ QUOTED_CODE_PATH = re.compile(
 )
 SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*:", re.I)
 SKILL_NAME = re.compile(r"[a-z][a-z0-9-]*")
+SKILL_PREFIX = re.compile(r"[a-z][a-z0-9-]*-")
 INLINE_PLACEHOLDER = re.compile(
     r"(?<=\]\()(?P<space>[ \t\r\n]*)(?:"
     r"<\{[a-z][a-z0-9_-]*\}(?:[\\]?[#?][^>\s]*)?>|"
@@ -239,6 +254,52 @@ def load_inline_link_exceptions(path: Path | None) -> InlineLinkExceptions:
             raise ValueError(f"link exception destinations must not repeat: {source}")
         destinations_by_source[source_path] = frozenset(destinations)
     return InlineLinkExceptions(destinations_by_source)
+
+
+def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    keys = [key for key, _value in pairs]
+    if len(set(keys)) != len(keys):
+        raise ValueError("conventions JSON must not repeat an object key")
+    return dict(pairs)
+
+
+def load_content_conventions(path: Path | None) -> ContentConventions:
+    if path is None:
+        return ContentConventions({}, ())
+    try:
+        document = json.loads(
+            path.read_text(encoding="utf-8"), object_pairs_hook=reject_duplicate_keys
+        )
+    except OSError as error:
+        raise ValueError(f"cannot read conventions file {path}: {error}") from error
+    except json.JSONDecodeError as error:
+        raise ValueError(f"invalid conventions JSON in {path}: {error.msg}") from error
+    if not isinstance(document, dict) or "version" not in document:
+        raise ValueError("conventions must be an object with a version")
+    unknown = set(document) - {"version", "port_substitutions", "skill_prefixes"}
+    if unknown:
+        raise ValueError(f"conventions has unknown keys: {', '.join(sorted(unknown))}")
+    if type(document["version"]) is not int or document["version"] != 1:
+        raise ValueError("conventions version must be 1")
+    substitutions = document.get("port_substitutions", {})
+    if not isinstance(substitutions, dict):
+        raise ValueError("port_substitutions must be an object")
+    for text, message in substitutions.items():
+        if not text:
+            raise ValueError("port substitution text must be a nonempty string")
+        if not isinstance(message, str) or not message:
+            raise ValueError(f"port substitution message must be a nonempty string: {text}")
+    prefixes = document.get("skill_prefixes", [])
+    if not isinstance(prefixes, list):
+        raise ValueError("skill_prefixes must be a list")
+    for prefix in prefixes:
+        if not isinstance(prefix, str) or not SKILL_PREFIX.fullmatch(prefix):
+            raise ValueError(
+                f"skill prefix must be a kebab-case string ending in a hyphen: {prefix!r}"
+            )
+    if len(set(prefixes)) != len(prefixes):
+        raise ValueError("skill_prefixes must not repeat")
+    return ContentConventions(dict(substitutions), tuple(prefixes))
 
 
 def inline_code_path(content: str) -> str | None:
@@ -395,15 +456,15 @@ def check_sibling_skill(parsed: ParsedFile) -> Iterator[Finding]:
         lines = rendered_lines(children, parent.map[0] + 1)
         for line, (visible, names) in lines.items():
             near_skill = "skill" in visible
-            principle_hint = "principle" in visible
+            hinted = [p for p in CONVENTIONS.skill_prefixes if p[:-1] in visible]
             for name in names:
                 if name in IGNORE:
                     continue
-                if not name.startswith("principle-") and not near_skill:
+                if not near_skill and not name.startswith(CONVENTIONS.skill_prefixes):
                     continue
                 if (ROOT / name).is_dir():
                     continue
-                if principle_hint and (ROOT / f"principle-{name}").is_dir():
+                if any((ROOT / f"{prefix}{name}").is_dir() for prefix in hinted):
                     continue
                 yield Finding(
                     parsed.path,
@@ -430,15 +491,9 @@ def check_unclosed_fence(parsed: ParsedFile) -> Iterator[Finding]:
             )
 
 
-PORT_SUBSTITUTIONS = {
-    "pstack/skills/": "use the installed or verified-source root instead of the upstream monorepo path",
-    "/deslop": "use the bundled unslop skill instead of the retired command",
-}
-
-
 def check_port_substitutions(parsed: ParsedFile) -> Iterator[Finding]:
     for lineno, line in parsed.raw:
-        for old, replacement in PORT_SUBSTITUTIONS.items():
+        for old, replacement in CONVENTIONS.port_substitutions.items():
             if old in line:
                 yield Finding(parsed.path, lineno, "port-substitution", replacement)
 
@@ -459,7 +514,7 @@ def iter_markdown_files(root: Path) -> Iterator[Path]:
 
 
 def main() -> int:
-    global ROOT, IGNORE, INLINE_LINK_EXCEPTIONS
+    global ROOT, IGNORE, INLINE_LINK_EXCEPTIONS, CONVENTIONS
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--ignore",
@@ -471,6 +526,11 @@ def main() -> int:
         type=Path,
         help="JSON file that allows exact missing direct inline Markdown links",
     )
+    ap.add_argument(
+        "--conventions-file",
+        type=Path,
+        help="JSON file of repository skill prefixes and retired port substitutions",
+    )
     ap.add_argument("root", nargs="?", default="skills")
     args = ap.parse_args()
     ROOT = Path(args.root)
@@ -479,6 +539,7 @@ def main() -> int:
         INLINE_LINK_EXCEPTIONS = load_inline_link_exceptions(
             args.link_exceptions_file
         )
+        CONVENTIONS = load_content_conventions(args.conventions_file)
     except ValueError as error:
         ap.error(str(error))
 
