@@ -105,7 +105,7 @@ run = '''
 set -euo pipefail
 : "${SKILL_CI:?set SKILL_CI to the skill-ci checkout}"
 runner() { uv run --no-project python "$SKILL_CI/tools/run_runner.py" "$@"; }
-skill="{{arg(name="skill", help="skill directory, e.g. skills/unslop")}}"
+skill="{{arg(name="skill", help="skill directory, e.g. skills/my-skill")}}"
 if [ -n "${EVALS_DIR:-}" ]; then
   manifest="$EVALS_DIR/$(basename "$skill")/shared-benchmark.json"
 else
@@ -127,7 +127,7 @@ run = '''
 set -euo pipefail
 : "${SKILL_CI:?set SKILL_CI to the skill-ci checkout}"
 runner() { uv run --no-project python "$SKILL_CI/tools/run_runner.py" "$@"; }
-skill="{{arg(name="skill", help="skill directory, e.g. skills/unslop")}}"
+skill="{{arg(name="skill", help="skill directory, e.g. skills/my-skill")}}"
 if [ -n "${EVALS_DIR:-}" ]; then
   manifest="$EVALS_DIR/$(basename "$skill")/shared-benchmark.json"
 else

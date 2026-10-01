@@ -353,7 +353,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
     def runner_task(self, name: str, skill: str = "skills/example") -> subprocess.CompletedProcess[str]:
         tasks = tomllib.loads((REPOSITORY / "skill-tasks.toml").read_text())
         body = tasks[name]["run"].replace(
-            '{{arg(name="skill", help="skill directory, e.g. skills/unslop")}}', skill,
+            '{{arg(name="skill", help="skill directory, e.g. skills/my-skill")}}', skill,
         )
         return self.run_body(body)
 
