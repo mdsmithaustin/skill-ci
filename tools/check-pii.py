@@ -35,6 +35,22 @@ DAILY_EXACT_LOCAL_TIME = re.compile(
     r"(?=.*\blocal\s+time\b)",
     re.IGNORECASE,
 )
+ALLOWED_HOST_DOMAINS = (
+    "example.com", "example.net", "example.org", "example", "test", "invalid", "localhost",
+    "githubassets.com", "githubusercontent.com",
+)
+# Outside a host context a name like github.event.comment.id is usually an Actions
+# expression or a setting, so there the last label must be a common top-level domain.
+COMMON_TOP_LEVEL_DOMAINS = frozenset(
+    {"com", "net", "org", "io", "co", "dev", "app", "cloud", "tech", "biz", "info", "ai"}
+)
+GITHUB_HOST = re.compile(
+    r"(?:(?P<host_context>://|:\\/\\/|@|--hostname[\s=]+|-h\s+|GH_HOST=|\\[nt]|host(?:name)?[\"']?\s*:\s*)"
+    r"[\"']?(?:[a-z0-9-]+\.)*|(?<![\w.]))"
+    r"(?P<host>github(?:\.[a-z0-9-]+)+\.(?P<tld>[a-z]{2,63}))"
+    r"(?!\w|\.\w)",
+    re.IGNORECASE,
+)
 LAUNCH_AGENT_PATH = re.compile(
     r"(?<![\w.-])"
     r"(?:~|\$HOME|\$\{HOME\}|/Users/[^/\s\"'`<>]+)?"
@@ -90,6 +106,13 @@ def is_example_email(value: str) -> bool:
     return bool(local) and domain in EXAMPLE_EMAIL_DOMAINS
 
 
+def is_enterprise_github_host(match: re.Match[str]) -> bool:
+    host = match["host"].casefold()
+    if any(f".{host}".endswith(f".{domain}") for domain in ALLOWED_HOST_DOMAINS):
+        return False
+    return bool(match["host_context"]) or match["tld"].casefold() in COMMON_TOP_LEVEL_DOMAINS
+
+
 def luhn_valid(value: str) -> bool:
     digits = [int(char) for char in value if char.isdigit()]
     if not 13 <= len(digits) <= 19:
@@ -118,6 +141,8 @@ def line_findings(line: str) -> list[str]:
         findings.append("payment card number")
     if DAILY_EXACT_LOCAL_TIME.search(line):
         findings.append("local automation schedule")
+    if any(is_enterprise_github_host(match) for match in GITHUB_HOST.finditer(line)):
+        findings.append("GitHub Enterprise host")
     if LAUNCH_AGENT_PATH.search(line):
         findings.append("LaunchAgent path")
     if HOME_RELATIVE_LOG_PATH.search(line):
