@@ -116,45 +116,88 @@ class PiiCheck(unittest.TestCase):
         url = "ssh://" + "git" + "@" + "github.com/owner/repository"
         self.assertEqual(self.check(f"remote = {url}\n"), (0, ""))
 
-    def test_enterprise_github_host_fails_in_each_host_context_without_echoing_it(self) -> None:
+    def test_enterprise_github_host_fails_without_echoing_it(self) -> None:
         host = "github." + "acme-corp.com"
-        examples = (
-            f"https://{host}/team/project/pull/14\n",
-            f"remote = ssh://git@{host}/team/project.git\n",
-            f'host: "{host}",\n',
-            f"gh api --hostname {host} user\n",
-            f"GH_HOST={host} gh pr view\n",
-            f'command.includes("--hostname\\n{host}\\n")\n',
-            f"Point it at `{host}`.\n",
-        )
-        for example in examples:
-            with self.subTest(example=example):
-                code, output = self.check(example)
+        examples = {
+            "url": f"remote https://{host}",
+            "quoted": f'"{host}";',
+            "backticked": f"Point it at `{host}`.",
+            "prose": f"Our host is {host} for work.",
+            "table cell": f"| host | {host} |",
+            "parenthesized": f"({host})",
+            "comma list": f"hosts={host},other",
+            "statement end": f"url=https://{host};",
+            "pipe list": f"hosts={host}|other",
+            "query": f"https://{host}?tab=1",
+            "fragment": f"https://{host}#readme",
+            "sentence end": f"See https://{host}.",
+            "escaped slash": f'"https:\\/\\/{host}\\/o"',
+            "uppercase": f"https://{host.upper()}/x",
+            "label before github": f"https://raw.{host}/x",
+            "country code domain": '"github.' + 'acme.jp"',
+            "lookalike of an example domain": "https://github." + "notexample.com/x",
+        }
+        for name, line in examples.items():
+            with self.subTest(name):
+                code, output = self.check(line + "\n")
+                self.assertEqual(code, 1)
+                self.assertIn(":1: possible GitHub Enterprise host", output)
+                self.assertNotIn(host, output.casefold())
+
+    def test_host_context_flags_a_host_on_any_top_level_domain(self) -> None:
+        host = "github." + "corp.internal"
+        examples = {
+            "url": f"https://{host}/x",
+            "scp remote": f"git@{host}:team/project.git",
+            "hostname flag": f"gh api --hostname {host} user",
+            "hostname flag with equals": f"gh api --hostname={host} user",
+            "short host flag": f"gh auth login -h {host}",
+            "GH_HOST": f"GH_HOST={host} gh pr view",
+            "escaped newline": f'command.includes("--hostname\\n{host}\\n")',
+            "escaped tab": f'"x\\t{host}"',
+            "host key": f"host: {host}",
+            "hostname key": f"hostname: {host}",
+        }
+        for name, line in examples.items():
+            with self.subTest(name):
+                code, output = self.check(line + "\n")
                 self.assertEqual(code, 1)
                 self.assertIn(":1: possible GitHub Enterprise host", output)
                 self.assertNotIn(host, output)
 
-    def test_public_example_and_github_owned_hosts_pass(self) -> None:
-        examples = (
-            "https://github.com/owner/repository\n",
-            "https://" + "github.example.com/team/project/pull/14\n",
-            'host: "' + "github.corp.test" + '",\n',
-            "https://" + "github.githubassets.com/assets/app.js\n",
-            "https://owner.github.io/site\n",
-        )
-        for example in examples:
-            with self.subTest(example=example):
-                self.assertEqual(self.check(example), (0, ""))
+    def test_public_reserved_and_github_owned_hosts_pass(self) -> None:
+        examples = {
+            "github.com": "https://github.com/owner/repository",
+            "api.github.com": "https://api.github.com/repos",
+            "pages": "https://owner.github.io/site",
+            "example.com": "https://github.example.com/team/project",
+            "example.net": "https://github.example.net/team/project",
+            "example.org": "https://github.example.org/team/project",
+            ".example": "https://github.corp.example/x",
+            ".test": "host: github.corp.test",
+            ".invalid": "https://github.corp.invalid/x",
+            ".localhost": "https://github.corp.localhost/x",
+            "githubassets.com": "https://github.githubassets.com/assets/app.js",
+            "githubusercontent.com": "https://github.githubusercontent.com/x",
+        }
+        for name, line in examples.items():
+            with self.subTest(name):
+                self.assertEqual(self.check(line + "\n"), (0, ""))
 
-    def test_github_actions_expressions_pass(self) -> None:
-        examples = (
-            "if: ${{ github.event.number }}\n",
-            "ref: ${{ github.event.pull_request.head.sha }}\n",
-            "run: echo github.repository.owner\n",
-        )
-        for example in examples:
-            with self.subTest(example=example):
-                self.assertEqual(self.check(example), (0, ""))
+    def test_dotted_names_outside_a_host_context_pass(self) -> None:
+        examples = {
+            "actions expression": "if: ${{ github.event.number }}",
+            "quoted actions expression": 'run: echo "github.event.number is set"',
+            "backticked expression": "Read `github.event.inputs.name` in the step.",
+            "expression ending in a domain-like label": "run: echo ${{ github.event.co_author }}",
+            "editor setting": '"github.copilot.enable": {',
+            "module string": "require('github.something.js')",
+            "class path": "'github.MainClass.Github'",
+            "internal domain outside a host context": '"github.corp.internal"',
+        }
+        for name, line in examples.items():
+            with self.subTest(name):
+                self.assertEqual(self.check(line + "\n"), (0, ""))
 
     def test_dotted_personal_email_fails(self) -> None:
         address = "ada.lovelace" + "@" + "private.test"

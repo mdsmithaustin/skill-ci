@@ -35,15 +35,22 @@ DAILY_EXACT_LOCAL_TIME = re.compile(
     r"(?=.*\blocal\s+time\b)",
     re.IGNORECASE,
 )
-EXAMPLE_HOST_SUFFIXES = (
-    "example.com", "example.net", "example.org", ".example", ".test", ".invalid", ".localhost",
+ALLOWED_HOST_DOMAINS = (
+    "example.com", "example.net", "example.org", "example", "test", "invalid", "localhost",
+    "githubassets.com", "githubusercontent.com",
 )
-GITHUB_OWNED_HOST_SUFFIXES = ("githubassets.com", "githubusercontent.com")
-# Host contexts only, so Actions expressions such as github.event.number pass.
-ENTERPRISE_GITHUB_HOST = re.compile(
-    r"(?:(?<=://)|(?<=@)|(?<=--hostname )|(?<=--hostname=)|(?<=GH_HOST=)|(?<=\\n)|(?<=[\"'`]))"
-    r"github(?:\.[a-z0-9-]+)+\.[a-z]{2,63}"
-    r"(?=[/:\"'`\s),>\]\\]|\.(?:\s|$)|$)",
+# Outside a host context a name like github.copilot.enable is usually a setting or
+# an Actions expression, so there the last label must look like a top-level domain.
+GENERIC_TOP_LEVEL_DOMAINS = frozenset(
+    {"com", "net", "org", "io", "co", "dev", "app", "cloud", "tech", "biz", "info", "ai"}
+)
+SOURCE_FILE_EXTENSIONS = frozenset(
+    {"js", "ts", "py", "rb", "go", "rs", "md", "sh", "pl", "cs", "kt", "hs", "ml", "cc", "mm", "pm", "so", "gz", "xz"}
+)
+GITHUB_HOST = re.compile(
+    r"(?P<host_context>://|@|--hostname[ =]|-h |GH_HOST=|\\[nt]|\bhost(?:name)?: )?"
+    r"(?P<host>github(?:\.[a-z0-9-]+)+\.(?P<tld>[a-z]{2,63}))"
+    r"(?=[/:\"'`\s),;|>?#\]\\]|\.(?:\s|$)|$)",
     re.IGNORECASE,
 )
 LAUNCH_AGENT_PATH = re.compile(
@@ -101,9 +108,14 @@ def is_example_email(value: str) -> bool:
     return bool(local) and domain in EXAMPLE_EMAIL_DOMAINS
 
 
-def is_private_github_host(host: str) -> bool:
-    host = host.casefold()
-    return not host.endswith(EXAMPLE_HOST_SUFFIXES + GITHUB_OWNED_HOST_SUFFIXES)
+def is_enterprise_github_host(match: re.Match[str]) -> bool:
+    host = match["host"].casefold()
+    tld = match["tld"].casefold()
+    if any(f".{host}".endswith(f".{domain}") for domain in ALLOWED_HOST_DOMAINS):
+        return False
+    if match["host_context"]:
+        return True
+    return tld in GENERIC_TOP_LEVEL_DOMAINS or (len(tld) == 2 and tld not in SOURCE_FILE_EXTENSIONS)
 
 
 def luhn_valid(value: str) -> bool:
@@ -134,7 +146,7 @@ def line_findings(line: str) -> list[str]:
         findings.append("payment card number")
     if DAILY_EXACT_LOCAL_TIME.search(line):
         findings.append("local automation schedule")
-    if any(is_private_github_host(match.group()) for match in ENTERPRISE_GITHUB_HOST.finditer(line)):
+    if any(is_enterprise_github_host(match) for match in GITHUB_HOST.finditer(line)):
         findings.append("GitHub Enterprise host")
     if LAUNCH_AGENT_PATH.search(line):
         findings.append("LaunchAgent path")
