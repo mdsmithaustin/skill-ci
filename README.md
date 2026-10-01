@@ -91,7 +91,7 @@ This repository's own `mise.toml` adds a `test` task that runs the unit tests.
 ### What the lints check
 
 - `check-skill-frontmatter.py` validates each `SKILL.md` against the agentskills.io metadata rules and the Codex invocation policy. With `trigger-cases` set, it also fails for any skill missing from the trigger declaration file.
-- `check-skill-content.py` fails on relative links whose target does not exist, bold skill names that match no known skill, unclosed code fences, and retired port paths.
+- `check-skill-content.py` fails on relative links whose target does not exist, bold skill names that match no known skill, and unclosed code fences. A bold name counts as a skill name when its line contains the word "skill". A conventions file can add name prefixes and retired text for your repository. See [Add your repository's naming conventions to the content check](docs/content-conventions.md).
 - `check-pii.py` fails on likely personal data. This matters because trigger cases are cut from real session transcripts.
 
 ## Configuration
@@ -107,11 +107,32 @@ Set these under `with:` in your caller workflow.
 | `require-manifests` | `false` | Fail when no manifest files are found. An empty scaffolded manifest counts as a file. |
 | `package-check` | `false` | Run the package check. Rejects symlinks and special files in skill packages. |
 | `pii-scope` | `skills` | `skills` scans tracked files in the skills directory for personal data. `repository` scans every tracked file. |
-| `trigger-cases` | empty | Path to a version-1 trigger declaration file. When set, the frontmatter check also fails for any skill that the file does not declare. |
+| `trigger-cases` | empty | Path to a version-1 trigger declaration file. Leave it empty to skip the coverage check. When set, the frontmatter check also fails for any skill that the file does not declare. See [Trigger declaration file](#trigger-declaration-file). |
 | `content-ignore-file` | empty | Path to a list of skill names that live in another repository, one per line, with `#` comments allowed. The content checker does not report mentions of them as broken. |
 | `content-link-exceptions-file` | empty | Path to a link-exceptions policy. See [Allow links to files a template creates](docs/link-exceptions.md). |
+| `content-conventions-file` | empty | Path to a content conventions file. See [Add your repository's naming conventions to the content check](docs/content-conventions.md). |
 | `strict-frontmatter` | `false` | Not implemented. Setting it fails the job. See `TODO.md`. |
 | `skill-ci-ref` | empty | Deprecated and ignored. Remove it from your caller. |
+
+### Trigger declaration file
+
+`trigger-cases` is optional. When you set it, the file must use this version-1 format. It has one declaration per skill, and every skill under `skills-dir` needs one.
+
+```json
+{
+  "version": 1,
+  "triggers": [
+    {
+      "skill": "example",
+      "example_request": "set up skill testing in this repo",
+      "description_contains": ["set up skill testing"],
+      "implicit_allowed": true
+    }
+  ]
+}
+```
+
+Each `description_contains` entry must appear in that skill's `description`, compared case-insensitively with whitespace collapsed. `implicit_allowed` must match the skill's Codex invocation policy. The check fails for a missing, duplicate, or stale declaration. It does not run a model. `skill-trigger` measures real triggering from the eval manifest instead.
 
 If your repository keeps its own copy of `check-skill-frontmatter.py`, `check-skill-content.py`, `check-pii.py`, or `requirements.txt` under `tools/`, for example for a pre-commit hook, the workflow fails when that copy differs from the skill-ci copy.
 
@@ -123,6 +144,7 @@ If your repository keeps its own copy of `check-skill-frontmatter.py`, `check-sk
 | `SKILLS_DIR` | `skills` | `skill-lint`, `skill-package`, `skill-validate`, `skill-audit` | The skills directory. `skill-trigger` and `skill-run` take the skill directory as an argument instead. |
 | `EVALS_DIR` | unset | tasks that read manifests | Where manifests live. Unset means search inside the skills directory. The directory must be named `evals`, because the runner finds the repository root from that name. A task fails if this names a directory that does not exist. |
 | `CONTENT_LINK_EXCEPTIONS_FILE` | unset | `skill-lint` | Path to a link-exceptions policy. |
+| `CONTENT_CONVENTIONS_FILE` | unset | `skill-lint` | Path to a content conventions file. |
 | `INSTALLED_SKILLS_DIR` | unset | `skill-package` | Installed skills to compare against. |
 | `AGENTS` | `claude codex` | `skill-run` | Which agents to run. |
 | `RUNS` | `3` | `skill-trigger`, `skill-run` | Repetitions per case. |
@@ -161,6 +183,7 @@ lefthook.yml                        pre-commit hook: rejects personal data, runs
 .github/dependabot.yml              weekly updates for actions and pip
 docs/authoring-cases.md             how to write test cases
 docs/link-exceptions.md             the link-exceptions policy
+docs/content-conventions.md         the content conventions file
 docs/packages.md                    package inspection and copy comparison
 docs/evidence.md                    what each kind of check can prove
 docs/harvest-skill-optimizer.md     what was imported from skill-optimizer, and why

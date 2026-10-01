@@ -12,6 +12,16 @@ from pathlib import Path
 TOOLS = Path(__file__).resolve().parent
 CONTENT = TOOLS / "check-skill-content.py"
 FRONTMATTER = TOOLS / "check-skill-frontmatter.py"
+# Parity fixture: the conventions pstack ships, so these tests pin the behavior
+# the checker had before the conventions moved out of it.
+PSTACK_CONVENTIONS = {
+    "version": 1,
+    "retired_text": {
+        "pstack/skills/": "use the installed or verified-source root instead of the upstream monorepo path",
+        "/deslop": "use the bundled unslop skill instead of the retired command",
+    },
+    "skill_prefixes": ["principle-"],
+}
 
 
 def run(script: Path, root: Path, *args: str) -> tuple[int, str]:
@@ -39,7 +49,22 @@ class Tree(unittest.TestCase):
         return d
 
 
-class ContentLint(Tree):
+class ConventionsTree(Tree):
+    def conventions(self, document: object) -> Path:
+        path = Path(self.tmp.name) / "conventions.json"
+        text = document if isinstance(document, str) else json.dumps(document)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def pstack_args(self) -> tuple[str, str]:
+        return "--conventions-file", str(self.conventions(PSTACK_CONVENTIONS))
+
+    def two_prefix_args(self) -> tuple[str, str]:
+        document = {"version": 1, "skill_prefixes": ["principle-", "pattern-"]}
+        return "--conventions-file", str(self.conventions(document))
+
+
+class ContentLint(ConventionsTree):
     def setUp(self) -> None:
         super().setUp()
         real = self.skill("real-skill", 'name: real-skill\ndescription: "d"')
@@ -54,9 +79,9 @@ class ContentLint(Tree):
         (real / "run.sh").write_text("x", encoding="utf-8")
         (real / "LICENSE").write_text("x", encoding="utf-8")
 
-    def body(self, body: str) -> tuple[int, str]:
+    def body(self, body: str, *args: str) -> tuple[int, str]:
         self.skill("a", 'name: a\ndescription: "d"', body)
-        return run(CONTENT, self.root)
+        return run(CONTENT, self.root, *args)
 
     def link_exceptions(self, text: str) -> Path:
         path = Path(self.tmp.name) / "link-exceptions.json"
@@ -207,12 +232,14 @@ class ContentLint(Tree):
             ("`./MISSING.md`", "relative-link"),
             ("**principle-nope**", "sibling-skill"),
             ("```\nunfinished", "unclosed-fence"),
-            ("Read pstack/skills/example/SKILL.md.", "port-substitution"),
+            ("Read pstack/skills/example/SKILL.md.", "retired-text"),
         )
         for body, kind in cases:
             with self.subTest(kind=kind):
                 self.skill("a", 'name: a\ndescription: "d"', "[allowed](MISSING.md)\n" + body)
-                code, out = run(CONTENT, self.root, "--link-exceptions-file", str(policy))
+                code, out = run(
+                    CONTENT, self.root, "--link-exceptions-file", str(policy), *self.pstack_args()
+                )
                 self.assertEqual(code, 1, out)
                 self.assertIn(kind, out)
                 self.assertNotIn("SKILL.md:6", out)
@@ -1017,9 +1044,49 @@ class ContentLint(Tree):
         self.assertIn("sibling-skill", out)
 
     def test_principle_name_fires_without_the_word_skill(self) -> None:
-        code, out = self.body("- **L** (**principle-nope**). Bias to deletion.")
+        code, out = self.body("- **L** (**principle-nope**). Bias to deletion.", *self.pstack_args())
         self.assertEqual(code, 1, "a principle- name is checked even with no 'skill' on the line")
         self.assertIn("principle-nope", out)
+
+    def test_principle_name_without_conventions_needs_the_word_skill(self) -> None:
+        code, out = self.body("- **L** (**principle-nope**). Bias to deletion.")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out, "")
+
+    def test_prefix_hint_resolves_a_bare_name(self) -> None:
+        self.skill("principle-lazy", 'name: principle-lazy\ndescription: "d"')
+        line = "Apply the **lazy** principle from the skill list."
+        self.assertEqual(self.body(line, *self.pstack_args()), (0, ""))
+        code, out = self.body(line)
+        self.assertEqual(code, 1)
+        self.assertIn("SKILL.md:6: sibling-skill: **lazy** has no matching directory", out)
+
+    def test_prefix_hint_needs_the_prefix_word_on_the_line(self) -> None:
+        self.skill("principle-lazy", 'name: principle-lazy\ndescription: "d"')
+        code, out = self.body("Apply the **lazy** skill.", *self.pstack_args())
+        self.assertEqual(code, 1)
+        self.assertIn("SKILL.md:6: sibling-skill: **lazy** has no matching directory", out)
+
+    def missing(self, name: str) -> str:
+        return f"{self.root}/a/SKILL.md:6: sibling-skill: **{name}** has no matching directory under {self.root}/\n"
+
+    def test_second_prefix_name_fires_without_the_word_skill(self) -> None:
+        line = "- **R** (**pattern-nope**). Retry with backoff."
+        self.assertEqual(self.body(line, *self.two_prefix_args()), (1, self.missing("pattern-nope")))
+        self.assertEqual(self.body(line), (0, ""))
+
+    def test_bare_name_resolves_against_the_hinted_second_prefix(self) -> None:
+        self.skill("pattern-retry", 'name: pattern-retry\ndescription: "d"')
+        hinted = "Apply the **retry** pattern from the skill list."
+        self.assertEqual(self.body(hinted, *self.two_prefix_args()), (0, ""))
+        other = "Apply the **retry** principle from the skill list."
+        self.assertEqual(self.body(other, *self.two_prefix_args()), (1, self.missing("retry")))
+
+    def test_two_hinted_prefixes_each_resolve_a_bare_name(self) -> None:
+        self.skill("principle-lazy", 'name: principle-lazy\ndescription: "d"')
+        self.skill("pattern-retry", 'name: pattern-retry\ndescription: "d"')
+        line = "Use the **lazy** principle and the **retry** pattern from the skill list, not **ghost**."
+        self.assertEqual(self.body(line, *self.two_prefix_args()), (1, self.missing("ghost")))
 
     def test_known_skill_reference_passes(self) -> None:
         self.assertEqual(self.body("Use the **real-skill** skill.")[0], 0)
@@ -1040,11 +1107,12 @@ class ContentLint(Tree):
             "```sh\n"
             "node pstack/skills/example/check.mjs\n"
             "```\n"
-            "````"
+            "````",
+            *self.pstack_args(),
         )
         self.assertEqual(code, 1)
-        self.assertIn("SKILL.md:6: port-substitution", out)
-        self.assertIn("SKILL.md:10: port-substitution", out)
+        self.assertIn("SKILL.md:6: retired-text", out)
+        self.assertIn("SKILL.md:10: retired-text", out)
 
     def test_retired_deslop_command_fires_in_prose_and_fenced_templates(self) -> None:
         code, out = self.body(
@@ -1053,21 +1121,84 @@ class ContentLint(Tree):
             "```text\n"
             "/deslop\n"
             "```\n"
-            "````"
+            "````",
+            *self.pstack_args(),
         )
         self.assertEqual(code, 1)
-        self.assertIn("SKILL.md:6: port-substitution", out)
-        self.assertIn("SKILL.md:10: port-substitution", out)
+        self.assertIn(
+            "SKILL.md:6: retired-text: use the bundled unslop skill instead of the retired command",
+            out,
+        )
+        self.assertIn("SKILL.md:10: retired-text", out)
+
+    def test_retired_text_is_off_without_conventions(self) -> None:
+        self.assertEqual(
+            self.body("Run /deslop and read pstack/skills/example/SKILL.md."), (0, "")
+        )
 
 
-class FenceHandling(Tree):
+class ConventionsLoader(ConventionsTree):
+    def setUp(self) -> None:
+        super().setUp()
+        self.skill("a", 'name: a\ndescription: "d"')
+
+    def rejected(self, document: object) -> str:
+        path = self.conventions(document)
+        p = subprocess.run(
+            [sys.executable, str(CONTENT), "--conventions-file", str(path), str(self.root)],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertEqual(p.stdout, "")
+        return p.stderr
+
+    def test_valid_file_with_only_a_version_passes(self) -> None:
+        path = self.conventions({"version": 1})
+        self.assertEqual(run(CONTENT, self.root, "--conventions-file", str(path)), (0, ""))
+
+    def test_invalid_files_are_rejected_with_a_reason(self) -> None:
+        cases = {
+            "not json": ("{", "invalid conventions JSON"),
+            "not an object": ([], "must be an object with a version"),
+            "no version": ({"skill_prefixes": []}, "must be an object with a version"),
+            "unknown key": ({"version": 1, "ignore": []}, "unknown keys: ignore"),
+            "version 2": ({"version": 2}, "version must be 1"),
+            "boolean version": ({"version": True}, "version must be 1"),
+            "substitutions list": ({"version": 1, "retired_text": []}, "retired_text must be an object"),
+            "empty text": ({"version": 1, "retired_text": {"": "m"}}, "text must be a nonempty string"),
+            "empty message": ({"version": 1, "retired_text": {"/x": ""}}, "message must be a nonempty string: /x"),
+            "numeric message": ({"version": 1, "retired_text": {"/x": 1}}, "message must be a nonempty string: /x"),
+            "prefixes object": ({"version": 1, "skill_prefixes": {}}, "skill_prefixes must be a list"),
+            "empty prefix": ({"version": 1, "skill_prefixes": [""]}, "kebab-case string ending in a hyphen: ''"),
+            "numeric prefix": ({"version": 1, "skill_prefixes": [1]}, "ending in a hyphen: 1"),
+            "no hyphen": ({"version": 1, "skill_prefixes": ["principle"]}, "ending in a hyphen: 'principle'"),
+            "uppercase": ({"version": 1, "skill_prefixes": ["Principle-"]}, "ending in a hyphen: 'Principle-'"),
+            "duplicate prefix": ({"version": 1, "skill_prefixes": ["principle-", "principle-"]}, "skill_prefixes must not repeat"),
+            "duplicate key": ('{"version": 1, "retired_text": {"/x": "a", "/x": "b"}}', "must not repeat an object key"),
+        }
+        for label, (document, reason) in cases.items():
+            with self.subTest(label):
+                self.assertIn(reason, self.rejected(document))
+
+    def test_missing_file_is_rejected(self) -> None:
+        p = subprocess.run(
+            [sys.executable, str(CONTENT), "--conventions-file", str(Path(self.tmp.name) / "absent.json"), str(self.root)],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(p.returncode, 2)
+        self.assertIn("cannot read conventions file", p.stderr)
+
+
+class FenceHandling(ConventionsTree):
     def setUp(self) -> None:
         super().setUp()
         self.skill("real-skill", 'name: real-skill\ndescription: "d"')
 
-    def body(self, body: str) -> tuple[int, str]:
+    def body(self, body: str, *args: str) -> tuple[int, str]:
         self.skill("a", 'name: a\ndescription: "d"', body)
-        return run(CONTENT, self.root)
+        return run(CONTENT, self.root, *args)
 
     def test_scripts_parse(self) -> None:
         for script in (CONTENT, FRONTMATTER):
@@ -1091,11 +1222,11 @@ class FenceHandling(Tree):
         self.assertEqual(self.body("```\nx\n```\n\nSee [x](../gone/n.md).")[0], 1)
 
     def test_unclosed_fence_is_reported(self) -> None:
-        code, out = self.body("```\nx\n\nSee [x](../gone/n.md).\nRun /deslop.")
+        code, out = self.body("```\nx\n\nSee [x](../gone/n.md).\nRun /deslop.", *self.pstack_args())
         self.assertEqual(code, 1, "an unclosed fence hides the rest of the file")
         self.assertIn("unclosed-fence", out)
         self.assertIn("link and sibling checks skip the rest of the file", out)
-        self.assertIn("port-substitution", out, "raw port checks still inspect text after an unclosed fence")
+        self.assertIn("retired-text", out, "the retired-text check still reads raw lines after an unclosed fence")
 
     def test_fence_indented_inside_a_nested_list_is_still_a_fence(self) -> None:
         code, out = self.body("- a\n  - b\n\n    ```\n    See [x](../gone/n.md).\n    ```")

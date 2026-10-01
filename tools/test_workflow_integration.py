@@ -34,6 +34,8 @@ class WorkflowIntegrationTests(unittest.TestCase):
             INSTALLED_SKILLS_DIR="",
             LINK_EXCEPTIONS_FILE="",
             CONTENT_LINK_EXCEPTIONS_FILE="",
+            CONVENTIONS_FILE="",
+            CONTENT_CONVENTIONS_FILE="",
             IGNORE_FILE="",
             RUNNER_LOG=str(self.log),
             RUNNER_EXIT="0",
@@ -242,7 +244,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
     def test_link_exception_workflow_input_reaches_the_content_checker(self) -> None:
         inputs = self.workflow["on"]["workflow_call"]["inputs"]
         self.assertIn("content-link-exceptions-file", inputs)
-        step = self.steps["Skill links, references, and port substitutions"]
+        step = self.steps["Skill links and references, plus retired text from a conventions file"]
         self.assertEqual(
             step["env"]["LINK_EXCEPTIONS_FILE"],
             "${{ inputs.content-link-exceptions-file }}",
@@ -269,6 +271,32 @@ class WorkflowIntegrationTests(unittest.TestCase):
         invalid = self.run_body(step["run"])
         self.assertEqual(invalid.returncode, 2, invalid.stdout + invalid.stderr)
         self.assertIn("version", invalid.stderr)
+
+    def test_conventions_workflow_input_reaches_the_content_checker(self) -> None:
+        inputs = self.workflow["on"]["workflow_call"]["inputs"]
+        self.assertEqual(inputs["content-conventions-file"]["default"], "")
+        step = self.steps["Skill links and references, plus retired text from a conventions file"]
+        self.assertEqual(
+            step["env"]["CONVENTIONS_FILE"],
+            "${{ inputs.content-conventions-file }}",
+        )
+        source = self.package()
+        (source / "SKILL.md").write_text("Run /retired here.\n")
+        quiet = self.run_body(step["run"])
+        self.assertEqual(quiet.returncode, 0, quiet.stdout + quiet.stderr)
+        conventions = self.root / "content conventions.json"
+        conventions.write_text(json.dumps({
+            "version": 1,
+            "retired_text": {"/retired": "use the new command"},
+        }))
+        self.environment["CONVENTIONS_FILE"] = str(conventions)
+        flagged = self.run_body(step["run"])
+        self.assertEqual(flagged.returncode, 1, flagged.stdout + flagged.stderr)
+        self.assertIn("SKILL.md:1: retired-text: use the new command", flagged.stdout)
+        conventions.write_text('{"version": 1, "skill_prefixes": ["nohyphen"]}')
+        invalid = self.run_body(step["run"])
+        self.assertEqual(invalid.returncode, 2, invalid.stdout + invalid.stderr)
+        self.assertIn("ending in a hyphen", invalid.stderr)
 
     @unittest.skipUnless(shutil.which("mise") and shutil.which("dash"), "requires mise and dash")
     def test_mise_lint_task_applies_the_optional_link_policy(self) -> None:
@@ -298,6 +326,19 @@ class WorkflowIntegrationTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0 if configured else 1, result.stdout + result.stderr)
                 if not configured:
                     self.assertIn("target does not exist: output.md", result.stdout)
+        conventions = self.root / "content conventions.json"
+        conventions.write_text(json.dumps({
+            "version": 1,
+            "retired_text": {"output.md": "name the report explicitly"},
+        }))
+        self.environment["CONTENT_CONVENTIONS_FILE"] = str(conventions)
+        result = subprocess.run(
+            ["mise", "run", "skill-lint"], cwd=self.root, env=self.environment,
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("retired-text: name the report explicitly", result.stdout)
+        self.assertNotIn("relative-link", result.stdout)
 
     def package(self, name: str = "example") -> Path:
         package = self.root / self.environment["SKILLS_DIR"] / name
@@ -312,7 +353,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
     def runner_task(self, name: str, skill: str = "skills/example") -> subprocess.CompletedProcess[str]:
         tasks = tomllib.loads((REPOSITORY / "skill-tasks.toml").read_text())
         body = tasks[name]["run"].replace(
-            '{{arg(name="skill", help="skill directory, e.g. skills/unslop")}}', skill,
+            '{{arg(name="skill", help="skill directory, e.g. skills/my-skill")}}', skill,
         )
         return self.run_body(body)
 
