@@ -10,12 +10,11 @@ A bolded kebab name reads as a skill reference when "skill" appears on the same
 rendered line, and then it must name a real directory under the skills root.
 
 An optional version-1 conventions file adds two repository-specific rules. Each
-skill prefix, such as "principle-", makes a bold name that starts with it always
+skill prefix, such as "pattern-", makes a bold name that starts with it always
 read as a skill reference. On a rendered line that contains the prefix without
 its trailing hyphen, a bare bold name also resolves against the prefixed
-directory. Each port substitution is retired text that is reported, with its
-message, on every raw line that contains it, including templates inside code
-blocks.
+directory. Each retired-text entry is reported, with its message, on every raw
+line that contains it, including templates inside code blocks.
 
 CommonMark code blocks are skipped for link and sibling checks. An unclosed fence
 is itself a finding because it would otherwise hide the rest of the file.
@@ -136,7 +135,7 @@ INLINE_LINK_EXCEPTIONS = InlineLinkExceptions({})
 
 @dataclass(frozen=True)
 class ContentConventions:
-    port_substitutions: Mapping[str, str]
+    retired_text: Mapping[str, str]
     skill_prefixes: tuple[str, ...]
 
 
@@ -276,19 +275,19 @@ def load_content_conventions(path: Path | None) -> ContentConventions:
         raise ValueError(f"invalid conventions JSON in {path}: {error.msg}") from error
     if not isinstance(document, dict) or "version" not in document:
         raise ValueError("conventions must be an object with a version")
-    unknown = set(document) - {"version", "port_substitutions", "skill_prefixes"}
+    unknown = set(document) - {"version", "retired_text", "skill_prefixes"}
     if unknown:
         raise ValueError(f"conventions has unknown keys: {', '.join(sorted(unknown))}")
     if type(document["version"]) is not int or document["version"] != 1:
         raise ValueError("conventions version must be 1")
-    substitutions = document.get("port_substitutions", {})
-    if not isinstance(substitutions, dict):
-        raise ValueError("port_substitutions must be an object")
-    for text, message in substitutions.items():
+    retired = document.get("retired_text", {})
+    if not isinstance(retired, dict):
+        raise ValueError("retired_text must be an object")
+    for text, message in retired.items():
         if not text:
-            raise ValueError("port substitution text must be a nonempty string")
+            raise ValueError("retired text must be a nonempty string")
         if not isinstance(message, str) or not message:
-            raise ValueError(f"port substitution message must be a nonempty string: {text}")
+            raise ValueError(f"retired text message must be a nonempty string: {text}")
     prefixes = document.get("skill_prefixes", [])
     if not isinstance(prefixes, list):
         raise ValueError("skill_prefixes must be a list")
@@ -299,7 +298,7 @@ def load_content_conventions(path: Path | None) -> ContentConventions:
             )
     if len(set(prefixes)) != len(prefixes):
         raise ValueError("skill_prefixes must not repeat")
-    return ContentConventions(dict(substitutions), tuple(prefixes))
+    return ContentConventions(dict(retired), tuple(prefixes))
 
 
 def inline_code_path(content: str) -> str | None:
@@ -491,18 +490,18 @@ def check_unclosed_fence(parsed: ParsedFile) -> Iterator[Finding]:
             )
 
 
-def check_port_substitutions(parsed: ParsedFile) -> Iterator[Finding]:
+def check_retired_text(parsed: ParsedFile) -> Iterator[Finding]:
     for lineno, line in parsed.raw:
-        for old, replacement in CONVENTIONS.port_substitutions.items():
-            if old in line:
-                yield Finding(parsed.path, lineno, "port-substitution", replacement)
+        for text, message in CONVENTIONS.retired_text.items():
+            if text in line:
+                yield Finding(parsed.path, lineno, "retired-text", message)
 
 
 REGISTRY: list[tuple[str, Callable[[ParsedFile], Iterator[Finding]]]] = [
     ("relative-link", check_relative_links),
     ("sibling-skill", check_sibling_skill),
     ("unclosed-fence", check_unclosed_fence),
-    ("port-substitution", check_port_substitutions),
+    ("retired-text", check_retired_text),
 ]
 
 
@@ -529,7 +528,7 @@ def main() -> int:
     ap.add_argument(
         "--conventions-file",
         type=Path,
-        help="JSON file of repository skill prefixes and retired port substitutions",
+        help="JSON file of repository skill prefixes and retired text",
     )
     ap.add_argument("root", nargs="?", default="skills")
     args = ap.parse_args()

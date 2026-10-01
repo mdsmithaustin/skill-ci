@@ -17,7 +17,7 @@
 # workspace on both harnesses while the logins keep working.
 
 [skill-lint]
-description = "Frontmatter, links, references, port substitutions (model-free)"
+description = "Frontmatter, links, and skill references; retired text when a conventions file lists it (model-free)"
 shell = "bash -c"
 run = '''
 set -euo pipefail

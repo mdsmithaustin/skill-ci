@@ -12,9 +12,11 @@ from pathlib import Path
 TOOLS = Path(__file__).resolve().parent
 CONTENT = TOOLS / "check-skill-content.py"
 FRONTMATTER = TOOLS / "check-skill-frontmatter.py"
+# Parity fixture: the conventions pstack ships, so these tests pin the behavior
+# the checker had before the conventions moved out of it.
 PSTACK_CONVENTIONS = {
     "version": 1,
-    "port_substitutions": {
+    "retired_text": {
         "pstack/skills/": "use the installed or verified-source root instead of the upstream monorepo path",
         "/deslop": "use the bundled unslop skill instead of the retired command",
     },
@@ -56,6 +58,10 @@ class ConventionsTree(Tree):
 
     def pstack_args(self) -> tuple[str, str]:
         return "--conventions-file", str(self.conventions(PSTACK_CONVENTIONS))
+
+    def two_prefix_args(self) -> tuple[str, str]:
+        document = {"version": 1, "skill_prefixes": ["principle-", "pattern-"]}
+        return "--conventions-file", str(self.conventions(document))
 
 
 class ContentLint(ConventionsTree):
@@ -226,7 +232,7 @@ class ContentLint(ConventionsTree):
             ("`./MISSING.md`", "relative-link"),
             ("**principle-nope**", "sibling-skill"),
             ("```\nunfinished", "unclosed-fence"),
-            ("Read pstack/skills/example/SKILL.md.", "port-substitution"),
+            ("Read pstack/skills/example/SKILL.md.", "retired-text"),
         )
         for body, kind in cases:
             with self.subTest(kind=kind):
@@ -1061,6 +1067,27 @@ class ContentLint(ConventionsTree):
         self.assertEqual(code, 1)
         self.assertIn("SKILL.md:6: sibling-skill: **lazy** has no matching directory", out)
 
+    def missing(self, name: str) -> str:
+        return f"{self.root}/a/SKILL.md:6: sibling-skill: **{name}** has no matching directory under {self.root}/\n"
+
+    def test_second_prefix_name_fires_without_the_word_skill(self) -> None:
+        line = "- **R** (**pattern-nope**). Retry with backoff."
+        self.assertEqual(self.body(line, *self.two_prefix_args()), (1, self.missing("pattern-nope")))
+        self.assertEqual(self.body(line), (0, ""))
+
+    def test_bare_name_resolves_against_the_hinted_second_prefix(self) -> None:
+        self.skill("pattern-retry", 'name: pattern-retry\ndescription: "d"')
+        hinted = "Apply the **retry** pattern from the skill list."
+        self.assertEqual(self.body(hinted, *self.two_prefix_args()), (0, ""))
+        other = "Apply the **retry** principle from the skill list."
+        self.assertEqual(self.body(other, *self.two_prefix_args()), (1, self.missing("retry")))
+
+    def test_two_hinted_prefixes_each_resolve_a_bare_name(self) -> None:
+        self.skill("principle-lazy", 'name: principle-lazy\ndescription: "d"')
+        self.skill("pattern-retry", 'name: pattern-retry\ndescription: "d"')
+        line = "Use the **lazy** principle and the **retry** pattern from the skill list, not **ghost**."
+        self.assertEqual(self.body(line, *self.two_prefix_args()), (1, self.missing("ghost")))
+
     def test_known_skill_reference_passes(self) -> None:
         self.assertEqual(self.body("Use the **real-skill** skill.")[0], 0)
 
@@ -1084,8 +1111,8 @@ class ContentLint(ConventionsTree):
             *self.pstack_args(),
         )
         self.assertEqual(code, 1)
-        self.assertIn("SKILL.md:6: port-substitution", out)
-        self.assertIn("SKILL.md:10: port-substitution", out)
+        self.assertIn("SKILL.md:6: retired-text", out)
+        self.assertIn("SKILL.md:10: retired-text", out)
 
     def test_retired_deslop_command_fires_in_prose_and_fenced_templates(self) -> None:
         code, out = self.body(
@@ -1099,12 +1126,12 @@ class ContentLint(ConventionsTree):
         )
         self.assertEqual(code, 1)
         self.assertIn(
-            "SKILL.md:6: port-substitution: use the bundled unslop skill instead of the retired command",
+            "SKILL.md:6: retired-text: use the bundled unslop skill instead of the retired command",
             out,
         )
-        self.assertIn("SKILL.md:10: port-substitution", out)
+        self.assertIn("SKILL.md:10: retired-text", out)
 
-    def test_port_substitutions_are_off_without_conventions(self) -> None:
+    def test_retired_text_is_off_without_conventions(self) -> None:
         self.assertEqual(
             self.body("Run /deslop and read pstack/skills/example/SKILL.md."), (0, "")
         )
@@ -1138,17 +1165,17 @@ class ConventionsLoader(ConventionsTree):
             "unknown key": ({"version": 1, "ignore": []}, "unknown keys: ignore"),
             "version 2": ({"version": 2}, "version must be 1"),
             "boolean version": ({"version": True}, "version must be 1"),
-            "substitutions list": ({"version": 1, "port_substitutions": []}, "port_substitutions must be an object"),
-            "empty text": ({"version": 1, "port_substitutions": {"": "m"}}, "text must be a nonempty string"),
-            "empty message": ({"version": 1, "port_substitutions": {"/x": ""}}, "message must be a nonempty string: /x"),
-            "numeric message": ({"version": 1, "port_substitutions": {"/x": 1}}, "message must be a nonempty string: /x"),
+            "substitutions list": ({"version": 1, "retired_text": []}, "retired_text must be an object"),
+            "empty text": ({"version": 1, "retired_text": {"": "m"}}, "text must be a nonempty string"),
+            "empty message": ({"version": 1, "retired_text": {"/x": ""}}, "message must be a nonempty string: /x"),
+            "numeric message": ({"version": 1, "retired_text": {"/x": 1}}, "message must be a nonempty string: /x"),
             "prefixes object": ({"version": 1, "skill_prefixes": {}}, "skill_prefixes must be a list"),
             "empty prefix": ({"version": 1, "skill_prefixes": [""]}, "kebab-case string ending in a hyphen: ''"),
             "numeric prefix": ({"version": 1, "skill_prefixes": [1]}, "ending in a hyphen: 1"),
             "no hyphen": ({"version": 1, "skill_prefixes": ["principle"]}, "ending in a hyphen: 'principle'"),
             "uppercase": ({"version": 1, "skill_prefixes": ["Principle-"]}, "ending in a hyphen: 'Principle-'"),
             "duplicate prefix": ({"version": 1, "skill_prefixes": ["principle-", "principle-"]}, "skill_prefixes must not repeat"),
-            "duplicate key": ('{"version": 1, "port_substitutions": {"/x": "a", "/x": "b"}}', "must not repeat an object key"),
+            "duplicate key": ('{"version": 1, "retired_text": {"/x": "a", "/x": "b"}}', "must not repeat an object key"),
         }
         for label, (document, reason) in cases.items():
             with self.subTest(label):
@@ -1199,7 +1226,7 @@ class FenceHandling(ConventionsTree):
         self.assertEqual(code, 1, "an unclosed fence hides the rest of the file")
         self.assertIn("unclosed-fence", out)
         self.assertIn("link and sibling checks skip the rest of the file", out)
-        self.assertIn("port-substitution", out, "raw port checks still inspect text after an unclosed fence")
+        self.assertIn("retired-text", out, "the retired-text check still reads raw lines after an unclosed fence")
 
     def test_fence_indented_inside_a_nested_list_is_still_a_fence(self) -> None:
         code, out = self.body("- a\n  - b\n\n    ```\n    See [x](../gone/n.md).\n    ```")

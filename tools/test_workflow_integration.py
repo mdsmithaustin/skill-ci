@@ -244,7 +244,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
     def test_link_exception_workflow_input_reaches_the_content_checker(self) -> None:
         inputs = self.workflow["on"]["workflow_call"]["inputs"]
         self.assertIn("content-link-exceptions-file", inputs)
-        step = self.steps["Skill links, references, and port substitutions"]
+        step = self.steps["Skill links and references, plus retired text from a conventions file"]
         self.assertEqual(
             step["env"]["LINK_EXCEPTIONS_FILE"],
             "${{ inputs.content-link-exceptions-file }}",
@@ -275,7 +275,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
     def test_conventions_workflow_input_reaches_the_content_checker(self) -> None:
         inputs = self.workflow["on"]["workflow_call"]["inputs"]
         self.assertEqual(inputs["content-conventions-file"]["default"], "")
-        step = self.steps["Skill links, references, and port substitutions"]
+        step = self.steps["Skill links and references, plus retired text from a conventions file"]
         self.assertEqual(
             step["env"]["CONVENTIONS_FILE"],
             "${{ inputs.content-conventions-file }}",
@@ -287,12 +287,12 @@ class WorkflowIntegrationTests(unittest.TestCase):
         conventions = self.root / "content conventions.json"
         conventions.write_text(json.dumps({
             "version": 1,
-            "port_substitutions": {"/retired": "use the new command"},
+            "retired_text": {"/retired": "use the new command"},
         }))
         self.environment["CONVENTIONS_FILE"] = str(conventions)
         flagged = self.run_body(step["run"])
         self.assertEqual(flagged.returncode, 1, flagged.stdout + flagged.stderr)
-        self.assertIn("SKILL.md:1: port-substitution: use the new command", flagged.stdout)
+        self.assertIn("SKILL.md:1: retired-text: use the new command", flagged.stdout)
         conventions.write_text('{"version": 1, "skill_prefixes": ["nohyphen"]}')
         invalid = self.run_body(step["run"])
         self.assertEqual(invalid.returncode, 2, invalid.stdout + invalid.stderr)
@@ -329,7 +329,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
         conventions = self.root / "content conventions.json"
         conventions.write_text(json.dumps({
             "version": 1,
-            "port_substitutions": {"output.md": "name the report explicitly"},
+            "retired_text": {"output.md": "name the report explicitly"},
         }))
         self.environment["CONTENT_CONVENTIONS_FILE"] = str(conventions)
         result = subprocess.run(
@@ -337,7 +337,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
             capture_output=True, text=True, timeout=30, check=False,
         )
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("port-substitution: name the report explicitly", result.stdout)
+        self.assertIn("retired-text: name the report explicitly", result.stdout)
         self.assertNotIn("relative-link", result.stdout)
 
     def package(self, name: str = "example") -> Path:

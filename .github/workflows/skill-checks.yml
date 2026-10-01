@@ -36,7 +36,7 @@ on:
         required: false
         default: ''
       content-conventions-file:
-        description: optional path to a version-1 JSON file of repository skill-name prefixes and retired port substitutions for the content checker
+        description: optional path to a version-1 JSON file of repository skill-name prefixes and retired text for the content checker
         type: string
         required: false
         default: ''
@@ -144,7 +144,7 @@ jobs:
           else
             python3 .skill-ci/tools/check-skill-frontmatter.py "$SKILLS_DIR"
           fi
-      - name: Skill links, references, and port substitutions
+      - name: Skill links and references, plus retired text from a conventions file
         env:
           SKILLS_DIR: ${{ inputs.skills-dir }}
           IGNORE_FILE: ${{ inputs.content-ignore-file }}
