@@ -34,6 +34,8 @@ class WorkflowIntegrationTests(unittest.TestCase):
             INSTALLED_SKILLS_DIR="",
             LINK_EXCEPTIONS_FILE="",
             CONTENT_LINK_EXCEPTIONS_FILE="",
+            CONVENTIONS_FILE="",
+            CONTENT_CONVENTIONS_FILE="",
             IGNORE_FILE="",
             RUNNER_LOG=str(self.log),
             RUNNER_EXIT="0",
@@ -270,6 +272,32 @@ class WorkflowIntegrationTests(unittest.TestCase):
         self.assertEqual(invalid.returncode, 2, invalid.stdout + invalid.stderr)
         self.assertIn("version", invalid.stderr)
 
+    def test_conventions_workflow_input_reaches_the_content_checker(self) -> None:
+        inputs = self.workflow["on"]["workflow_call"]["inputs"]
+        self.assertEqual(inputs["content-conventions-file"]["default"], "")
+        step = self.steps["Skill links, references, and port substitutions"]
+        self.assertEqual(
+            step["env"]["CONVENTIONS_FILE"],
+            "${{ inputs.content-conventions-file }}",
+        )
+        source = self.package()
+        (source / "SKILL.md").write_text("Run /retired here.\n")
+        quiet = self.run_body(step["run"])
+        self.assertEqual(quiet.returncode, 0, quiet.stdout + quiet.stderr)
+        conventions = self.root / "content conventions.json"
+        conventions.write_text(json.dumps({
+            "version": 1,
+            "port_substitutions": {"/retired": "use the new command"},
+        }))
+        self.environment["CONVENTIONS_FILE"] = str(conventions)
+        flagged = self.run_body(step["run"])
+        self.assertEqual(flagged.returncode, 1, flagged.stdout + flagged.stderr)
+        self.assertIn("SKILL.md:1: port-substitution: use the new command", flagged.stdout)
+        conventions.write_text('{"version": 1, "skill_prefixes": ["nohyphen"]}')
+        invalid = self.run_body(step["run"])
+        self.assertEqual(invalid.returncode, 2, invalid.stdout + invalid.stderr)
+        self.assertIn("ending in a hyphen", invalid.stderr)
+
     @unittest.skipUnless(shutil.which("mise") and shutil.which("dash"), "requires mise and dash")
     def test_mise_lint_task_applies_the_optional_link_policy(self) -> None:
         source = self.package()
@@ -298,6 +326,19 @@ class WorkflowIntegrationTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0 if configured else 1, result.stdout + result.stderr)
                 if not configured:
                     self.assertIn("target does not exist: output.md", result.stdout)
+        conventions = self.root / "content conventions.json"
+        conventions.write_text(json.dumps({
+            "version": 1,
+            "port_substitutions": {"output.md": "name the report explicitly"},
+        }))
+        self.environment["CONTENT_CONVENTIONS_FILE"] = str(conventions)
+        result = subprocess.run(
+            ["mise", "run", "skill-lint"], cwd=self.root, env=self.environment,
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("port-substitution: name the report explicitly", result.stdout)
+        self.assertNotIn("relative-link", result.stdout)
 
     def package(self, name: str = "example") -> Path:
         package = self.root / self.environment["SKILLS_DIR"] / name

@@ -35,6 +35,11 @@ on:
         type: string
         required: false
         default: ''
+      content-conventions-file:
+        description: optional path to a version-1 JSON file of repository skill-name prefixes and retired port substitutions for the content checker
+        type: string
+        required: false
+        default: ''
       evals-dir:
         description: directory holding eval manifests when they live outside the skills tree; the default searches the skills tree for backward compatibility
         type: string
@@ -144,6 +149,7 @@ jobs:
           SKILLS_DIR: ${{ inputs.skills-dir }}
           IGNORE_FILE: ${{ inputs.content-ignore-file }}
           LINK_EXCEPTIONS_FILE: ${{ inputs.content-link-exceptions-file }}
+          CONVENTIONS_FILE: ${{ inputs.content-conventions-file }}
         run: |
           command=(python3 .skill-ci/tools/check-skill-content.py "$SKILLS_DIR")
           if [ -n "$IGNORE_FILE" ]; then
@@ -152,6 +158,9 @@ jobs:
           fi
           if [ -n "$LINK_EXCEPTIONS_FILE" ]; then
             command+=(--link-exceptions-file "$LINK_EXCEPTIONS_FILE")
+          fi
+          if [ -n "$CONVENTIONS_FILE" ]; then
+            command+=(--conventions-file "$CONVENTIONS_FILE")
           fi
           "${command[@]}"
 

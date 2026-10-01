@@ -25,11 +25,14 @@ set -euo pipefail
 SKILLS_DIR="${SKILLS_DIR:-skills}"
 py() { uv run --no-project --with-requirements "$SKILL_CI/tools/requirements.txt" python "$@"; }
 py "$SKILL_CI/tools/check-skill-frontmatter.py" "$SKILLS_DIR"
+content=("$SKILL_CI/tools/check-skill-content.py")
 if [ -n "${CONTENT_LINK_EXCEPTIONS_FILE:-}" ]; then
-  py "$SKILL_CI/tools/check-skill-content.py" --link-exceptions-file "$CONTENT_LINK_EXCEPTIONS_FILE" "$SKILLS_DIR"
-else
-  py "$SKILL_CI/tools/check-skill-content.py" "$SKILLS_DIR"
+  content+=(--link-exceptions-file "$CONTENT_LINK_EXCEPTIONS_FILE")
 fi
+if [ -n "${CONTENT_CONVENTIONS_FILE:-}" ]; then
+  content+=(--conventions-file "$CONTENT_CONVENTIONS_FILE")
+fi
+py "${content[@]}" "$SKILLS_DIR"
 '''
 
 [skill-package]
