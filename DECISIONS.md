@@ -39,10 +39,11 @@ Building our own would have reproduced about twenty thousand lines to add two th
 19. `judge-alignment` reports judge score calibration (fork #17).
 20. Answer and subagent runs use the trigger runs' isolation flags plus `"autoMemoryEnabled":false`, so skills and agents mounted in the workspace stay visible while host context stays hidden. Judges keep patch 12's sealed flags. Codex answer runs redact host skill paths in the saved command and stderr (fork #19).
 
-The original exit test counted patches. That measured the wrong thing, because driving two command line tools that ship weekly produces a steady trickle of adapter fixes. The test is now where a patch lands, and a patch lands in one of three places.
+The original exit test counted patches. That measured the wrong thing, because driving two command line tools that ship weekly produces a steady trickle of adapter fixes. The test is now where a patch lands, and a patch lands in one of four places.
 
 - A fix at the adapter edge is the ordinary cost of the dependency.
 - A fix that applies one of the tool's own evaluation rules to a path that missed it is a bug fix in the tool. The rule must exist in the tool's code or docs before the patch, and the classification must cite it by symbol.
+- An opt-in addition, such as a new assertion type or report, that changes no existing grading, aggregation, or case meaning is not a disagreement and does not count. A manifest that does not use it grades exactly as before. The operator added this kind on 2026-10-01.
 - Any other fix that changes grading, aggregation, the case model, or prompt design means the tool disagrees with us about evaluation. That is when to leave.
 
 Patches 2 to 7 are adapter edge. Patch 1 is a bug fix. Before it, the runner already hid the arm from the model in blind A/B comparison (`compare-tasks`, keyed by `blind_nonce`). Patch 1 applies that rule to the judge that grades a single run, and adds `blind_judge_payload_text` to do it.
@@ -62,7 +63,7 @@ Patches 9 to 20 were classified on 2026-10-01.
 
 - **Adapter edge.** Patches 9, 11, 14, 15, and 16, and the isolation flags in patches 12 and 20. Patch 20 replaced patch 12's answer-run flags.
 - **Bug fix.** Three parts apply a rule the runner already had. Patch 17 lets `judge_task_id` accept `RunNumber` (`manifest_contracts.py`), the runner's run-identity type, which already rejects booleans and non-positive values. The `old_skill` part of patch 10 gives that arm the opaque upload name that `Arm.upload_token()` (`ablation_model.py`) already gave a blind ablation arm. The word part of patch 13 applies `SubjectVisiblePromptTests._BANNED_RE`, which already banned `ablat\w*` from text the answering agent sees. That rule came from patch 8, so this part extends the fork's own accepted difference.
-- **Feature.** Patches 18 and 19. A fork-only feature adds a measurement and leaves existing grading alone, so it is not a disagreement about evaluation and does not count toward the test.
+- **Opt-in addition.** Patches 18 and 19. Patch 18 adds the `tool_sequence` assertion and patch 19 adds judge calibration to `judge-alignment`. Neither changes how an existing assertion grades, so both fall under the opt-in kind and do not count toward the test.
 - **Third kind.** The model-visible blinding in patches 10, 12, and 13. That is the arm and case names hidden from the Jetty task file, the `without_skill` instruction that no longer mentions a skill, and the expected regression hidden from an ablation arm.
 
 On 2026-10-01 the operator decided that the blinding in patches 10, 12, and 13 is part of the accepted difference, widened from patch 8's grading words to one principle. The answering agent should not know it is being tested or which arm it is in. Those patches do not count toward the test. The next patch of the third kind that falls outside that principle reopens this decision.
@@ -89,7 +90,7 @@ The cost is that a manifest and its skill no longer share a directory, so nothin
 
 Everything model-free runs in continuous integration on every pull request. That is the lints, manifest validation, the leakage check, and the readiness audit including judge independence.
 
-Behavioral runs are operator-local and never a pull request gate. They drive the installed `claude` and `codex` binaries on the operator's own logins. Since the runner pin to `80e49af`, the runner keeps the operator's own setup out of answer and trigger runs itself. For Claude that is host skills, agents, `CLAUDE.md`, MCP servers, and auto memory. For Codex it is every skill under `~/.agents/skills`, Codex's bundled skills, and apps. The launchers in `tools/` predate that. `tools/claude-project-only` is still needed, because the runner grants a print-mode run no tool permissions and the launcher grants `acceptEdits`. Its `--setting-sources project` now repeats the runner's flag and is harmless. `tools/codex-project-only` only moves HOME, which the runner has made redundant.
+Behavioral runs are operator-local and never a pull request gate. They drive the installed `claude` and `codex` binaries on the operator's own logins. Since the runner pin to `80e49af`, the runner keeps the operator's own setup out of answer and trigger runs itself. For Claude that is host skills, agents, `CLAUDE.md`, MCP servers, and auto memory. For Codex it is every skill under `~/.agents/skills`, Codex's bundled skills, and apps. The launchers in `tools/` predate that. `tools/claude-project-only` is still needed, because the runner grants a print-mode run no tool permissions and the launcher grants `acceptEdits`. In answer and trigger runs its `--setting-sources project` repeats the runner's flag and is harmless. Judge runs are sealed instead: the runner passes `--safe-mode --disable-slash-commands`, which hides workspace skills too. Whether the launcher's flag adds anything on a judge run has not been tested. `tools/codex-project-only` only moves HOME, which the runner has made redundant.
 
 Cost is the reason this is not a gate. Fifty-two skills at twenty queries, three runs, and two harnesses is over six thousand command line invocations.
 

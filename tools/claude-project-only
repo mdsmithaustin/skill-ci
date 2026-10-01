@@ -11,7 +11,9 @@
 # --setting-sources project  drops ~/.claude skills, agents, and CLAUDE.md
 #                            while keeping OAuth (--bare would drop the login
 #                            too). Since runner pin 80e49af the runner passes
-#                            it itself in answer and trigger runs, so here it
+#                            it itself in answer and trigger runs, so there it
 #                            is redundant. Claude Code 2.1.286 accepts it twice.
+#                            Judge runs get the runner's sealed --safe-mode
+#                            --disable-slash-commands instead.
 # Verified 2026-09-13 on Claude Code 2.1.270.
 exec claude --setting-sources project --permission-mode acceptEdits "$@"
