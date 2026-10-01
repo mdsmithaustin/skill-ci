@@ -35,6 +35,17 @@ DAILY_EXACT_LOCAL_TIME = re.compile(
     r"(?=.*\blocal\s+time\b)",
     re.IGNORECASE,
 )
+EXAMPLE_HOST_SUFFIXES = (
+    "example.com", "example.net", "example.org", ".example", ".test", ".invalid", ".localhost",
+)
+GITHUB_OWNED_HOST_SUFFIXES = ("githubassets.com", "githubusercontent.com")
+# Host contexts only, so Actions expressions such as github.event.number pass.
+ENTERPRISE_GITHUB_HOST = re.compile(
+    r"(?:(?<=://)|(?<=@)|(?<=--hostname )|(?<=--hostname=)|(?<=GH_HOST=)|(?<=\\n)|(?<=[\"'`]))"
+    r"github(?:\.[a-z0-9-]+)+\.[a-z]{2,63}"
+    r"(?=[/:\"'`\s),>\]\\]|\.(?:\s|$)|$)",
+    re.IGNORECASE,
+)
 LAUNCH_AGENT_PATH = re.compile(
     r"(?<![\w.-])"
     r"(?:~|\$HOME|\$\{HOME\}|/Users/[^/\s\"'`<>]+)?"
@@ -90,6 +101,11 @@ def is_example_email(value: str) -> bool:
     return bool(local) and domain in EXAMPLE_EMAIL_DOMAINS
 
 
+def is_private_github_host(host: str) -> bool:
+    host = host.casefold()
+    return not host.endswith(EXAMPLE_HOST_SUFFIXES + GITHUB_OWNED_HOST_SUFFIXES)
+
+
 def luhn_valid(value: str) -> bool:
     digits = [int(char) for char in value if char.isdigit()]
     if not 13 <= len(digits) <= 19:
@@ -118,6 +134,8 @@ def line_findings(line: str) -> list[str]:
         findings.append("payment card number")
     if DAILY_EXACT_LOCAL_TIME.search(line):
         findings.append("local automation schedule")
+    if any(is_private_github_host(match.group()) for match in ENTERPRISE_GITHUB_HOST.finditer(line)):
+        findings.append("GitHub Enterprise host")
     if LAUNCH_AGENT_PATH.search(line):
         findings.append("LaunchAgent path")
     if HOME_RELATIVE_LOG_PATH.search(line):

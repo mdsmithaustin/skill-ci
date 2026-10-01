@@ -116,6 +116,46 @@ class PiiCheck(unittest.TestCase):
         url = "ssh://" + "git" + "@" + "github.com/owner/repository"
         self.assertEqual(self.check(f"remote = {url}\n"), (0, ""))
 
+    def test_enterprise_github_host_fails_in_each_host_context_without_echoing_it(self) -> None:
+        host = "github." + "acme-corp.com"
+        examples = (
+            f"https://{host}/team/project/pull/14\n",
+            f"remote = ssh://git@{host}/team/project.git\n",
+            f'host: "{host}",\n',
+            f"gh api --hostname {host} user\n",
+            f"GH_HOST={host} gh pr view\n",
+            f'command.includes("--hostname\\n{host}\\n")\n',
+            f"Point it at `{host}`.\n",
+        )
+        for example in examples:
+            with self.subTest(example=example):
+                code, output = self.check(example)
+                self.assertEqual(code, 1)
+                self.assertIn(":1: possible GitHub Enterprise host", output)
+                self.assertNotIn(host, output)
+
+    def test_public_example_and_github_owned_hosts_pass(self) -> None:
+        examples = (
+            "https://github.com/owner/repository\n",
+            "https://" + "github.example.com/team/project/pull/14\n",
+            'host: "' + "github.corp.test" + '",\n',
+            "https://" + "github.githubassets.com/assets/app.js\n",
+            "https://owner.github.io/site\n",
+        )
+        for example in examples:
+            with self.subTest(example=example):
+                self.assertEqual(self.check(example), (0, ""))
+
+    def test_github_actions_expressions_pass(self) -> None:
+        examples = (
+            "if: ${{ github.event.number }}\n",
+            "ref: ${{ github.event.pull_request.head.sha }}\n",
+            "run: echo github.repository.owner\n",
+        )
+        for example in examples:
+            with self.subTest(example=example):
+                self.assertEqual(self.check(example), (0, ""))
+
     def test_dotted_personal_email_fails(self) -> None:
         address = "ada.lovelace" + "@" + "private.test"
         code, output = self.check(f"Contact {address}.\n")

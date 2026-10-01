@@ -92,7 +92,7 @@ This repository's own `mise.toml` adds a `test` task that runs the unit tests.
 
 - `check-skill-frontmatter.py` validates each `SKILL.md` against the agentskills.io metadata rules and the Codex invocation policy. With `trigger-cases` set, it also fails for any skill missing from the trigger declaration file.
 - `check-skill-content.py` fails on relative links whose target does not exist, bold skill names that match no known skill, and unclosed code fences. A bold name counts as a skill name when its line contains the word "skill". A conventions file can add name prefixes and retired text for your repository. See [Add your repository's naming conventions to the content check](docs/content-conventions.md).
-- `check-pii.py` fails on likely personal data. This matters because trigger cases are cut from real session transcripts.
+- `check-pii.py` fails on likely personal data and on GitHub Enterprise hosts, such as an employer's `github.<company>.com` in a URL, a quoted string, `GH_HOST`, or `--hostname`. Hosts under `example.com`, `example.net`, `example.org`, `.test`, `.example`, `.invalid`, and `.localhost` pass. This matters because trigger cases are cut from real session transcripts.
 
 ## Configuration
 
