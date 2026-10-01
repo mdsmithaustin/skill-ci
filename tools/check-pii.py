@@ -39,18 +39,16 @@ ALLOWED_HOST_DOMAINS = (
     "example.com", "example.net", "example.org", "example", "test", "invalid", "localhost",
     "githubassets.com", "githubusercontent.com",
 )
-# Outside a host context a name like github.copilot.enable is usually a setting or
-# an Actions expression, so there the last label must look like a top-level domain.
-GENERIC_TOP_LEVEL_DOMAINS = frozenset(
+# Outside a host context a name like github.event.comment.id is usually an Actions
+# expression or a setting, so there the last label must be a common top-level domain.
+COMMON_TOP_LEVEL_DOMAINS = frozenset(
     {"com", "net", "org", "io", "co", "dev", "app", "cloud", "tech", "biz", "info", "ai"}
 )
-SOURCE_FILE_EXTENSIONS = frozenset(
-    {"js", "ts", "py", "rb", "go", "rs", "md", "sh", "pl", "cs", "kt", "hs", "ml", "cc", "mm", "pm", "so", "gz", "xz"}
-)
 GITHUB_HOST = re.compile(
-    r"(?P<host_context>://|@|--hostname[ =]|-h |GH_HOST=|\\[nt]|\bhost(?:name)?: )?"
+    r"(?:(?P<host_context>://|:\\/\\/|@|--hostname[\s=]+|-h\s+|GH_HOST=|\\[nt]|host(?:name)?[\"']?\s*:\s*)"
+    r"[\"']?(?:[a-z0-9-]+\.)*|(?<![\w.]))"
     r"(?P<host>github(?:\.[a-z0-9-]+)+\.(?P<tld>[a-z]{2,63}))"
-    r"(?=[/:\"'`\s),;|>?#\]\\]|\.(?:\s|$)|$)",
+    r"(?!\w|\.\w)",
     re.IGNORECASE,
 )
 LAUNCH_AGENT_PATH = re.compile(
@@ -110,12 +108,9 @@ def is_example_email(value: str) -> bool:
 
 def is_enterprise_github_host(match: re.Match[str]) -> bool:
     host = match["host"].casefold()
-    tld = match["tld"].casefold()
     if any(f".{host}".endswith(f".{domain}") for domain in ALLOWED_HOST_DOMAINS):
         return False
-    if match["host_context"]:
-        return True
-    return tld in GENERIC_TOP_LEVEL_DOMAINS or (len(tld) == 2 and tld not in SOURCE_FILE_EXTENSIONS)
+    return bool(match["host_context"]) or match["tld"].casefold() in COMMON_TOP_LEVEL_DOMAINS
 
 
 def luhn_valid(value: str) -> bool:

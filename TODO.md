@@ -19,7 +19,7 @@ Deliberate gaps, each with the reason it is open.
 
 - Dependabot covers the GitHub Actions used by the workflow and the pinned PyYAML in `tools/requirements.txt`. It does not cover the behavioral runner, which `runner.lock` pins as a git commit that no ecosystem reads. Moving that pin stays a judgement call gated on the fork's own tests, so it needs a person or a scheduled check of the fork branch.
 
-- `tools/check-pii.py` is a fourth verbatim copy from mds-pstack. It shares the settled shape of the other checkers, a consumer copy kept for the pre-commit hook and held to the shared version by the drift check.
+- `tools/check-pii.py` started as a fourth verbatim copy from mds-pstack, and skill-ci now owns it. It shares the settled shape of the other checkers, a consumer copy kept for the pre-commit hook and held to the shared version by the drift check, so a consumer re-copies it when it moves its pin.
 
 
 - A harvest review sheet quotes real user prompts, and those quotes contain text shaped like markdown links and bold skill names. `check-skill-content.py` reads them as real links and fails. Nothing is broken while review sheets stay untracked, which is where they belong, but committing one needs the quoted text escaped or the sheet kept out of the skills tree. Measured on three sheets under mds-pstack on 2026-09-13.

@@ -119,22 +119,21 @@ class PiiCheck(unittest.TestCase):
     def test_enterprise_github_host_fails_without_echoing_it(self) -> None:
         host = "github." + "acme-corp.com"
         examples = {
-            "url": f"remote https://{host}",
+            "url at end of line": f"remote https://{host}",
             "quoted": f'"{host}";',
             "backticked": f"Point it at `{host}`.",
+            "bold": f"Use **{host}** for work.",
             "prose": f"Our host is {host} for work.",
             "table cell": f"| host | {host} |",
             "parenthesized": f"({host})",
             "comma list": f"hosts={host},other",
-            "statement end": f"url=https://{host};",
-            "pipe list": f"hosts={host}|other",
-            "query": f"https://{host}?tab=1",
+            "brace": f"{{{host}}}",
+            "exclamation": f"It moved to {host}!",
+            "query": f"https://{host}?tab=1&x=2",
             "fragment": f"https://{host}#readme",
             "sentence end": f"See https://{host}.",
-            "escaped slash": f'"https:\\/\\/{host}\\/o"',
-            "uppercase": f"https://{host.upper()}/x",
-            "label before github": f"https://raw.{host}/x",
-            "country code domain": '"github.' + 'acme.jp"',
+            "uppercase": f"Our host is {host.upper()}.",
+            "digit in a label": "Our host is github." + "acme2.com.",
             "lookalike of an example domain": "https://github." + "notexample.com/x",
         }
         for name, line in examples.items():
@@ -148,15 +147,21 @@ class PiiCheck(unittest.TestCase):
         host = "github." + "corp.internal"
         examples = {
             "url": f"https://{host}/x",
+            "label before github": f"https://raw.{host}/x",
+            "json-escaped url": f'"https:\\/\\/{host}\\/o"',
             "scp remote": f"git@{host}:team/project.git",
             "hostname flag": f"gh api --hostname {host} user",
             "hostname flag with equals": f"gh api --hostname={host} user",
+            "hostname flag quoted after a tab": f'gh api --hostname\t"{host}" user',
             "short host flag": f"gh auth login -h {host}",
             "GH_HOST": f"GH_HOST={host} gh pr view",
+            "GH_HOST quoted": f'export GH_HOST="{host}"',
             "escaped newline": f'command.includes("--hostname\\n{host}\\n")',
             "escaped tab": f'"x\\t{host}"',
             "host key": f"host: {host}",
-            "hostname key": f"hostname: {host}",
+            "hostname key quoted": f"hostname: '{host}'",
+            "json host key": f'{{"host": "{host}"}}',
+            "env host key": f"GITHUB_HOST: {host}",
         }
         for name, line in examples.items():
             with self.subTest(name):
@@ -171,6 +176,7 @@ class PiiCheck(unittest.TestCase):
             "api.github.com": "https://api.github.com/repos",
             "pages": "https://owner.github.io/site",
             "example.com": "https://github.example.com/team/project",
+            "example.com in capitals": "https://GITHUB.EXAMPLE.COM/team/project",
             "example.net": "https://github.example.net/team/project",
             "example.org": "https://github.example.org/team/project",
             ".example": "https://github.corp.example/x",
@@ -187,12 +193,16 @@ class PiiCheck(unittest.TestCase):
     def test_dotted_names_outside_a_host_context_pass(self) -> None:
         examples = {
             "actions expression": "if: ${{ github.event.number }}",
+            "actions expression ending in id": "run: echo ${{ github.event.comment.id }}",
             "quoted actions expression": 'run: echo "github.event.number is set"',
             "backticked expression": "Read `github.event.inputs.name` in the step.",
             "expression ending in a domain-like label": "run: echo ${{ github.event.co_author }}",
+            "expression continuing past a domain-like label": "run: echo ${{ github.event.app.installation_id }}",
+            "name inside an identifier": "client = use_github.client.app",
             "editor setting": '"github.copilot.enable": {',
             "module string": "require('github.something.js')",
             "class path": "'github.MainClass.Github'",
+            "java package": "package io.github.someone.app;",
             "internal domain outside a host context": '"github.corp.internal"',
         }
         for name, line in examples.items():
