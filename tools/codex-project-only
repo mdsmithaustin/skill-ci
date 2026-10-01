@@ -1,7 +1,9 @@
 #!/bin/sh
-# Codex with user-level skills hidden, login kept. Codex discovers user skills
-# under $HOME/.agents/skills, so HOME moves to an empty directory while
-# CODEX_HOME (auth, config) is preserved. Verified 2026-09-13 on codex-cli 0.150.1.
+# Codex with HOME moved to an empty directory, login kept. Codex discovers user
+# skills under $HOME/.agents/skills, so HOME moves while CODEX_HOME (auth,
+# config) is preserved. Since runner pin 80e49af the runner disables each skill
+# under ~/.agents/skills by path in answer and trigger runs, so the move is
+# redundant. Verified 2026-09-13 on codex-cli 0.150.1.
 real_home="${HOME}"
 export CODEX_HOME="${CODEX_HOME:-$real_home/.codex}"
 HOME="$(mktemp -d "${TMPDIR:-/tmp}/codex-project-only.XXXXXX")"

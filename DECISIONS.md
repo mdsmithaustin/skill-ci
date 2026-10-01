@@ -89,7 +89,7 @@ The cost is that a manifest and its skill no longer share a directory, so nothin
 
 Everything model-free runs in continuous integration on every pull request. That is the lints, manifest validation, the leakage check, and the readiness audit including judge independence.
 
-Behavioral runs are operator-local and never a pull request gate. They drive the installed `claude` and `codex` binaries on the operator's own logins through the launchers in `tools/`, which exist because the runner grants a print-mode run no tool permissions and because both harnesses discover user-level skills from the operator's home directory. Without the launchers an isolated run would silently include every skill the operator has installed.
+Behavioral runs are operator-local and never a pull request gate. They drive the installed `claude` and `codex` binaries on the operator's own logins. Since the runner pin to `80e49af`, the runner keeps the operator's own setup out of answer and trigger runs itself. For Claude that is host skills, agents, `CLAUDE.md`, MCP servers, and auto memory. For Codex it is every skill under `~/.agents/skills`, Codex's bundled skills, and apps. The launchers in `tools/` predate that. `tools/claude-project-only` is still needed, because the runner grants a print-mode run no tool permissions and the launcher grants `acceptEdits`. Its `--setting-sources project` now repeats the runner's flag and is harmless. `tools/codex-project-only` only moves HOME, which the runner has made redundant.
 
 Cost is the reason this is not a gate. Fifty-two skills at twenty queries, three runs, and two harnesses is over six thousand command line invocations.
 
