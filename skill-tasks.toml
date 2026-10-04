@@ -99,6 +99,19 @@ find_manifests | sort | while IFS= read -r manifest; do
 done
 '''
 
+[skill-coverage]
+description = "Require a populated manifest bound to every skill package (model-free)"
+shell = "bash -c"
+run = '''
+set -euo pipefail
+: "${SKILL_CI:?set SKILL_CI to the skill-ci checkout}"
+command=(uv run --no-project python "$SKILL_CI/tools/check-skill-coverage.py" --skills-dir "${SKILLS_DIR:-skills}")
+if [ -n "${EVALS_DIR:-}" ]; then
+  command+=(--evals-dir "$EVALS_DIR")
+fi
+"${command[@]}"
+'''
+
 [skill-trigger]
 description = "Operator-local trigger matrix for one skill on the host's claude and codex logins (paid, never CI)"
 shell = "bash -c"
@@ -112,7 +125,11 @@ if [ -n "${EVALS_DIR:-}" ]; then
 else
   manifest="$skill/evals/shared-benchmark.json"
 fi
-out="${OUT:-$skill/eval-runs/trigger-$(date +%Y%m%d-%H%M%S)}"
+if [ -n "${OUT:-}" ]; then
+  out="$OUT"
+else
+  out=$(uv run --no-project python "$SKILL_CI/tools/allocate-eval-output.py" "$skill" trigger)
+fi
 mkdir -p "$out"
 runner skill-trigger-matrix "$manifest" --agent claude --agent codex \
   --claude-bin "$SKILL_CI/tools/claude-project-only" \
@@ -134,7 +151,11 @@ if [ -n "${EVALS_DIR:-}" ]; then
 else
   manifest="$skill/evals/shared-benchmark.json"
 fi
-out="${OUT:-$skill/eval-runs/run-$(date +%Y%m%d-%H%M%S)}"
+if [ -n "${OUT:-}" ]; then
+  out="$OUT"
+else
+  out=$(uv run --no-project python "$SKILL_CI/tools/allocate-eval-output.py" "$skill" run)
+fi
 claude_bin="$SKILL_CI/tools/claude-project-only"
 codex_cmd="${CODEX_CMD:-$SKILL_CI/tools/codex-project-only exec --json --skip-git-repo-check --sandbox read-only}"
 

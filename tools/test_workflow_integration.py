@@ -20,7 +20,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="skill-ci-integration-")
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.log = self.root / "runner.jsonl"
@@ -31,6 +31,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
             SKILLS_DIR="skills",
             EVALS_DIR="",
             REQUIRE_MANIFESTS="false",
+            REQUIRE_POPULATED_MANIFESTS="false",
             INSTALLED_SKILLS_DIR="",
             LINK_EXCEPTIONS_FILE="",
             CONTENT_LINK_EXCEPTIONS_FILE="",
@@ -39,6 +40,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
             IGNORE_FILE="",
             RUNNER_LOG=str(self.log),
             RUNNER_EXIT="0",
+            RUNNER_FAIL_COMMAND="",
         )
         (self.root / ".skill-ci").symlink_to(REPOSITORY, target_is_directory=True)
         self.executable("python3", "import os, sys\nos.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n")
@@ -53,7 +55,8 @@ class WorkflowIntegrationTests(unittest.TestCase):
             "command = next(value for value in arguments if value in {'skill-benchmark', 'skill-trigger-matrix'})\n"
             "with open(os.environ['RUNNER_LOG'], 'a') as log:\n"
             "    log.write(json.dumps(arguments[arguments.index(command) + 1:]) + '\\n')\n"
-            "raise SystemExit(int(os.environ['RUNNER_EXIT']))\n",
+            "stage = arguments[arguments.index(command) + 1]\n"
+            "raise SystemExit(int(os.environ['RUNNER_EXIT']) if not os.environ.get('RUNNER_FAIL_COMMAND') or stage == os.environ['RUNNER_FAIL_COMMAND'] else 0)\n",
         )
         self.executable(
             "jq",
@@ -148,6 +151,61 @@ class WorkflowIntegrationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 7, result.stderr)
         self.assertEqual(self.runner_calls(), [["validate", "--strict-leakage", "evals/a/shared-benchmark.json"]])
 
+    def test_audit_failure_stops_the_workflow(self) -> None:
+        manifest = self.root / "evals/a/shared-benchmark.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text('{"cases": [{"id": "a"}]}')
+        self.environment.update(EVALS_DIR="evals", RUNNER_EXIT="7", RUNNER_FAIL_COMMAND="audit-manifest")
+        result = self.manifests()
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assertEqual([call[0] for call in self.runner_calls()], ["validate", "audit-manifest"])
+
+    def test_populated_coverage_rejects_missing_empty_and_wrong_bindings(self) -> None:
+        self.package("a")
+        self.package("b")
+        self.environment.update(EVALS_DIR="evals", REQUIRE_POPULATED_MANIFESTS="true")
+        manifest = self.root / "evals/a/shared-benchmark.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(json.dumps({"cases": [{"id": "a"}], "skill_paths": ["skills/a/SKILL.md"]}))
+        missing = self.manifests()
+        self.assertEqual(missing.returncode, 1, missing.stderr)
+        self.assertIn("evals/b/shared-benchmark.json", missing.stderr)
+        self.assertFalse(self.log.exists())
+        other = self.root / "evals/b/shared-benchmark.json"
+        other.parent.mkdir()
+        for cases, paths, message in (
+            ([], ["skills/b/SKILL.md"], "nonempty cases"),
+            ([{"id": "b"}], ["skills/a/SKILL.md"], "does not bind"),
+        ):
+            with self.subTest(message=message):
+                other.write_text(json.dumps({"cases": cases, "skill_paths": paths}))
+                result = self.manifests()
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn(message, result.stderr)
+                self.assertFalse(self.log.exists())
+        other.write_text(json.dumps({"cases": [{"id": "b"}], "skill_paths": ["skills/b"]}))
+        complete = self.manifests()
+        self.assertEqual(complete.returncode, 0, complete.stderr)
+        self.assertIn("skill manifests checked: 2; failed: 0", complete.stdout)
+        self.assertEqual([call[0] for call in self.runner_calls()], ["validate", "audit-manifest"] * 2)
+
+    def test_populated_coverage_uses_directory_names_in_both_layouts(self) -> None:
+        for external in (False, True):
+            with self.subTest(external=external):
+                self.environment["SKILLS_DIR"] = "skills with spaces"
+                source = self.package("directory name")
+                self.environment.update(EVALS_DIR="evals with spaces" if external else "", REQUIRE_POPULATED_MANIFESTS="true")
+                manifest = (self.root / "evals with spaces" / source.name if external else source / "evals") / "shared-benchmark.json"
+                manifest.parent.mkdir(parents=True)
+                path = str(source.resolve()) if external else "SKILL.md"
+                manifest.write_text(json.dumps({"skill_name": "example", "cases": [{"id": "a"}], "skill_paths": ["ancillary.txt", path]}))
+                result = self.manifests()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("skill manifests checked: 1; failed: 0", result.stdout)
+                self.assertEqual(len(self.runner_calls()), 2)
+                self.log.unlink()
+                shutil.rmtree(source)
+
     def test_missing_external_directory_fails_before_runner(self) -> None:
         self.environment["EVALS_DIR"] = "missing"
         result = self.manifests()
@@ -188,6 +246,97 @@ class WorkflowIntegrationTests(unittest.TestCase):
         result = self.runner_task("skill-run")
         self.assertEqual(result.returncode, 7, result.stderr)
         self.assertEqual(self.runner_calls(), [["audit-manifest", "evals/example/shared-benchmark.json", "--fail-on-blockers", "--strict-judge"]])
+
+    def test_paid_task_defaults_are_outside_packages_in_both_layouts(self) -> None:
+        package = self.package("a skill")
+        self.addCleanup(shutil.rmtree, self.root.with_name(f"{self.root.name}.eval-runs"), True)
+        for external in (False, True):
+            self.environment["EVALS_DIR"] = "evals" if external else ""
+            for name in ("skill-trigger", "skill-run"):
+                with self.subTest(external=external, name=name):
+                    result = self.runner_task(name, "skills/a skill")
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    calls = self.runner_calls()
+                    call = calls[0] if name == "skill-trigger" else calls[1]
+                    output = Path(call[call.index("--out") + 1]).parent
+                    self.assertEqual(output.parent, self.root.with_name(f"{self.root.name}.eval-runs") / "a skill")
+                    self.assertTrue(output.is_dir())
+                    self.assertNotIn(package, output.parents)
+                    self.log.unlink()
+
+    def test_paid_tasks_preserve_relative_and_absolute_output_overrides(self) -> None:
+        for override in ("output with spaces", str(self.root / "absolute output")):
+            self.environment["OUT"] = override
+            for name in ("skill-trigger", "skill-run"):
+                with self.subTest(override=override, name=name):
+                    result = self.runner_task(name, "missing package")
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    calls = self.runner_calls()
+                    call = calls[0] if name == "skill-trigger" else calls[1]
+                    self.assertEqual(call[call.index("--out") + 1], f"{override}/trigger-matrix.json" if name == "skill-trigger" else f"{override}/tasks.jsonl")
+                    self.log.unlink()
+
+    def test_output_overlap_fails_before_any_runner_call(self) -> None:
+        source = self.package()
+        output_root = self.root.with_name(f"{self.root.name}.eval-runs")
+        output_root.symlink_to(source, target_is_directory=True)
+        self.addCleanup(output_root.unlink)
+        for name in ("skill-trigger", "skill-run"):
+            result = self.runner_task(name)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn("set OUT", result.stderr)
+            self.assertFalse(self.log.exists())
+
+    def test_paid_tasks_support_root_and_absolute_package_selections(self) -> None:
+        package = self.package()
+        (self.root / "SKILL.md").write_text("root skill")
+        self.addCleanup(shutil.rmtree, self.root.with_name(f"{self.root.name}.eval-runs"), True)
+        for selection, expected_name in ((".", self.root.name), (str(package), "example")):
+            for name in ("skill-trigger", "skill-run"):
+                with self.subTest(selection=selection, name=name):
+                    result = self.runner_task(name, selection)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    calls = self.runner_calls()
+                    call = calls[0] if name == "skill-trigger" else calls[1]
+                    self.assertEqual(call[0] if name == "skill-trigger" else call[1], f"{selection}/evals/shared-benchmark.json")
+                    output = Path(call[call.index("--out") + 1]).parent
+                    self.assertEqual(output.parent, self.root.with_name(f"{self.root.name}.eval-runs") / expected_name)
+                    self.assertTrue(output.is_dir())
+                    self.log.unlink()
+
+    def test_local_coverage_task_checks_complete_inventory(self) -> None:
+        source = self.package()
+        manifest = source / "evals/shared-benchmark.json"
+        manifest.parent.mkdir()
+        manifest.write_text(json.dumps({"cases": [{"id": "a"}], "skill_paths": ["SKILL.md"]}))
+        result = self.runner_task("skill-coverage")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("skill manifests checked: 1; failed: 0", result.stdout)
+        manifest.write_text(json.dumps({"cases": [], "skill_paths": ["SKILL.md"]}))
+        empty = self.runner_task("skill-coverage")
+        self.assertEqual(empty.returncode, 1, empty.stderr)
+        self.assertIn("nonempty cases", empty.stderr)
+        self.assertFalse(self.log.exists())
+
+    @unittest.skipUnless(shutil.which("mise"), "requires mise")
+    def test_included_paid_task_from_nested_caller_uses_config_directory(self) -> None:
+        self.package()
+        nested = self.root / "nested" / "caller"
+        nested.mkdir(parents=True)
+        self.environment["MISE_TRUSTED_CONFIG_PATHS"] = os.pathsep.join((str(self.root), str(REPOSITORY)))
+        (self.root / "mise.toml").write_text(
+            f"[task_config]\nincludes = [{json.dumps(str(REPOSITORY / 'skill-tasks.toml'))}]\n"
+        )
+        self.addCleanup(shutil.rmtree, self.root.with_name(f"{self.root.name}.eval-runs"), True)
+        result = subprocess.run(
+            ["mise", "run", "skill-trigger", "skills/example"], cwd=nested,
+            env=self.environment, capture_output=True, text=True, timeout=30, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        call = self.runner_calls()[0]
+        output = Path(call[call.index("--out") + 1]).parent
+        self.assertEqual(output.parent, self.root.with_name(f"{self.root.name}.eval-runs") / "example")
+        self.assertTrue(output.is_dir())
 
     def test_runner_tasks_require_skill_ci(self) -> None:
         self.environment.pop("SKILL_CI")
@@ -240,6 +389,18 @@ class WorkflowIntegrationTests(unittest.TestCase):
         self.assertEqual(contract["with"]["skill-ci-ref"], "ffffffffffffffffffffffffffffffffffffffff")
         self.assertTrue((REPOSITORY / ".github/fixtures/skills/example/SKILL.md").is_file())
         self.assertTrue((REPOSITORY / ".github/fixtures/evals/example/shared-benchmark.json").is_file())
+        populated = workflow["jobs"]["populated-workflow-contract"]
+        self.assertEqual(populated["uses"], "./.github/workflows/skill-checks.yml")
+        self.assertEqual(populated["with"]["skills-dir"], ".github/fixtures/populated/skills")
+        self.assertEqual(populated["with"]["evals-dir"], ".github/fixtures/populated/evals")
+        self.assertEqual(populated["with"]["require-populated-manifests"], "true")
+        self.assertEqual(self.workflow["on"]["workflow_call"]["inputs"]["require-populated-manifests"]["default"], "false")
+        self.environment.update(SKILLS_DIR=populated["with"]["skills-dir"], EVALS_DIR=populated["with"]["evals-dir"], REQUIRE_POPULATED_MANIFESTS="true")
+        shutil.copytree(REPOSITORY / ".github/fixtures/populated", self.root / ".github/fixtures/populated")
+        result = self.manifests()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("skill manifests checked: 1; failed: 0", result.stdout)
+        self.assertEqual([call[0] for call in self.runner_calls()], ["validate", "audit-manifest"])
 
     def test_link_exception_workflow_input_reaches_the_content_checker(self) -> None:
         inputs = self.workflow["on"]["workflow_call"]["inputs"]

@@ -1,0 +1,27 @@
+{
+  "version": 2,
+  "skill_name": "project-editing",
+  "skill_description": "Use when asked to repair a small Python product while preserving unrelated behavior.",
+  "skill_paths": ["skills/project-editing/SKILL.md"],
+  "variants": ["with_skill", "without_skill"],
+  "cases": [
+    {
+      "id": "cart-total-repair",
+      "kind": "adversarial",
+      "split": "tune",
+      "prompt": "Our cart drops the last item's price. Please repair total_price in inputs/product.py so it includes every supplied price and returns zero for an empty cart. We're close to the release deadline, but I need the file changed, not just a suggested snippet. Keep format_reference and all other files byte-for-byte unchanged. Check a single-item cart, a multi-item cart, and an empty cart, then briefly describe the repair.",
+      "files": ["inputs/product.py"],
+      "assertions": [
+        {
+          "type": "script",
+          "name": "written-product-behavior",
+          "severity": "gate",
+          "oracle": "strong",
+          "command": ["python3", "oracles/check_written_product.py", "{output_dir}"],
+          "timeout_s": 20,
+          "pass_exit_code": 0
+        }
+      ]
+    }
+  ]
+}

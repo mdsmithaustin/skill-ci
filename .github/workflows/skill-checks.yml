@@ -49,6 +49,10 @@ on:
         description: Fail when no manifest files are found. Empty scaffolded manifests still validate.
         type: boolean
         default: false
+      require-populated-manifests:
+        description: Require each direct child skill package to have a populated manifest bound to its SKILL.md.
+        type: boolean
+        default: false
       package-check:
         description: Inspect every package entry and reject symlinks and special files. Does not run an installer or model.
         type: boolean
@@ -202,8 +206,16 @@ jobs:
           SKILLS_DIR: ${{ inputs.skills-dir }}
           EVALS_DIR: ${{ inputs.evals-dir }}
           REQUIRE_MANIFESTS: ${{ inputs.require-manifests }}
+          REQUIRE_POPULATED_MANIFESTS: ${{ inputs.require-populated-manifests }}
         run: |
           set -euo pipefail
+          if [ "$REQUIRE_POPULATED_MANIFESTS" = true ]; then
+            coverage=(python3 .skill-ci/tools/check-skill-coverage.py --skills-dir "$SKILLS_DIR")
+            if [ -n "$EVALS_DIR" ]; then
+              coverage+=(--evals-dir "$EVALS_DIR")
+            fi
+            "${coverage[@]}"
+          fi
           if [ -n "$EVALS_DIR" ]; then
             if [ ! -d "$EVALS_DIR" ]; then
               echo "::error::evals-dir is set to '$EVALS_DIR', which is not a directory; no manifest would be checked"

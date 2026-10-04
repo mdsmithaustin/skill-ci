@@ -4,7 +4,7 @@ Why this repository is shaped the way it is. `README.md` covers how to use it. T
 
 ## Why this repository exists
 
-Two skill repositories were testing skills separately and duplicating the work. mds-pstack had a frontmatter checker, a reference checker, and a trigger file that only asserted a description contained a phrase. agent-loop-runner had a stricter frontmatter validator, no reference checker, ninety-two behavioral trigger rows in an incompatible schema, and a bespoke runner that could not move. The duplication was two validators and two trigger formats. The part that felt like reinvention was neither.
+Two skill repositories were testing skills separately and duplicating the work. One had a frontmatter checker, a reference checker, and a trigger file that only asserted a description contained a phrase. The other had a stricter frontmatter validator, no reference checker, ninety-two behavioral trigger rows in an incompatible schema, and a bespoke runner that could not move. The duplication was two validators and two trigger formats.
 
 One shared home fixes that. A skill repository gets its lints, its runner pin, and its task definitions from here, and owns only its cases.
 
@@ -80,7 +80,7 @@ GitHub documents the [called workflow identity](https://docs.github.com/en/actio
 
 ## Where manifests live
 
-A manifest belongs outside the skills tree, at `evals/<skill>/shared-benchmark.json`, with `skill_paths` relative to the repository root. The reason is what a skill installer does. `npx skills` copies a skill directory verbatim to every consumer, in both copy and symlink mode, and it has no ignore or exclude mechanism. A manifest at `<skills-dir>/<skill>/evals/shared-benchmark.json` therefore hands every consumer of that skill its trigger queries, its expected answers, and its oracle scripts. In mds-pstack that is roughly twenty kilobytes of answer key per skill. Measured on 2026-09-13 by installing a fixture skill with an `evals/` tree and reading a planted transcript back from the installed path.
+A manifest belongs outside the skills tree, at `evals/<skill>/shared-benchmark.json`, with `skill_paths` relative to the repository root. The reason is what a skill installer does. `npx skills` copies a skill directory verbatim to every consumer, in both copy and symlink mode, and it has no ignore or exclude mechanism. A manifest at `<skills-dir>/<skill>/evals/shared-benchmark.json` therefore hands every consumer of that skill its trigger queries, its expected answers, and its oracle scripts. Measured on 2026-09-13 by installing a fixture skill with an `evals/` tree and reading a planted transcript back from the installed path.
 
 The old layout still resolves, because the runner's rule for the repository root runs the existing case first. The reusable workflow's `evals-dir` input and the `EVALS_DIR` variable the mise tasks read select the tree to search, and both default to the skills tree. The choice is one or the other for a whole repository, because each search reads a single tree. A repository that starts moving manifests moves all of them in the same change; the ones left behind stop being checked. The runner also resolves `evals/shared-benchmark.json` with no skill segment, which suits a repository holding one skill, but the scaffold does not write that shape.
 
@@ -98,7 +98,7 @@ Cost is the reason this is not a gate. Fifty-two skills at twenty queries, three
 
 Every skill gets outcome cases. Skills that a model may not invoke on its own are exercised by explicit invocation.
 
-Only description-triggerable skills get the trigger matrix, which is nine of mds-pstack's fifty-two. The rest are gated from model invocation, so a description-driven trigger measurement would be meaningless for them.
+Only description-triggerable skills get the trigger matrix. For skills gated from model invocation, a description-driven trigger measurement would be meaningless.
 
 Mode-to-skill routing is the primary trigger measurement, not bare description matching. A harvest of six thousand three hundred real prompts across both harnesses found that skills reach context through modes and plays, not through their descriptions. Harness-native description-driven loads were in single digits across the entire history. Measuring only bare descriptions would measure a path that is nearly unused. Bare description matching is kept as a secondary signal, because it is what a standalone install of a skill depends on.
 
@@ -117,3 +117,9 @@ An external scoring framework, LLM-as-a-Verifier, was evaluated and declined. It
 ## Honest limits
 
 Two things no tool measures directly, and we do not claim otherwise. Whether a harness understood a skill is inferred from paired lift. Whether a skill's instructions are clear is inferred from variance across repeated runs of one case. Both are proxies and should be described as proxies in any result.
+
+## Run artifacts and populated coverage
+
+Paid task outputs default to a unique directory beside the consuming checkout. A working-tree installer copies ignored files too, so gitignore cannot keep raw transcripts out of a skill package. Canonical containment checks reject a default destination inside the selected skill before any model call. An explicit nonempty `OUT` keeps its existing meaning.
+
+The reusable workflow offers `require-populated-manifests` as an opt-in policy. It requires each discovered skill directory to have a manifest with cases and a binding to that skill. Empty scaffolds remain valid by default so activation can stop before case authoring. The pinned runner continues to own schema validation, leakage checks, and readiness audit.

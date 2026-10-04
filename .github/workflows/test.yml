@@ -21,6 +21,12 @@ jobs:
       evals-dir: .github/fixtures/evals
       require-manifests: true
       skill-ci-ref: ffffffffffffffffffffffffffffffffffffffff
+  populated-workflow-contract:
+    uses: ./.github/workflows/skill-checks.yml
+    with:
+      skills-dir: .github/fixtures/populated/skills
+      evals-dir: .github/fixtures/populated/evals
+      require-populated-manifests: true
   test:
     strategy:
       matrix:
