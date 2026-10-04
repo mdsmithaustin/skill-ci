@@ -11,7 +11,7 @@ Skill-ci has three implementation layers. A result can support one or more of th
 | Behavioral utility | Matched with-skill and baseline runs use the same tasks, settings, tools, and environment, with outcome evidence and repeated grading. | A valid manifest, successful load, or plausible review does not establish improvement. |
 | Deployment parity | The reviewed source and installed or evaluated copy have matching package inventories. | Matching copies can reproduce the same defects. |
 
-The existing frontmatter and content lints cover their documented structural rules. Manifest validation checks case definitions, leakage, and readiness. The external runner collects trigger and paired outcome evidence. A green model-free CI run does not mean those paid runs happened.
+The existing frontmatter and content lints cover their documented structural rules. Manifest validation checks case definitions, leakage, and readiness. The opt-in populated coverage check proves that every discovered skill has cases bound to its actual marker. It does not prove that those cases distinguish useful behavior. The external runner collects trigger and paired outcome evidence. A green model-free CI run does not mean those paid runs happened.
 
 The optional package check inventories files and compares copies. Its digest includes relative paths, file bytes, empty directories, and executable bits. It does not validate metadata, run an installer, load a skill, or grade an outcome. Compare quiescent trees. A read-only inventory is not an atomic filesystem snapshot.
 

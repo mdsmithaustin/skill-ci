@@ -46,7 +46,7 @@ Activation wires one target repository into the shared skill testing home. It wr
 
    Omit `EVALS_DIR` for a target whose manifests stay inside the skills tree. Every task that reads a manifest honors it, so a task run without it would check nothing. Set `CONTENT_LINK_EXCEPTIONS_FILE` only when the target has the reviewed policy described in `docs/link-exceptions.md`. Set `CONTENT_CONVENTIONS_FILE` only when the target has a conventions file described in `docs/content-conventions.md`.
 
-   Use the real relative path from the target to this checkout. Confirm with `mise tasks ls` that `skill-lint`, `skill-validate`, `skill-audit`, `skill-trigger`, and `skill-run` are listed.
+   Use the real relative path from the target to this checkout. Confirm with `mise tasks ls` that `skill-lint`, `skill-coverage`, `skill-validate`, `skill-audit`, `skill-trigger`, and `skill-run` are listed.
 
 3. Runner. Warm the pinned runner through the same dispatcher every task uses:
 
@@ -69,7 +69,7 @@ Activation wires one target repository into the shared skill testing home. It wr
 
 5. Check. Run `mise run skill-lint`, and run `mise run skill-validate` when the runner warm-up succeeds. Fix only what activation introduced. A lint finding inside an existing skill belongs to its author: list it in the report and leave it.
 
-6. Ignore run output. A behavioral run writes raw agent transcripts under the skill it exercised. Add `eval-runs/` and `evals/runs/` to the target's `.gitignore` if they are not already ignored. Those files hold real session content and must never be committed.
+6. Ignore run output. The paid tasks default to a unique directory beside the target checkout, outside skill packages. Keep `eval-runs/` and `evals/runs/` ignored in the target for earlier runs and explicit `OUT` paths. Add those patterns to `.gitignore` if they are not already ignored. Run artifacts hold raw agent transcripts and must never be committed.
 
 7. Stop. Report the files written, the tasks listed, whether the runner warm-up passed, the manifest count, and any findings.
 

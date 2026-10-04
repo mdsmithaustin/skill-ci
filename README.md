@@ -14,7 +14,7 @@ skill-ci is also a skill itself. In a repository that holds skills, tell your ag
 | Term | Meaning |
 | --- | --- |
 | Skills directory | The directory whose children each hold a `SKILL.md`. Set by `SKILLS_DIR` locally and `skills-dir` in CI. Default `skills`. |
-| Manifest | The test file for one skill, `shared-benchmark.json`, in skill-eval-harness format version 1. It names the skill, its files (`skill_paths`), the two variants, and a list of cases. |
+| Manifest | The test file for one skill, `shared-benchmark.json`, in skill-eval-harness format version 1 or 2. It names the skill, its files (`skill_paths`), the two variants, and a list of cases. |
 | Case | One test prompt in a manifest, with the assertions that grade it. |
 | Trigger case | A case that checks whether the agent loads the skill for a prompt. `should_trigger` says whether it should. |
 | Outcome case | A case that checks whether the skill made the agent's result better. |
@@ -71,6 +71,8 @@ The older layout, `<skills-dir>/<skill>/evals/shared-benchmark.json`, still work
 
 In both layouts, case files, `prompt_ref`, and oracle script paths are relative to the manifest's own directory. Keep them next to the manifest.
 
+Use relative `skill_paths` for portable manifests. The coverage check also accepts absolute entries that resolve to the inventoried skill marker, matching the runner. Coverage verifies the binding and case presence; it does not certify portability.
+
 ## Tasks
 
 `skill-tasks.toml` defines these mise tasks. Your repository includes that file from its `mise.toml`.
@@ -79,12 +81,13 @@ In both layouts, case files, `prompt_ref`, and oracle script paths are relative 
 | --- | --- | --- | --- |
 | `skill-lint` | CI and local | Free | Runs the frontmatter checker and the content checker over the skills directory. |
 | `skill-package` | Local, and CI when `package-check` is on | Free | Lists every file in each skill package. If `INSTALLED_SKILLS_DIR` is set, also compares each package with its installed copy. See [Check package files and installed copies](docs/packages.md). |
+| `skill-coverage` | Local, and CI when `require-populated-manifests` is on | Free | Requires a populated, correctly bound manifest for every skill directory. |
 | `skill-validate` | CI and local | Free | Runs `skill-benchmark validate --strict-leakage` on every manifest. |
 | `skill-audit` | CI and local | Free | Runs the readiness audit on every manifest. |
 | `skill-trigger <skill>` | Local only | Paid | Runs every trigger case on Claude and Codex and records whether the skill loaded. |
 | `skill-run <skill>` | Local only | Paid | Runs the readiness audit, then runs the cases in the manifest's `tune` split with and without the skill on Claude and Codex. It grades the runs, judges them, and writes a report. It stops if the audit finds a blocker. |
 
-In CI, the audit skips a manifest that has no cases yet. A scaffolded empty manifest is validated but not audited.
+In CI, the audit skips a manifest that has no cases yet. A scaffolded empty manifest is validated but not audited. Set `require-populated-manifests: true` after authoring cases to require coverage for every skill. This checks inventory and bindings without calling a model.
 
 This repository's own `mise.toml` adds a `test` task that runs the unit tests.
 
@@ -105,6 +108,7 @@ Set these under `with:` in your caller workflow.
 | `skills-dir` | `skills` | The skills directory. |
 | `evals-dir` | empty | Where manifests live. Empty means search inside the skills directory. The job fails if this names a directory that does not exist. |
 | `require-manifests` | `false` | Fail when no manifest files are found. An empty scaffolded manifest counts as a file. |
+| `require-populated-manifests` | `false` | Require a populated manifest for every skill directory and a `skill_paths` binding to that skill. Validation and readiness audit still apply. |
 | `package-check` | `false` | Run the package check. Rejects symlinks and special files in skill packages. |
 | `pii-scope` | `skills` | `skills` scans tracked files in the skills directory for personal data. `repository` scans every tracked file. |
 | `trigger-cases` | empty | Path to a version-1 trigger declaration file. Leave it empty to skip the coverage check. When set, the frontmatter check also fails for any skill that the file does not declare. See [Trigger declaration file](#trigger-declaration-file). |
@@ -141,7 +145,7 @@ If your repository keeps its own copy of `check-skill-frontmatter.py`, `check-sk
 | Variable | Default | Used by | Effect |
 | --- | --- | --- | --- |
 | `SKILL_CI` | required | all | Path to your skill-ci checkout. |
-| `SKILLS_DIR` | `skills` | `skill-lint`, `skill-package`, `skill-validate`, `skill-audit` | The skills directory. `skill-trigger` and `skill-run` take the skill directory as an argument instead. |
+| `SKILLS_DIR` | `skills` | `skill-lint`, `skill-package`, `skill-coverage`, `skill-validate`, `skill-audit` | The skills directory. `skill-trigger` and `skill-run` take the skill directory as an argument instead. |
 | `EVALS_DIR` | unset | tasks that read manifests | Where manifests live. Unset means search inside the skills directory. The directory must be named `evals`, because the runner finds the repository root from that name. A task fails if this names a directory that does not exist. |
 | `CONTENT_LINK_EXCEPTIONS_FILE` | unset | `skill-lint` | Path to a link-exceptions policy. |
 | `CONTENT_CONVENTIONS_FILE` | unset | `skill-lint` | Path to a content conventions file. |
@@ -153,8 +157,10 @@ If your repository keeps its own copy of `check-skill-frontmatter.py`, `check-sk
 | `JUDGE_MODEL` | `opus` | `skill-run` | Model that judges the runs. |
 | `JUDGE_RUNS` | `3` | `skill-run` | How many times each judge task repeats before the verdicts are merged. |
 | `TIMEOUT` | `240` | `skill-run` | Seconds allowed per run. |
-| `OUT` | `<skill>/eval-runs/trigger-<timestamp>` or `<skill>/eval-runs/run-<timestamp>` | `skill-trigger`, `skill-run` | Output directory. |
+| `OUT` | `<checkout>.eval-runs/<skill>/trigger-<timestamp>-<unique>` or `run-<timestamp>-<unique>` | `skill-trigger`, `skill-run` | Output directory beside the consuming checkout. A nonempty value uses your explicit path unchanged. |
 | `CODEX_CMD` | `tools/codex-project-only exec ...` | `skill-trigger`, `skill-run` | Command prefix that starts Codex. It does not name a model. `CODEX_MODEL` does. |
+
+The default run directory sits beside the consuming checkout, outside installed skill packages. Each invocation allocates a unique directory. If a skill path contains that default destination, the task stops before calling a model and asks you to set `OUT` outside the skill package. An explicit `OUT` remains your responsibility.
 
 The runner keeps the skills in your home directory out of every answer and trigger run, so a run sees only the skills it mounts. For Claude it also hides your agents, `CLAUDE.md`, MCP servers, and auto memory. Judge runs are sealed further and see no skills at all. The paid tasks still start Claude through `tools/claude-project-only`, which lets a case write files inside the run's temporary workspace. They start Codex through `tools/codex-project-only`, which moves HOME to an empty directory. That move is now redundant.
 
@@ -182,7 +188,7 @@ mise.toml                           this repository's own tools and tasks
 lefthook.yml                        pre-commit hook: rejects personal data, runs the unit tests
 .github/workflows/skill-checks.yml  the reusable workflow that callers pin
 .github/workflows/test.yml          unit tests on Linux and macOS, plus a run of the reusable workflow
-.github/fixtures/                   one example skill and manifest for that run
+.github/fixtures/                   empty scaffold and populated edited-file contracts
 .github/dependabot.yml              weekly updates for actions and pip
 docs/authoring-cases.md             how to write test cases
 docs/link-exceptions.md             the link-exceptions policy
@@ -194,6 +200,8 @@ tools/check-skill-frontmatter.py    frontmatter checker
 tools/check-skill-content.py        link, reference, and fence checker
 tools/check-pii.py                  personal-data checker
 tools/check-skill-package.py        package inventory and copy comparison
+tools/check-skill-coverage.py       populated manifest inventory and skill binding check
+tools/allocate-eval-output.py       allocates unique run directories outside packages
 tools/run_runner.py                 runs the runner pinned in runner.lock
 tools/scaffold_manifest.py          writes one empty manifest per skill
 tools/claude-project-only           starts Claude with file edits allowed in the run's workspace

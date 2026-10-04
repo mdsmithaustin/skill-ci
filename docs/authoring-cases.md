@@ -26,7 +26,7 @@ A case is one test prompt in `shared-benchmark.json`. A trigger case asks whethe
 
    The tested fix is to ask for the product inside tags, and use a `script` oracle to extract it from `output.md`. Use tags, not code fences, because a fenced code block inside the product closes the outer fence early. Put the oracle script in its own subdirectory next to the manifest, and have it take `{output_dir}` as an argument. The script runs with the manifest directory as its working directory. Encode the skill's actual rule in the oracle, not a rough substring of it.
 
-   Grading from a written file is not tested yet. Since the runner pin of 2026-09-27, `run-agent` saves the agent's file edits in the run directory as `workspace-changes.json`, `candidate.patch`, and `candidate-files/`. Since the pin to `80e49af`, `run-subagent` saves them the same way. A script oracle receives that directory as `{output_dir}`, so it can read `candidate.patch`. That comes from reading the runner's code, and no case here does it yet. Codex runs under `skill-run` use a read-only sandbox, so they record no edits.
+   For a file-editing task, grade the saved edits instead. `run-agent` records `workspace-changes.json`, `candidate.patch`, and `candidate-files/` in `{output_dir}`. Verify the capture receipt and hashes, reject unrelated writes, reconstruct the product from the patch, and execute its behavior checks. The [edited-file grading proof](research/edited-file-grading.md) exercised this path on Claude and Codex through `skill-run`. Codex needs a writable sandbox through `CODEX_CMD`; the default remains read-only. The fixture oracle grades the delivered file, not whether the agent ran its own checks.
 
    Learned on 2026-09-13.
 
