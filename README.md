@@ -14,7 +14,7 @@ skill-ci is also a skill itself. In a repository that holds skills, tell your ag
 | Term | Meaning |
 | --- | --- |
 | Skills directory | The directory whose children each hold a `SKILL.md`. Set by `SKILLS_DIR` locally and `skills-dir` in CI. Default `skills`. |
-| Manifest | The test file for one skill, `shared-benchmark.json`, in skill-eval-harness format version 1. It names the skill, its files (`skill_paths`), the two variants, and a list of cases. |
+| Manifest | The test file for one skill, `shared-benchmark.json`, in skill-eval-harness format version 1 or 2. It names the skill, its files (`skill_paths`), the two variants, and a list of cases. |
 | Case | One test prompt in a manifest, with the assertions that grade it. |
 | Trigger case | A case that checks whether the agent loads the skill for a prompt. `should_trigger` says whether it should. |
 | Outcome case | A case that checks whether the skill made the agent's result better. |
@@ -70,6 +70,8 @@ Put each manifest at `evals/<skill>/shared-benchmark.json` at the repository roo
 The older layout, `<skills-dir>/<skill>/evals/shared-benchmark.json`, still works. In that layout, leave `EVALS_DIR` and `evals-dir` unset, and `skill_paths` are relative to the skill directory instead of the repository root.
 
 In both layouts, case files, `prompt_ref`, and oracle script paths are relative to the manifest's own directory. Keep them next to the manifest.
+
+Use relative `skill_paths` for portable manifests. The coverage check also accepts absolute entries that resolve to the inventoried skill marker, matching the runner. Coverage verifies the binding and case presence; it does not certify portability.
 
 ## Tasks
 

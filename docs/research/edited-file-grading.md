@@ -19,7 +19,7 @@ Run from this repository with authenticated Claude and Codex CLIs. This spends f
 ```sh
 EVALS_DIR=.github/fixtures/populated/evals \
 AGENTS='claude codex' RUNS=1 TIMEOUT=240 CODEX_MODEL=gpt-6.1-sol \
-CODEX_CMD="$SKILL_CI/tools/codex-project-only exec --json --skip-git-repo-check --sandbox workspace-write" \
+CODEX_CMD="\"$PWD/tools/codex-project-only\" exec --json --skip-git-repo-check --sandbox workspace-write" \
   mise run skill-run .github/fixtures/populated/skills/project-editing
 ```
 
