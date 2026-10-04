@@ -12,12 +12,10 @@ from pathlib import Path
 TOOLS = Path(__file__).resolve().parent
 CONTENT = TOOLS / "check-skill-content.py"
 FRONTMATTER = TOOLS / "check-skill-frontmatter.py"
-# Parity fixture: the conventions pstack ships, so these tests pin the behavior
-# the checker had before the conventions moved out of it.
-PSTACK_CONVENTIONS = {
+SAMPLE_CONVENTIONS = {
     "version": 1,
     "retired_text": {
-        "pstack/skills/": "use the installed or verified-source root instead of the upstream monorepo path",
+        "legacy-suite/skills/": "use the installed or verified-source root instead of the upstream monorepo path",
         "/deslop": "use the bundled unslop skill instead of the retired command",
     },
     "skill_prefixes": ["principle-"],
@@ -56,8 +54,8 @@ class ConventionsTree(Tree):
         path.write_text(text, encoding="utf-8")
         return path
 
-    def pstack_args(self) -> tuple[str, str]:
-        return "--conventions-file", str(self.conventions(PSTACK_CONVENTIONS))
+    def sample_conventions_args(self) -> tuple[str, str]:
+        return "--conventions-file", str(self.conventions(SAMPLE_CONVENTIONS))
 
     def two_prefix_args(self) -> tuple[str, str]:
         document = {"version": 1, "skill_prefixes": ["principle-", "pattern-"]}
@@ -232,13 +230,13 @@ class ContentLint(ConventionsTree):
             ("`./MISSING.md`", "relative-link"),
             ("**principle-nope**", "sibling-skill"),
             ("```\nunfinished", "unclosed-fence"),
-            ("Read pstack/skills/example/SKILL.md.", "retired-text"),
+            ("Read legacy-suite/skills/example/SKILL.md.", "retired-text"),
         )
         for body, kind in cases:
             with self.subTest(kind=kind):
                 self.skill("a", 'name: a\ndescription: "d"', "[allowed](MISSING.md)\n" + body)
                 code, out = run(
-                    CONTENT, self.root, "--link-exceptions-file", str(policy), *self.pstack_args()
+                    CONTENT, self.root, "--link-exceptions-file", str(policy), *self.sample_conventions_args()
                 )
                 self.assertEqual(code, 1, out)
                 self.assertIn(kind, out)
@@ -1044,7 +1042,7 @@ class ContentLint(ConventionsTree):
         self.assertIn("sibling-skill", out)
 
     def test_principle_name_fires_without_the_word_skill(self) -> None:
-        code, out = self.body("- **L** (**principle-nope**). Bias to deletion.", *self.pstack_args())
+        code, out = self.body("- **L** (**principle-nope**). Bias to deletion.", *self.sample_conventions_args())
         self.assertEqual(code, 1, "a principle- name is checked even with no 'skill' on the line")
         self.assertIn("principle-nope", out)
 
@@ -1056,14 +1054,14 @@ class ContentLint(ConventionsTree):
     def test_prefix_hint_resolves_a_bare_name(self) -> None:
         self.skill("principle-lazy", 'name: principle-lazy\ndescription: "d"')
         line = "Apply the **lazy** principle from the skill list."
-        self.assertEqual(self.body(line, *self.pstack_args()), (0, ""))
+        self.assertEqual(self.body(line, *self.sample_conventions_args()), (0, ""))
         code, out = self.body(line)
         self.assertEqual(code, 1)
         self.assertIn("SKILL.md:6: sibling-skill: **lazy** has no matching directory", out)
 
     def test_prefix_hint_needs_the_prefix_word_on_the_line(self) -> None:
         self.skill("principle-lazy", 'name: principle-lazy\ndescription: "d"')
-        code, out = self.body("Apply the **lazy** skill.", *self.pstack_args())
+        code, out = self.body("Apply the **lazy** skill.", *self.sample_conventions_args())
         self.assertEqual(code, 1)
         self.assertIn("SKILL.md:6: sibling-skill: **lazy** has no matching directory", out)
 
@@ -1102,13 +1100,13 @@ class ContentLint(ConventionsTree):
 
     def test_old_monorepo_path_fires_in_prose_and_fenced_templates(self) -> None:
         code, out = self.body(
-            "Read pstack/skills/example/SKILL.md.\n\n"
+            "Read legacy-suite/skills/example/SKILL.md.\n\n"
             "````markdown\n"
             "```sh\n"
-            "node pstack/skills/example/check.mjs\n"
+            "node legacy-suite/skills/example/check.mjs\n"
             "```\n"
             "````",
-            *self.pstack_args(),
+            *self.sample_conventions_args(),
         )
         self.assertEqual(code, 1)
         self.assertIn("SKILL.md:6: retired-text", out)
@@ -1122,7 +1120,7 @@ class ContentLint(ConventionsTree):
             "/deslop\n"
             "```\n"
             "````",
-            *self.pstack_args(),
+            *self.sample_conventions_args(),
         )
         self.assertEqual(code, 1)
         self.assertIn(
@@ -1133,7 +1131,7 @@ class ContentLint(ConventionsTree):
 
     def test_retired_text_is_off_without_conventions(self) -> None:
         self.assertEqual(
-            self.body("Run /deslop and read pstack/skills/example/SKILL.md."), (0, "")
+            self.body("Run /deslop and read legacy-suite/skills/example/SKILL.md."), (0, "")
         )
 
 
@@ -1222,7 +1220,7 @@ class FenceHandling(ConventionsTree):
         self.assertEqual(self.body("```\nx\n```\n\nSee [x](../gone/n.md).")[0], 1)
 
     def test_unclosed_fence_is_reported(self) -> None:
-        code, out = self.body("```\nx\n\nSee [x](../gone/n.md).\nRun /deslop.", *self.pstack_args())
+        code, out = self.body("```\nx\n\nSee [x](../gone/n.md).\nRun /deslop.", *self.sample_conventions_args())
         self.assertEqual(code, 1, "an unclosed fence hides the rest of the file")
         self.assertIn("unclosed-fence", out)
         self.assertIn("link and sibling checks skip the rest of the file", out)
