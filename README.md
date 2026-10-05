@@ -170,7 +170,9 @@ An answer run refuses to start when a folder above its workspace holds `.claude`
 
 - **CI.** Each repository's workflow uses the skill-ci SHA it pins. Dependabot opens a pull request when skill-ci changes, and the new SHA takes effect when you merge it.
 - **Local tasks.** They use whatever your `SKILL_CI` checkout contains. Pull that checkout to get the latest runner pin.
-- **Earlier run directories.** A runner pin can change what a run records, so re-run `prepare` and every arm before comparing with older runs. The pin to `80e49af` moved `instruction_sha256` for `without_skill` and instruction-simulated ablation rows, moved the trigger protocol hashes, and changed the command line of every Claude and Codex answer run. Run directories from before it do not pair with new ones.
+- **Earlier run directories.** A runner pin can change recorded identities, so re-run `prepare` and every arm before comparing with older runs. The pin to `6634de1` changes trigger protocol hashes and adds optional `expected_skills` and `forbidden_skills` lists for catalog routing. Regenerate both trigger comparison arms with this runner. Unscoped queries retain their existing activation rule.
+
+The pinned runner supports `report --fail-on-failures` for offline saved-result gates. It checks `with_skill` by default and permits expected baseline assertion failures while requiring complete evidence across all arms. Rendering remains the default. The runner also ships an [offline captured-edit example](https://github.com/mdsmithaustin/skill-eval-harness/tree/6634de1cc260d258249160c935594f848c8ae171/examples/edited-file-demo). Its native permission smoke is separate and opt-in.
 
 ## What a passing check proves
 
