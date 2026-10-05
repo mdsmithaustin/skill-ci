@@ -16,7 +16,7 @@ Building our own would have reproduced about twenty thousand lines to add two th
 
 ## Why a fork, and when to leave it
 
-`runner.lock` pins a fork rather than the upstream release. The fork carries twenty patches. Patches 1 to 8 were classified on 2026-09-27. Patches 9 to 20 arrived with the pin to `80e49af` and name the fork pull request each came from. Fork #11 and #13 changed only tests and docs, so they are not patches.
+`runner.lock` pins a fork rather than the upstream release. At the `80e49af` pin, the fork carried the twenty patches listed below. Patches 1 to 8 were classified on 2026-09-27. Patches 9 to 20 arrived with that pin and name the fork pull request each came from. Fork #11 and #13 changed only tests and docs, so they are not patches. The `6634de1` pin also includes fork #20, classified below on 2026-10-04.
 
 1. The judge prompt no longer reveals which arm it is grading.
 2. Codex skill loads are read from the session rollout, because an explicit mention injects the skill with no tool event.
@@ -68,7 +68,14 @@ Patches 9 to 20 were classified on 2026-10-01.
 
 On 2026-10-01 the operator decided that the blinding in patches 10, 12, and 13 is part of the accepted difference, widened from patch 8's grading words to one principle. The answering agent should not know it is being tested or which arm it is in. Those patches do not count toward the test. The next patch of the third kind that falls outside that principle reopens this decision.
 
-Leaving stays cheap to assess. Upstream `adewale/skill-eval-harness` `main` (`2297000`) is still an ancestor of the pinned commit, so the fork is a pure superset of upstream. Measured on 2026-10-01 with `git merge-base --is-ancestor`.
+Fork [#20](https://github.com/mdsmithaustin/skill-eval-harness/pull/20) was classified on 2026-10-04 under the same exit test.
+
+- **Opt-in additions.** `benchmark_gate` adds an explicit saved-report exit gate. Rendering remains the default, and the gate changes no grading or aggregation. `SkillTriggerConstraints` adds expected and forbidden catalog identities only when a case declares them. Cases that omit both lists retain the any-mounted-skill rule. The captured-edit example supplies its own manifest, script oracle, and fixtures. Its separate permission smoke requires `--live --permission-edit`. Neither changes existing cases or default permissions.
+- **Adapter edge.** Provider load-name attribution, selected-root path matching, and rejection of incomplete or failed native operations correct how adapter evidence identifies a loaded skill. `detect_trigger_records` already required completed operations through `trace_contracts.event_is_completed`; the new checks also reject error and unsuccessful exit evidence. These corrections can change activation observations, so both trigger comparison arms must be regenerated with the new pin.
+
+These changes fit the existing opt-in and adapter categories. They do not add another accepted difference in evaluation or reopen the exit decision.
+
+Leaving stays cheap to assess. The upstream `adewale/skill-eval-harness` revision assessed on 2026-10-01, `2297000`, remains an ancestor of the `6634de1` pin. Verified on 2026-10-04 with `git merge-base --is-ancestor`. The fork remains a superset of that assessed revision.
 
 ## Why execution derives from the lock
 
