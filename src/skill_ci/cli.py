@@ -12,7 +12,7 @@ from pathlib import Path
 
 from skill_ci import config, harness, pin, runs, suite
 from skill_ci.checks import coverage, manifests, package
-from skill_ci.config import OPTIONS
+from skill_ci.config import OPTIONS, Tag
 from skill_ci.harness import Command
 from skill_ci.runs import RunOptions, TriggerOptions
 from skill_ci.suite import CheckOptions
@@ -25,24 +25,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Piped stdout is block-buffered and stderr is not, so findings would print after later summaries.
     sys.stdout.reconfigure(line_buffering=True)
     arguments = list(sys.argv[1:] if argv is None else argv)
-    pinned = os.environ.pop(pin.PINNED, None)
-    running = pinned or pin.running_commit()
+    pinned = os.environ.pop(pin.PINNED, "") or None
+    running = pin.running_commit()
     identity = f"skill-ci {metadata.version('skill-ci')} ({running or 'commit unknown'})"
     try:
         found = config.find(Path.cwd())
-        if pinned is None and arguments[:1] != ["update"]:
-            if found is None:
-                print(identity, file=sys.stderr)
-            else:
-                selected = config.read_pin(found)
-                resolved = pin.resolve(selected, pin.cache_directory(), datetime.now(UTC))
-                announce(selected, resolved)
-                if resolved.commit != running:
-                    return pin.rerun(selected.source, resolved.commit, arguments)
-        settings = {} if found is None else config.read_settings(found)
+        updating = arguments[:1] == ["update"]
+        selected = None if found is None or pinned is not None or updating else config.read_pin(found)
+        if selected is not None:
+            resolved = pin.resolve(selected, pin.cache_directory(), datetime.now(UTC))
+            announce(selected, resolved)
+            if resolved.commit != running:
+                return pin.rerun(selected.source, resolved.commit, arguments)
+        settings = {} if found is None or updating else config.read_settings(found)
         namespace = build_parser(identity).parse_args(arguments)
-        # Subcommands suppress absent flags, so a given flag replaces the file's value and an absent one keeps it.
-        return namespace.handler(argparse.Namespace(**{**settings, **vars(namespace)}))
+        if pinned is None and selected is None:
+            print(identity, file=sys.stderr)
+        return namespace.handler(argparse.Namespace(**settings | vars(namespace)))
     except (config.ConfigError, pin.PinError) as error:
         for line in str(error).splitlines():
             print(f"skill-ci: {line}", file=sys.stderr)
@@ -190,10 +189,14 @@ def update(namespace: argparse.Namespace) -> int:
     if selected.version == newest:
         print(f"{shown}: version is already {newest}, the newest tag")
         return 0
+    if isinstance(selected.version, Tag) and selected.version > newest:
+        print(f"skill-ci: {shown} pins {selected.version}, but the newest tag on {selected.source} is {newest}; left unchanged", file=sys.stderr)
+        return 2
     try:
-        path.write_text(config.with_version(path.read_text(encoding="utf-8"), newest), encoding="utf-8")
+        text = path.read_bytes().decode("utf-8")
+        path.write_bytes(config.with_version(text, newest).encode("utf-8"))
     except (OSError, ValueError) as error:
         print(f"skill-ci: cannot update {shown}: {error}", file=sys.stderr)
-        return 1
+        return 2
     print(f"{shown}: version {selected.version} -> {newest}")
     return 0

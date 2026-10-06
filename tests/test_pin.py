@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -11,8 +12,7 @@ from pathlib import Path
 
 from support import ENVIRONMENT, REPOSITORY, skill_ci, write, write_skill
 
-# Every git call here runs inside the temporary root with no global or system config.
-GIT_IDENTITY = {
+ISOLATED_GIT = {
     "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_CONFIG_NOSYSTEM": "1",
     "GIT_AUTHOR_NAME": "skill-ci tests",
@@ -23,7 +23,7 @@ GIT_IDENTITY = {
 FAKE_UV = """\
 import json, os, sys
 with open(os.environ["FAKE_UV_LOG"], "w", encoding="utf-8") as log:
-    json.dump({"arguments": sys.argv[1:], "pinned": os.environ.get("SKILL_CI_PINNED")}, log)
+    json.dump({"arguments": sys.argv[1:], "pinned": os.environ.get("SKILL_CI_PINNED"), "pythonpath": os.environ.get("PYTHONPATH")}, log)
 raise SystemExit(3)
 """
 
@@ -36,10 +36,12 @@ class PinTestCase(unittest.TestCase):
         bin_directory = self.root / "bin"
         self.uv_log = self.root / "uv.json"
         write(bin_directory / "uv", f"#!{sys.executable}\n{FAKE_UV}").chmod(0o755)
+        self.git_log = self.root / "git.log"
+        write(self.root / "git shim" / "git", f'#!/bin/sh\necho "$*" >> "{self.git_log}"\nexec "{shutil.which("git")}" "$@"\n').chmod(0o755)
         self.cache = self.root / "cache"
         self.environment = {
             **{key: value for key, value in ENVIRONMENT.items() if key != "SKILL_CI_PINNED"},
-            **GIT_IDENTITY,
+            **ISOLATED_GIT,
             "GIT_CEILING_DIRECTORIES": str(self.root),
             "HOME": str(self.root / "home"),
             "XDG_CACHE_HOME": str(self.cache),
@@ -90,6 +92,7 @@ class PinTestCase(unittest.TestCase):
             {
                 "arguments": ["tool", "run", "--isolated", "--from", f"git+{self.source.as_uri()}@{commit}", "skill-ci", *arguments],
                 "pinned": commit,
+                "pythonpath": None,
             },
         )
         self.uv_log.unlink()
@@ -172,10 +175,13 @@ class OfflineTests(PinTestCase):
 
     def test_an_exact_tag_reads_a_fresh_cache_without_the_network(self) -> None:
         self.pin("v0.9.0")
-        self.handed_off(self.skill_ci("lint"), self.commits["v0.9.0"], "lint")
-        self.unreachable()
-        result = self.skill_ci("lint")
+        shimmed = {"PATH": f"{self.root / 'git shim'}{os.pathsep}{self.environment['PATH']}"}
+        self.handed_off(self.skill_ci("lint", **shimmed), self.commits["v0.9.0"], "lint")
+        self.assertEqual(self.git_log.read_text(), f"ls-remote {self.source.as_uri()} refs/heads/main refs/tags/v*\n")
+        self.git_log.unlink()
+        result = self.skill_ci("lint", **shimmed)
         self.handed_off(result, self.commits["v0.9.0"], "lint")
+        self.assertFalse(self.git_log.exists(), "a fresh cache answers an exact tag without git")
         self.assertNotIn("warning", result.stderr)
 
     def test_an_exact_tag_refreshes_the_newer_tag_notice_after_a_day(self) -> None:
@@ -197,15 +203,18 @@ class OfflineTests(PinTestCase):
         self.pin("latest")
         self.handed_off(self.skill_ci("lint"), self.commits["v0.10.0"], "lint")
         [cached] = (self.cache / "skill-ci" / "refs").glob("*.json")
-        cached.write_text('{"source": 1}')
         self.unreachable()
-        result = self.skill_ci("lint")
-        self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertIn("no version was ever resolved from it", result.stderr)
+        well_formed = {"fetched_at": "2026-10-06T00:00:00+00:00", "main": None, "tags": {}}
+        for text in ('{"source": 1}', json.dumps(well_formed), "[]", "not json", json.dumps({**well_formed, "fetched_at": "2026-10-06"})):
+            with self.subTest(text=text):
+                cached.write_text(text)
+                result = self.skill_ci("lint")
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("no version was ever resolved from it", result.stderr)
 
 
 class RerunGuardTests(PinTestCase):
-    def test_the_pinned_child_runs_in_place_and_reports_its_commit(self) -> None:
+    def test_the_pinned_child_runs_in_place_and_reports_only_its_installed_commit(self) -> None:
         self.pin("v0.9.1")
         child = {"SKILL_CI_PINNED": self.commits["v0.9.0"]}
         result = self.skill_ci("check", "--fast", **child)
@@ -214,7 +223,7 @@ class RerunGuardTests(PinTestCase):
         self.assertNotIn("skill-ci v0.9", result.stderr)
         self.assertFalse(self.uv_log.exists())
         version = self.skill_ci("--version", **child)
-        self.assertRegex(version.stdout, rf"^skill-ci \S+ \({self.commits['v0.9.0']}\)\n$")
+        self.assertRegex(version.stdout, r"^skill-ci \S+ \(commit unknown\)\n$")
 
     def test_a_run_pinned_to_its_own_commit_stays_one_process(self) -> None:
         installed = self.root / "installed"
@@ -242,11 +251,30 @@ class RerunGuardTests(PinTestCase):
         self.assertFalse(self.uv_log.exists())
         self.assertEqual(module("--version").stdout, f"skill-ci 1.0.0 ({self.commits['v0.9.0']})\n")
 
+    def test_the_hand_off_drops_python_path_overrides(self) -> None:
+        self.pin("v0.9.0")
+        result = self.skill_ci("lint", PYTHONPATH=str(self.root / "impostor"))
+        self.handed_off(result, self.commits["v0.9.0"], "lint")
+
+    def test_an_empty_guard_still_resolves(self) -> None:
+        self.pin("v0.9.0")
+        self.handed_off(self.skill_ci("lint", SKILL_CI_PINNED=""), self.commits["v0.9.0"], "lint")
+
+    def test_a_key_this_version_does_not_know_still_hands_off_to_the_pin(self) -> None:
+        self.pin("v0.9.0", "key_from_a_later_version = true")
+        self.handed_off(self.skill_ci("check", "--fast"), self.commits["v0.9.0"], "check", "--fast")
+        in_place = self.skill_ci("check", "--fast", SKILL_CI_PINNED=self.commits["v0.9.0"])
+        self.assertEqual(in_place.returncode, 2, in_place.stderr)
+        self.assertEqual(in_place.stderr, "skill-ci: .skill-ci.toml: unknown key 'key_from_a_later_version'\n")
+
     def test_without_a_file_the_run_names_its_own_version(self) -> None:
         result = self.skill_ci("check", "--fast")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertRegex(result.stderr.splitlines()[0], r"^skill-ci \S+ \(commit unknown\)$")
         self.assertFalse(self.uv_log.exists())
+        version = self.skill_ci("--version")
+        self.assertRegex(version.stdout, r"^skill-ci \S+ \(commit unknown\)\n$")
+        self.assertEqual(version.stderr, "")
 
 
 class UpdateTests(PinTestCase):
@@ -266,6 +294,23 @@ class UpdateTests(PinTestCase):
         self.assertEqual(again.stdout, ".skill-ci.toml: version is already v0.10.0, the newest tag\n")
         self.assertFalse(self.uv_log.exists())
 
+    def test_update_ignores_keys_it_does_not_read_and_keeps_line_endings(self) -> None:
+        path = self.consumer / ".skill-ci.toml"
+        path.write_bytes(f'version = "v0.9.0"\r\nsource = "{self.source}"\r\nkey_from_a_later_version = 1\r\n'.encode())
+        result = self.skill_ci("update")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(path.read_bytes(), f'version = "v0.10.0"\r\nsource = "{self.source}"\r\nkey_from_a_later_version = 1\r\n'.encode())
+
+    def test_update_never_moves_a_pin_backwards(self) -> None:
+        path = self.pin("v2.0.0")
+        result = self.skill_ci("update")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(
+            result.stderr.splitlines()[1:],
+            [f"skill-ci: .skill-ci.toml pins v2.0.0, but the newest tag on {self.source.as_uri()} is v0.10.0; left unchanged"],
+        )
+        self.assertEqual(path.read_text(), f'version = "v2.0.0"\nsource = "{self.source}"\n')
+
     def test_update_moves_a_moving_pin_to_the_newest_tag(self) -> None:
         self.pin("main")
         result = self.skill_ci("update")
@@ -276,7 +321,7 @@ class UpdateTests(PinTestCase):
         self.unreachable()
         result = self.skill_ci("update")
         self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertRegex(result.stderr, rf"^skill-ci: cannot reach {self.source.as_uri()} \(.*\)\n$")
+        self.assertRegex(result.stderr, rf"^skill-ci \S+ \(commit unknown\)\nskill-ci: cannot reach {self.source.as_uri()} \(.*\)\n$")
         self.assertEqual((self.consumer / ".skill-ci.toml").read_text(), f'version = "v0.9.0"\nsource = "{self.source}"\n')
 
 

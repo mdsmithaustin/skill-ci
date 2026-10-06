@@ -17,9 +17,10 @@ from typing import NewType
 from skill_ci.config import Pin, Tag, Track, Version
 
 PINNED = "SKILL_CI_PINNED"
-# A tag names one commit, so an exact pin reads the cache; the refresh only keeps the newer-tag notice current.
-REFRESH = timedelta(days=1)
-LS_REMOTE_TIMEOUT = 10
+# uv's console script starts Python without -I, so these would load other code under the pinned commit's name.
+SHADOWING = frozenset({"PYTHONPATH", "PYTHONHOME"})
+NEWER_TAG_CHECK_INTERVAL = timedelta(days=1)
+LS_REMOTE_TIMEOUT = 5
 COMMIT = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 
 Commit = NewType("Commit", str)
@@ -57,7 +58,12 @@ class Resolved:
 
 def resolve(pin: Pin, cache: Path, now: datetime) -> Resolved:
     cached = read_cache(cache, pin.source)
-    if isinstance(pin.version, Tag) and cached is not None and pin.version in cached.tags and now - cached.fetched_at < REFRESH:
+    if (
+        isinstance(pin.version, Tag)
+        and cached is not None
+        and pin.version in cached.tags
+        and now - cached.fetched_at < NEWER_TAG_CHECK_INTERVAL
+    ):
         return answer(pin.version, cached, None)
     try:
         return answer(pin.version, fetch(pin.source, cache, now), None)
@@ -164,12 +170,14 @@ def write_cache(cache: Path, refs: Refs) -> None:
 def read_cache(cache: Path, source: str) -> Refs | None:
     try:
         record = json.loads(cache_file(cache, source).read_text(encoding="utf-8"))
+        if record["source"] != source:
+            return None
         tags = {tag: as_commit(commit) for name, commit in record["tags"].items() if (tag := Tag.parse(name)) is not None}
         main = None if record["main"] is None else as_commit(record["main"])
-        refs = Refs(source, datetime.fromisoformat(record["fetched_at"]), main, tags)
+        fetched_at = datetime.fromisoformat(record["fetched_at"])
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
-    return refs if record["source"] == source and refs.fetched_at.tzinfo is not None else None
+    return Refs(source, fetched_at, main, tags) if fetched_at.tzinfo is not None else None
 
 
 def as_commit(value: object) -> Commit:
@@ -193,8 +201,12 @@ def rerun(source: str, commit: Commit, arguments: Sequence[str]) -> int:
         return 127
     sys.stdout.flush()
     sys.stderr.flush()
-    os.execve(
-        uv,
-        [uv, "tool", "run", "--isolated", "--from", f"git+{source}@{commit}", "skill-ci", *arguments],
-        {**os.environ, PINNED: commit},
-    )
+    try:
+        os.execve(
+            uv,
+            [uv, "tool", "run", "--isolated", "--from", f"git+{source}@{commit}", "skill-ci", *arguments],
+            {**{key: value for key, value in os.environ.items() if key not in SHADOWING}, PINNED: commit},
+        )
+    except OSError as error:
+        print(f"skill-ci: cannot run {uv} for the pinned commit {commit}: {error}", file=sys.stderr)
+        return 126

@@ -14,8 +14,7 @@ from skill_ci.config import ConfigError, Tag, Track
 from skill_ci.runs import Agent
 from skill_ci.suite import PiiScope
 
-# The pinned child reads settings without resolving, which keeps these runs off git and uv.
-CHILD = {"SKILL_CI_PINNED": "0" * 40}
+ALREADY_PINNED = {"SKILL_CI_PINNED": "0" * 40}
 
 
 def problems(error: ConfigError) -> list[str]:
@@ -141,7 +140,9 @@ class ConfigFileTests(unittest.TestCase):
                 self.assertEqual(config.read_pin(self.write(f'version = "main"\nsource = "{value}"\n')).source, source)
         for value, problem in (
             ("git@example.com:org/skill-ci.git", "is an scp-style address; write it as ssh://user@host/path"),
-            ("ftp://git.example.com/skill-ci.git", "uses ftp; use one of https, ssh, git, http, file"),
+            ("ftp://git.example.com/skill-ci.git", "uses ftp; use one of https, ssh, file"),
+            ("http://git.example.com/skill-ci.git", "uses http; use one of https, ssh, file"),
+            ("git://git.example.com/skill-ci.git", "uses git; use one of https, ssh, file"),
         ):
             with self.subTest(value=value), self.assertRaises(ConfigError) as caught:
                 config.read_pin(self.write(f'version = "main"\nsource = "{value}"\n'))
@@ -150,9 +151,10 @@ class ConfigFileTests(unittest.TestCase):
     def test_the_nearest_file_up_to_the_repository_root_applies(self) -> None:
         nested = self.root / "repository" / "skills" / "example"
         nested.mkdir(parents=True)
-        (self.root / "repository" / ".git").mkdir()
-        self.assertIsNone(config.find(nested))
         self.write('version = "main"\n')
+        self.assertIsNone(config.find(nested), "outside a repository only the current directory counts")
+        self.assertEqual(config.find(self.root), self.path)
+        (self.root / "repository" / ".git").mkdir()
         self.assertIsNone(config.find(nested), "a file above the repository root belongs to another project")
         inner = write(self.root / "repository" / ".skill-ci.toml", 'version = "main"\n')
         self.assertEqual(config.find(nested), inner)
@@ -177,7 +179,7 @@ class FlagPrecedenceTests(unittest.TestCase):
         environment = {**ENVIRONMENT, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
         subprocess.run(["git", "init", "-q"], cwd=self.checkout, env=environment, capture_output=True, check=True)
         subprocess.run(["git", "add", "-A"], cwd=self.checkout, env=environment, capture_output=True, check=True)
-        self.environment = {**environment, **CHILD}
+        self.environment = {**environment, **ALREADY_PINNED}
 
     def settings(self, *lines: str) -> None:
         write(self.checkout / ".skill-ci.toml", "\n".join(('version = "v1.0.0"', *lines, "")))
@@ -215,14 +217,14 @@ class FlagPrecedenceTests(unittest.TestCase):
         for flags, agent in (((), "codex"), (("--agent", "claude"), "claude")):
             with self.subTest(flags=flags):
                 fake.log.unlink(missing_ok=True)
-                result = fake.run("run", "skills/example", "--out", "out", *flags, cwd=self.checkout, **CHILD)
+                result = fake.run("run", "skills/example", "--out", "out", *flags, cwd=self.checkout, **ALREADY_PINNED)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 runs = [stage[:3] for stage in fake.arguments() if stage[0] == "run-agent"]
                 self.assertEqual(runs, [["run-agent", "--agent", agent]])
 
     def test_a_bad_file_stops_every_command_with_each_problem(self) -> None:
         write(self.checkout / ".skill-ci.toml", 'version = "v1"\nskils_dir = "skills"\n')
-        result = skill_ci("check", cwd=self.checkout, env={key: value for key, value in self.environment.items() if key not in CHILD})
+        result = skill_ci("check", cwd=self.checkout, env={key: value for key, value in self.environment.items() if key not in ALREADY_PINNED})
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertEqual(result.stdout, "")
         self.assertEqual(

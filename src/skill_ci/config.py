@@ -16,11 +16,10 @@ from skill_ci.suite import PiiScope
 
 FILE_NAME = ".skill-ci.toml"
 DEFAULT_SOURCE = "https://github.com/mdsmithaustin/skill-ci.git"
-SOURCE_SCHEMES = ("https", "ssh", "git", "http", "file")
+SOURCE_SCHEMES = ("https", "ssh", "file")
 TAG = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 VERSION_LINE = re.compile(r"""^[ \t]*version[ \t]*=[ \t]*(?P<quote>["'])(?P<value>[^"'\n]*)(?P=quote)""", re.MULTILINE)
 
-# Each key names a .skill-ci.toml key and the dest of its flag, so the file and the flags share one model.
 OPTIONS: dict[str, tuple[str, dict[str, Any]]] = {
     "skills_dir": ("--skills-dir", {"type": Path, "metavar": "DIR", "help": "directory holding one subdirectory per skill"}),
     "evals_dir": (
@@ -122,16 +121,15 @@ class ConfigError(Exception):
 
 
 def find(directory: Path) -> Path | None:
-    for candidate in (directory, *directory.parents):
+    searched = (directory, *directory.parents)
+    root = next((candidate for candidate in searched if (candidate / ".git").exists()), directory)
+    for candidate in searched[: searched.index(root) + 1]:
         if (candidate / FILE_NAME).is_file():
             return candidate / FILE_NAME
-        if (candidate / ".git").exists():
-            return None
     return None
 
 
 def read_pin(path: Path) -> Pin:
-    """Read only what a hand-off to the pinned version needs; that version judges the other keys."""
     pin, _, problems = parse(path)
     if pin is None:
         raise ConfigError(path, problems)
@@ -222,7 +220,6 @@ def parse_value(key: str, spec: Mapping[str, Any], value: object, base: Path) ->
 
 
 def with_version(text: str, tag: Tag) -> str:
-    """Rewrite the version value in place, so comments, layout, and the other keys stay byte for byte."""
     matches = list(VERSION_LINE.finditer(text))
     if len(matches) != 1:
         raise ValueError("cannot find the one version line to rewrite")
