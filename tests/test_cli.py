@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 
 from skill_ci import suite
-from support import ENVIRONMENT, INSTALLED_COMMAND, REPOSITORY, FakeHarness, case, git, manifest, skill_ci, write, write_skill
+from support import ENVIRONMENT, INSTALLED_COMMAND, PLANTED_EMAIL, REPOSITORY, FakeHarness, case, git, manifest, skill_ci, write, write_skill
 
 
 def lines(result: subprocess.CompletedProcess[str]) -> list[str]:
@@ -358,17 +358,16 @@ class FastCheckTests(ConsumerTestCase):
     def setUp(self) -> None:
         super().setUp()
         write_skill(self.root / "skills" / "example")
-        self.address = "@".join(("jane.doe", "corp-mail.net"))
 
     def test_staged_pii_under_the_skills_directory_fails(self) -> None:
-        write(self.root / "skills/example/notes.md", f"# Notes\n\nWrite to {self.address}.\n")
+        write(self.root / "skills/example/notes.md", f"# Notes\n\nWrite to {PLANTED_EMAIL}.\n")
         result = self.skill_ci("check", "--fast")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("skills/example/notes.md:3: possible email address", lines(result))
         self.assertEqual(lines(result)[-1], "checks run: 3; failed: 1 (pii)")
 
     def test_findings_print_in_check_order_when_output_is_piped(self) -> None:
-        write(self.root / "skills/example/notes.md", f"# Notes\n\nWrite to {self.address}.\n")
+        write(self.root / "skills/example/notes.md", f"# Notes\n\nWrite to {PLANTED_EMAIL}.\n")
         git("add", "-A", cwd=self.root)
         result = subprocess.run(
             [str(INSTALLED_COMMAND), "check", "--fast"],
@@ -411,7 +410,7 @@ class FastCheckTests(ConsumerTestCase):
         self.assertIn("skill-ci: pii: unable to read input: [Errno 2] No such file or directory: 'git'", no_git.stderr)
 
     def test_the_scope_decides_whether_pii_outside_the_skills_directory_counts(self) -> None:
-        write(self.root / "docs/notes.md", f"Write to {self.address}.\n")
+        write(self.root / "docs/notes.md", f"Write to {PLANTED_EMAIL}.\n")
         skills = self.skill_ci("check", "--fast")
         self.assertEqual(skills.returncode, 0, skills.stdout + skills.stderr)
         self.assertEqual(lines(skills), ["checks run: 3; failed: 0"])
@@ -440,11 +439,10 @@ class FastCheckTests(ConsumerTestCase):
 class FullCheckTests(ConsumerTestCase):
     def test_check_scans_every_tracked_file_in_the_pii_scope(self) -> None:
         write_skill(self.root / "skills" / "example")
-        address = "@".join(("jane.doe", "corp-mail.net"))
-        write(self.root / "skills/example/notes.md", f"# Notes\n\nWrite to {address}.\n")
-        write(self.root / "docs/notes.md", f"Write to {address}.\n")
+        write(self.root / "skills/example/notes.md", f"# Notes\n\nWrite to {PLANTED_EMAIL}.\n")
+        write(self.root / "docs/notes.md", f"Write to {PLANTED_EMAIL}.\n")
         git("add", "-A", cwd=self.root)
-        author = ("-c", "user.name=t", "-c", "user.email=" + "@".join(("t", "example.com")), "-c", "commit.gpgsign=false")
+        author = ("-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false")
         git(*author, "commit", "-q", "-m", "committed findings", cwd=self.root)
         skills = skill_ci("check", cwd=self.root)
         self.assertEqual(skills.returncode, 1, skills.stdout + skills.stderr)

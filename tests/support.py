@@ -12,6 +12,7 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 INSTALLED_COMMAND = Path(sysconfig.get_path("scripts")) / "skill-ci"
 # A git hook exports GIT_DIR and GIT_INDEX_FILE, which would point every fixture repository at the real one.
 ENVIRONMENT = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+PLANTED_EMAIL = "@".join(("jane.doe", "corp-mail.net"))
 FAKE_HARNESS = """\
 import json, os, sys
 arguments = sys.argv[1:]
