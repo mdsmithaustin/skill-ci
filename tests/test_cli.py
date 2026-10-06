@@ -551,6 +551,39 @@ class PaidRunTests(unittest.TestCase):
         self.assertEqual(self.fake.calls(), [])
         self.assertFalse((self.package / "runs").exists())
 
+    def test_an_explicit_output_reached_through_a_symlink_is_judged_by_its_target(self) -> None:
+        links = self.root / "links"
+        links.mkdir()
+        (links / "package").symlink_to(self.package, target_is_directory=True)
+        (links / "skills").symlink_to(self.package.parent, target_is_directory=True)
+        for out in (links / "package", links / "package" / "runs", links / "skills"):
+            for command in ("trigger", "run"):
+                with self.subTest(out=out, command=command):
+                    result = self.paid(command, "skills/example", "--out", str(out))
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertIn(f"skill-ci: output allocation failed: {out} overlaps the selected skill package", result.stderr)
+        self.assertEqual(self.fake.calls(), [])
+        self.assertEqual(list(self.package.iterdir()), [self.package / "SKILL.md"])
+
+    def test_an_output_spelled_in_another_case_still_overlaps_on_a_case_insensitive_filesystem(self) -> None:
+        if not (self.checkout / "SKILLS").exists():
+            self.skipTest("the filesystem is case-sensitive")
+        for out in ("SKILLS/EXAMPLE/runs", "SKILLS/EXAMPLE", "SKILLS"):
+            for command in ("trigger", "run"):
+                with self.subTest(out=out, command=command):
+                    result = self.paid(command, "skills/example", "--out", out)
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertIn(f"skill-ci: output allocation failed: {out} overlaps the selected skill package", result.stderr)
+        installed = write_skill(self.runs_root / "example")
+        for command in ("trigger", "run"):
+            with self.subTest(default=True, command=command):
+                result = self.paid(command, str(self.root / "CHECKOUT.EVAL-RUNS" / "example"))
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn("default output overlaps the selected skill package", result.stderr)
+        self.assertEqual(self.fake.calls(), [])
+        self.assertEqual(list(self.package.iterdir()), [self.package / "SKILL.md"])
+        self.assertEqual(list(installed.iterdir()), [installed / "SKILL.md"])
+
     def test_root_and_absolute_skill_selections(self) -> None:
         write_skill(self.checkout)
         for selection, manifest_path, name in (

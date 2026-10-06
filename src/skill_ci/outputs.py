@@ -8,7 +8,19 @@ from pathlib import Path
 
 
 def overlaps(first: Path, second: Path) -> bool:
-    return first == second or first in second.parents or second in first.parents
+    first, second = first.resolve(), second.resolve()
+    return contains(first, second) or contains(second, first)
+
+
+def contains(outer: Path, inner: Path) -> bool:
+    return any(ancestor == outer or same_file(ancestor, outer) for ancestor in (inner, *inner.parents))
+
+
+def same_file(first: Path, second: Path) -> bool:
+    try:
+        return first.samefile(second)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
 
 
 def checkout_root(directory: Path) -> Path:
@@ -35,7 +47,7 @@ def allocate_output(skill: Path, kind: str, task_dir: Path) -> Path:
 
 
 def claim_output(out: Path, skill: Path) -> Path:
-    if overlaps(out.resolve(), skill.resolve()):
+    if overlaps(out, skill):
         raise ValueError(f"{out} overlaps the selected skill package; pass --out with a directory outside the package")
     out.mkdir(parents=True, exist_ok=True)
     return out
