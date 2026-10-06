@@ -113,7 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_options(subcommand("coverage", check_coverage, "require a populated manifest bound to every skill"), CheckOptions, MANIFESTS)
     add_options(subcommand("validate", validate, "validate every manifest with the pinned harness"), CheckOptions, MANIFESTS)
     add_options(subcommand("audit", audit, "run the readiness audit on every manifest"), CheckOptions, MANIFESTS)
-    check_parser = subcommand("check", check, "run the model-free checks that CI runs")
+    check_parser = subcommand("check", check, "run the model-free checks that CI runs, inside a git repository")
     add_options(check_parser, CheckOptions, tuple(field.name for field in fields(CheckOptions)))
     check_parser.add_argument("--fast", action="store_true", default=False, help="run only the PII scan of staged files and the lint checks; --evals-dir, --require-*, and --package are ignored")
     trigger_parser = subcommand("trigger", trigger, "run the trigger matrix for one skill on the host's logins (paid)")

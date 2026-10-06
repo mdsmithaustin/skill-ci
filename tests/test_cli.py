@@ -358,14 +358,19 @@ class FastCheckTests(ConsumerTestCase):
             ],
         )
 
-    def test_outside_a_git_repository_the_pii_scan_names_the_requirement(self) -> None:
+    def test_a_pii_scan_git_cannot_run_names_the_reason(self) -> None:
         with tempfile.TemporaryDirectory(prefix="skill-ci-no-git-") as temporary:
-            root = Path(temporary).resolve()
-            write_skill(root / "skills" / "example")
-            result = skill_ci("check", "--fast", cwd=root)
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertIn("skill-ci: pii: cannot list files with git; run skill-ci inside a git repository", result.stderr)
-        self.assertEqual(lines(result)[-1], "checks run: 3; failed: 1 (pii)")
+            outside = Path(temporary).resolve()
+            write_skill(outside / "skills" / "example")
+            no_repository = skill_ci("check", "--fast", cwd=outside)
+            skills_elsewhere = self.skill_ci("check", "--fast", "--skills-dir", str(outside / "skills"))
+        self.assertEqual(no_repository.returncode, 2, no_repository.stdout + no_repository.stderr)
+        self.assertIn(
+            "skill-ci: pii: the PII scan lists files with git; run skill-ci inside a git repository", no_repository.stderr
+        )
+        self.assertEqual(lines(no_repository)[-1], "checks run: 3; failed: 1 (pii)")
+        self.assertEqual(skills_elsewhere.returncode, 2, skills_elsewhere.stdout + skills_elsewhere.stderr)
+        self.assertRegex(skills_elsewhere.stderr, r"skill-ci: pii: git failed: fatal: .*skills.* is outside repository")
 
     def test_the_scope_decides_whether_pii_outside_the_skills_directory_counts(self) -> None:
         write(self.root / "docs/notes.md", f"Write to {self.address}.\n")
