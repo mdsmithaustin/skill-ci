@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -585,12 +586,25 @@ class PaidRunTests(unittest.TestCase):
         for out in ("output with spaces", str(self.root / "absolute output")):
             for command, product in (("trigger", "trigger-matrix.json"), ("run", "tasks.jsonl")):
                 with self.subTest(out=out, command=command):
-                    result = self.paid(command, "missing package", "--out", out)
+                    result = self.paid(command, "skills/example", "--out", out)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     stage = self.fake.arguments()[0 if command == "trigger" else 1]
                     self.assertEqual(stage[stage.index("--out") + 1], f"{out}/{product}")
                     self.assertTrue((self.checkout / out).is_dir())
                     self.fake.log.unlink()
+
+    def test_an_explicit_output_still_needs_a_selected_package(self) -> None:
+        missing = rf"\[Errno 2\] No such file or directory: '(?:{re.escape(str(self.checkout))}/)?example'"
+        for selection, error in (("example", missing), ("skills", "selected skill is not a package: skills")):
+            for out in ("skills/example/runs", "elsewhere"):
+                for command in ("trigger", "run"):
+                    with self.subTest(selection=selection, out=out, command=command):
+                        result = self.paid(command, selection, "--evals-dir", "evals", "--out", out)
+                        self.assertEqual(result.returncode, 1, result.stderr)
+                        self.assertRegex(result.stderr, rf"^skill-ci: output allocation failed: {error}\n$")
+        self.assertEqual(self.fake.calls(), [])
+        self.assertEqual(list(self.package.iterdir()), [self.package / "SKILL.md"])
+        self.assertFalse((self.checkout / "elsewhere").exists())
 
     def test_a_default_output_that_resolves_into_the_package_fails_before_any_harness_call(self) -> None:
         self.runs_root.symlink_to(self.package, target_is_directory=True)
