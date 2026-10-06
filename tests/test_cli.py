@@ -165,6 +165,14 @@ class ManifestTests(ConsumerTestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(lines(result), ["OK: b — 0 cases, 0 ablations", "manifests checked: 1"])
 
+    def test_a_manifest_directly_inside_a_skills_root_named_evals_is_not_checked(self) -> None:
+        write_skill(self.root / "evals" / "a")
+        write(self.root / "evals/shared-benchmark.json", "not a manifest")
+        write(self.root / "evals/a/evals/shared-benchmark.json", manifest("a", ["SKILL.md"]))
+        result = self.skill_ci("validate", "--skills-dir", "evals")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(lines(result), ["OK: a — 0 cases, 0 ablations", "manifests checked: 1"])
+
     def test_an_unreadable_directory_under_the_root_fails_discovery_and_is_named(self) -> None:
         write_skill(self.root / "skills" / "a")
         write(self.root / "evals/a/shared-benchmark.json", manifest("a", ["skills/a/SKILL.md"]))
@@ -347,6 +355,13 @@ class LintTests(ConsumerTestCase):
         self.assertEqual(unreadable.returncode, 2, unreadable.stdout + unreadable.stderr)
         self.assertIn("skill-ci: cannot read content ignore file missing list:", unreadable.stderr)
         self.assertEqual(lines(unreadable)[-1], "checks run: 2; failed: 1 (content)")
+
+    def test_an_indented_comment_line_in_the_ignore_file_names_no_skill(self) -> None:
+        self.append("\nUse the **other-tool** skill.\n")
+        ignore = write(self.root / "ignore list", "  # moved out later: x-tool, other-tool\n")
+        result = self.skill_ci("lint", "--content-ignore-file", str(ignore))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("skills/example/SKILL.md:7: sibling-skill: **other-tool** has no matching directory under skills/", lines(result))
 
     def test_trigger_cases_must_declare_every_skill(self) -> None:
         quiet = self.skill_ci("lint")
@@ -667,6 +682,22 @@ class PaidRunTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 1, result.stderr)
                     self.assertIn(f"skill-ci: output allocation failed: {out} overlaps the selected skill package", result.stderr)
         self.assertEqual(self.fake.calls(), [])
+        self.assertEqual(list(self.package.iterdir()), [self.package / "SKILL.md"])
+
+    def test_an_explicit_output_that_leaves_the_package_through_dot_dot_reaches_the_harness(self) -> None:
+        links = self.root / "links"
+        links.mkdir()
+        (links / "package").symlink_to(self.package, target_is_directory=True)
+        for out, landed in (
+            ("skills/example/../example-runs", self.checkout / "skills" / "example-runs"),
+            (str(links / "package" / ".." / "beside"), self.checkout / "skills" / "beside"),
+        ):
+            with self.subTest(out=out):
+                result = self.paid("trigger", "skills/example", "--out", out)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.fake.arguments()[0][-1], f"{out}/trigger-matrix.json")
+                self.assertTrue(landed.is_dir())
+                self.fake.log.unlink()
         self.assertEqual(list(self.package.iterdir()), [self.package / "SKILL.md"])
 
     def test_an_output_spelled_in_another_case_still_overlaps_on_a_case_insensitive_filesystem(self) -> None:
