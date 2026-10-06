@@ -364,13 +364,18 @@ class FastCheckTests(ConsumerTestCase):
             write_skill(outside / "skills" / "example")
             no_repository = skill_ci("check", "--fast", cwd=outside)
             skills_elsewhere = self.skill_ci("check", "--fast", "--skills-dir", str(outside / "skills"))
+            dubious_owner = self.skill_ci("check", "--fast", env={**ENVIRONMENT, "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1"})
+            no_git = self.skill_ci("check", "--fast", env={**ENVIRONMENT, "PATH": str(outside / "empty")})
+        failed = "skill-ci: pii: the PII scan lists files with git, which failed: "
         self.assertEqual(no_repository.returncode, 2, no_repository.stdout + no_repository.stderr)
-        self.assertIn(
-            "skill-ci: pii: the PII scan lists files with git; run skill-ci inside a git repository", no_repository.stderr
-        )
+        self.assertIn(f"{failed}fatal: not a git repository", no_repository.stderr)
         self.assertEqual(lines(no_repository)[-1], "checks run: 3; failed: 1 (pii)")
         self.assertEqual(skills_elsewhere.returncode, 2, skills_elsewhere.stdout + skills_elsewhere.stderr)
-        self.assertRegex(skills_elsewhere.stderr, r"skill-ci: pii: git failed: fatal: .*skills.* is outside repository")
+        self.assertRegex(skills_elsewhere.stderr, rf"{failed}fatal: .*skills.* is outside repository")
+        self.assertEqual(dubious_owner.returncode, 2, dubious_owner.stdout + dubious_owner.stderr)
+        self.assertIn(f"{failed}fatal: detected dubious ownership in repository", dubious_owner.stderr)
+        self.assertEqual(no_git.returncode, 2, no_git.stdout + no_git.stderr)
+        self.assertIn("skill-ci: pii: unable to read input: [Errno 2] No such file or directory: 'git'", no_git.stderr)
 
     def test_the_scope_decides_whether_pii_outside_the_skills_directory_counts(self) -> None:
         write(self.root / "docs/notes.md", f"Write to {self.address}.\n")

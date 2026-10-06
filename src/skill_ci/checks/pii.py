@@ -194,11 +194,13 @@ def check_pii(
             else repository_sources(*pathspec)
         )
     except subprocess.CalledProcessError as error:
-        if subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], capture_output=True).returncode != 0:
-            print("skill-ci: pii: the PII scan lists files with git; run skill-ci inside a git repository", file=sys.stderr)
-        else:
-            reason = error.stderr.decode(errors="replace").strip().splitlines()
-            print(f"skill-ci: pii: git failed: {reason[0] if reason else error}", file=sys.stderr)
+        # Outside a repository, git diff --cached falls back to --no-index and prints only a usage dump.
+        probe = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], capture_output=True)
+        reason = (probe.stderr if probe.returncode else error.stderr).decode(errors="replace").strip().splitlines()
+        print(
+            f"skill-ci: pii: the PII scan lists files with git, which failed: {reason[0] if reason else error}",
+            file=sys.stderr,
+        )
         return 2
     except OSError as error:
         print(f"skill-ci: pii: unable to read input: {error}", file=sys.stderr)
