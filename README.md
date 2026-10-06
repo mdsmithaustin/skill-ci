@@ -221,8 +221,7 @@ mise run test
 Without mise:
 
 ```sh
-uv run --no-project --with-requirements tools/requirements.txt \
-	python -m unittest discover -s tools -p 'test_*.py'
+uv run --extra test python -m unittest discover -s tests -p 'test_*.py'
 ```
 
 The tests do not call a model.
