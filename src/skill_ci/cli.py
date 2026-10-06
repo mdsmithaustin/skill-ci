@@ -26,7 +26,7 @@ OPTIONS: dict[str, tuple[str, dict[str, Any]]] = {
     ),
     "pii_scope": (
         "--pii-scope",
-        {"type": PiiScope, "choices": tuple(PiiScope), "help": "scan the skills tree, or every tracked file"},
+        {"type": PiiScope, "choices": tuple(PiiScope), "help": "limit the PII scan to the skills directory, or cover the whole repository"},
     ),
     "trigger_cases": (
         "--trigger-cases",
@@ -115,7 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_options(subcommand("audit", audit, "run the readiness audit on every manifest"), CheckOptions, MANIFESTS)
     check_parser = subcommand("check", check, "run the model-free checks that CI runs")
     add_options(check_parser, CheckOptions, tuple(field.name for field in fields(CheckOptions)))
-    check_parser.add_argument("--fast", action="store_true", default=False, help="run only the PII scan of staged files and the lint checks; other check flags are ignored")
+    check_parser.add_argument("--fast", action="store_true", default=False, help="run only the PII scan of staged files and the lint checks; --evals-dir, --require-*, and --package are ignored")
     trigger_parser = subcommand("trigger", trigger, "run the trigger matrix for one skill on the host's logins (paid)")
     trigger_parser.add_argument("skill", type=Path, help="skill directory, such as skills/my-skill")
     add_options(trigger_parser, TriggerOptions, ("evals_dir", "out", "runs", "matrix_model", "codex_cmd"))

@@ -1,5 +1,5 @@
-# The behavioral runner is pinned by commit in pyproject.toml as a git URL,
-# which Dependabot does not move. Moving it is a judgement call gated on the
+# The behavioral runner is pinned by commit in pyproject.toml as a git URL.
+# Dependabot ignores it, because moving it is a judgement call gated on the
 # fork's tests. See DECISIONS.md.
 version: 2
 updates:
@@ -13,3 +13,5 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: skill-eval-harness-ext

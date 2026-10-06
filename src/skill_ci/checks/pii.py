@@ -193,8 +193,11 @@ def check_pii(
             if staged
             else repository_sources(*pathspec)
         )
-    except (OSError, subprocess.CalledProcessError) as error:
-        print(f"check-pii: unable to read input: {error}", file=sys.stderr)
+    except subprocess.CalledProcessError as error:
+        print(f"skill-ci: pii: cannot list files with git; run skill-ci inside a git repository ({error})", file=sys.stderr)
+        return 2
+    except OSError as error:
+        print(f"skill-ci: pii: unable to read input: {error}", file=sys.stderr)
         return 2
 
     errors = [finding for source in sources for finding in findings(source)]
