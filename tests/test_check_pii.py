@@ -7,16 +7,12 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
+from skill_ci.checks import pii as CHECK_PII
 
-PII_CHECK = Path(__file__).with_name("check-pii.py")
-SPEC = spec_from_file_location("check_pii", PII_CHECK)
-assert SPEC and SPEC.loader
-CHECK_PII = module_from_spec(SPEC)
-sys.modules[SPEC.name] = CHECK_PII
-SPEC.loader.exec_module(CHECK_PII)
+PII_CHECK = Path(CHECK_PII.__file__)
+PII_COMMAND = [sys.executable, "-m", "skill_ci.checks.pii"]
 
 
 class PiiCheck(unittest.TestCase):
@@ -25,7 +21,7 @@ class PiiCheck(unittest.TestCase):
             target = Path(tmp) / f"fixture{suffix}"
             target.write_text(content, encoding="utf-8")
             result = subprocess.run(
-                [sys.executable, str(PII_CHECK), str(target)],
+                [*PII_COMMAND, str(target)],
                 capture_output=True,
                 text=True,
             )
@@ -88,7 +84,7 @@ class PiiCheck(unittest.TestCase):
 
     def test_checker_source_does_not_report_its_own_patterns(self) -> None:
         result = subprocess.run(
-            [sys.executable, str(PII_CHECK), str(PII_CHECK)],
+            [*PII_COMMAND, str(PII_CHECK)],
             capture_output=True,
             text=True,
         )
@@ -271,7 +267,7 @@ class PiiCheck(unittest.TestCase):
             target = Path(tmp) / "fixture.bin"
             target.write_bytes(b"\x00" + b"x" * 32)
             result = subprocess.run(
-                [sys.executable, str(PII_CHECK), str(target)],
+                [*PII_COMMAND, str(target)],
                 capture_output=True,
                 text=True,
             )
@@ -288,7 +284,7 @@ class PiiCheck(unittest.TestCase):
             subprocess.run(["git", "add", target.name], cwd=repository, env=environment, check=True)
             target.write_text("Clean working tree content.\n", encoding="utf-8")
             result = subprocess.run(
-                [sys.executable, str(PII_CHECK), "--staged"],
+                [*PII_COMMAND, "--staged"],
                 cwd=repository,
                 env=environment,
                 capture_output=True,

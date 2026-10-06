@@ -79,8 +79,8 @@ def source_name(raw_name: bytes) -> str:
     return raw_name.decode("utf-8", errors="surrogateescape")
 
 
-def repository_sources() -> list[Source]:
-    names = git_output("ls-files", "-z").split(b"\0")
+def repository_sources(*pathspec: str) -> list[Source]:
+    names = git_output("ls-files", "-z", *(("--", *pathspec) if pathspec else ())).split(b"\0")
     return [
         Source(name, Path(name).read_bytes())
         for raw_name in names
@@ -88,8 +88,10 @@ def repository_sources() -> list[Source]:
     ]
 
 
-def staged_sources() -> list[Source]:
-    names = git_output("diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z").split(b"\0")
+def staged_sources(*pathspec: str) -> list[Source]:
+    names = git_output(
+        "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z", *(("--", *pathspec) if pathspec else ())
+    ).split(b"\0")
     return [
         Source(name, git_output("show", f":{name}"))
         for raw_name in names
@@ -180,15 +182,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def main() -> int:
-    args = parse_args()
+def check_pii(
+    *, paths: Sequence[str] = (), staged: bool = False, pathspec: Sequence[str] = ()
+) -> int:
     try:
         sources = (
-            explicit_path_sources(args.paths)
-            if args.paths
-            else staged_sources()
-            if args.staged
-            else repository_sources()
+            explicit_path_sources(paths)
+            if paths
+            else staged_sources(*pathspec)
+            if staged
+            else repository_sources(*pathspec)
         )
     except (OSError, subprocess.CalledProcessError) as error:
         print(f"check-pii: unable to read input: {error}", file=sys.stderr)
@@ -198,6 +201,11 @@ def main() -> int:
     for error in errors:
         print(error)
     return 1 if errors else 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_args(argv)
+    return check_pii(paths=args.paths, staged=args.staged)
 
 
 if __name__ == "__main__":

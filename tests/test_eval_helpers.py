@@ -9,8 +9,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-
-TOOLS = Path(__file__).resolve().parent
+from skill_ci.outputs import allocate_output
 
 
 class OutputAllocationTests(unittest.TestCase):
@@ -24,19 +23,14 @@ class OutputAllocationTests(unittest.TestCase):
         self.package.mkdir(parents=True)
         (self.package / "SKILL.md").write_text("skill")
 
-    def allocate(self, skill: str, kind: str = "run") -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [sys.executable, str(TOOLS / "allocate-eval-output.py"), skill, kind],
-            cwd=self.checkout, capture_output=True, text=True, timeout=10, check=False,
-        )
+    def allocate(self, skill: str, kind: str = "run") -> Path:
+        return allocate_output(self.checkout / skill, kind, self.checkout)
 
     def test_relative_absolute_and_root_package_selections(self) -> None:
         (self.checkout / "SKILL.md").write_text("root skill")
         for selection, name in (("skills/a skill", "a skill"), (str(self.package), "a skill"), (".", self.checkout.name)):
             with self.subTest(selection=selection):
-                result = self.allocate(selection)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                output = Path(result.stdout.strip())
+                output = self.allocate(selection)
                 self.assertEqual(output.parent, self.root / "checkout with spaces.eval-runs" / name)
                 self.assertTrue(output.is_dir())
                 self.assertRegex(output.name, r"^run-\d{8}-\d{6}-")
@@ -46,9 +40,7 @@ class OutputAllocationTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=8) as pool:
             results = list(pool.map(lambda _: self.allocate("skills/a skill", "trigger"), range(16)))
         outputs = []
-        for result in results:
-            self.assertEqual(result.returncode, 0, result.stderr)
-            output = Path(result.stdout.strip())
+        for output in results:
             self.assertTrue(output.is_dir())
             self.assertRegex(output.name, r"^trigger-\d{8}-\d{6}-")
             outputs.append(output)
@@ -57,24 +49,21 @@ class OutputAllocationTests(unittest.TestCase):
     def test_symlink_and_external_ancestor_overlap_fail_without_allocating(self) -> None:
         output_root = self.root / "checkout with spaces.eval-runs"
         output_root.symlink_to(self.package, target_is_directory=True)
-        rejected = self.allocate("skills/a skill")
-        self.assertEqual(rejected.returncode, 1, rejected.stderr)
-        self.assertIn("set OUT", rejected.stderr)
+        with self.assertRaisesRegex(ValueError, "pass --out"):
+            self.allocate("skills/a skill")
         self.assertFalse((self.package / "a skill").exists())
         output_root.unlink()
         output_root.mkdir()
         external = output_root / "external" / "nested" / "external"
         external.mkdir(parents=True)
         (external / "SKILL.md").write_text("external skill")
-        ancestor = self.allocate(str(external))
-        self.assertEqual(ancestor.returncode, 1, ancestor.stderr)
-        self.assertIn("overlaps", ancestor.stderr)
+        with self.assertRaisesRegex(ValueError, "overlaps"):
+            self.allocate(str(external))
         self.assertEqual(list((output_root / "external").iterdir()), [output_root / "external" / "nested"])
 
     def test_missing_package_fails(self) -> None:
-        rejected = self.allocate("missing")
-        self.assertEqual(rejected.returncode, 1, rejected.stderr)
-        self.assertIn("output allocation failed", rejected.stderr)
+        with self.assertRaises(FileNotFoundError):
+            self.allocate("missing")
         self.assertFalse((self.root / "checkout with spaces.eval-runs").exists())
 
 
@@ -87,7 +76,7 @@ class SkillCoverageTests(unittest.TestCase):
         self.skills.mkdir()
 
     def coverage(self, evals: str | None = None) -> subprocess.CompletedProcess[str]:
-        command = [sys.executable, str(TOOLS / "check-skill-coverage.py"), "--skills-dir", "skills"]
+        command = [sys.executable, "-m", "skill_ci.checks.coverage", "--skills-dir", "skills"]
         if evals is not None:
             command.extend(("--evals-dir", evals))
         return subprocess.run(command, cwd=self.root, capture_output=True, text=True, timeout=10, check=False)

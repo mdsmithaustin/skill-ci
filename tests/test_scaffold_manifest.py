@@ -9,9 +9,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-TOOLS = Path(__file__).resolve().parent
-SCAFFOLD = TOOLS / "scaffold_manifest.py"
-
 EXPECTED = {
     "version": 1,
     "_note": (
@@ -52,7 +49,7 @@ EXPECTED_EXTERNAL = {
 
 
 def run(*args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run([sys.executable, str(SCAFFOLD), *args], capture_output=True, text=True, check=False)
+    return subprocess.run([sys.executable, "-m", "skill_ci.scaffold_manifest", *args], capture_output=True, text=True, check=False)
 
 
 class ScaffoldManifest(unittest.TestCase):

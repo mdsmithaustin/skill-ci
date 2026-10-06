@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -56,13 +57,9 @@ def check_binding(binding: SkillBinding) -> None:
     raise ValueError(f"skill_paths does not bind to {binding.marker}")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Require a populated manifest bound to every direct child skill package.")
-    parser.add_argument("--skills-dir", type=Path, default=Path("skills"))
-    parser.add_argument("--evals-dir", type=Path)
-    arguments = parser.parse_args()
+def check_coverage(skills_dir: Path, evals_dir: Path | None = None) -> int:
     try:
-        bindings = skill_bindings(arguments.skills_dir, arguments.evals_dir)
+        bindings = skill_bindings(skills_dir, evals_dir)
     except (OSError, ValueError) as error:
         print(f"skill coverage failed: {error}", file=sys.stderr)
         return 1
@@ -75,6 +72,14 @@ def main() -> int:
             failures += 1
     print(f"skill manifests checked: {len(bindings)}; failed: {failures}")
     return int(failures != 0)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Require a populated manifest bound to every direct child skill package.")
+    parser.add_argument("--skills-dir", type=Path, default=Path("skills"))
+    parser.add_argument("--evals-dir", type=Path)
+    arguments = parser.parse_args(argv)
+    return check_coverage(arguments.skills_dir, arguments.evals_dir)
 
 
 if __name__ == "__main__":
