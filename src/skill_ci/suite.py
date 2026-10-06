@@ -85,7 +85,13 @@ def lint_content(options: CheckOptions) -> int:
         except (OSError, UnicodeDecodeError) as error:
             print(f"skill-ci: cannot read content ignore file {options.content_ignore_file}: {error}", file=sys.stderr)
             return 2
-        ignore = frozenset(name for line in lines if (name := line.strip()) and not name.startswith("#"))
+        ignore = frozenset(
+            name
+            for line in lines
+            if not line.lstrip().startswith("#")
+            for name in (part.strip() for part in line.split(","))
+            if name
+        )
     return content.check_content(
         options.skills_dir,
         ignore=ignore,

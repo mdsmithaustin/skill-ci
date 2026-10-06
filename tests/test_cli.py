@@ -286,13 +286,15 @@ class LintTests(ConsumerTestCase):
         self.assertIn("skills/example/SKILL.md:7: retired-text: use the new command", lines(flagged))
 
     def test_ignore_file_names_skills_that_live_elsewhere(self) -> None:
-        self.append("\nUse the **other-tool** skill.\n")
+        self.append("\nUse the **other-tool** skill.\nThen the **x-tool** and **y-tool** skills.\n")
         flagged = self.skill_ci("lint")
         self.assertEqual(flagged.returncode, 1, flagged.stdout + flagged.stderr)
         self.assertIn("skills/example/SKILL.md:7: sibling-skill: **other-tool** has no matching directory under skills/", lines(flagged))
-        ignore = write(self.root / "ignore list", "# skills from another repository\n\n  other-tool  \n")
+        self.assertIn("skills/example/SKILL.md:8: sibling-skill: **y-tool** has no matching directory under skills/", lines(flagged))
+        ignore = write(self.root / "ignore list", "# skills from another repository\n\n  other-tool  \nx-tool, y-tool\n")
         ignored = self.skill_ci("lint", "--content-ignore-file", str(ignore))
         self.assertEqual(ignored.returncode, 0, ignored.stdout + ignored.stderr)
+        self.assertEqual(lines(ignored), ["checks run: 2; failed: 0"])
         unreadable = self.skill_ci("lint", "--content-ignore-file", "missing list")
         self.assertEqual(unreadable.returncode, 2, unreadable.stdout + unreadable.stderr)
         self.assertIn("skill-ci: cannot read content ignore file missing list:", unreadable.stderr)

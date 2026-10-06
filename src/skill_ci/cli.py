@@ -37,7 +37,7 @@ OPTIONS: dict[str, tuple[str, dict[str, Any]]] = {
         {
             "type": Path,
             "metavar": "FILE",
-            "help": "skill names that live in another repository, one per line, '#' comments allowed",
+            "help": "skill names that live in another repository, separated by commas or newlines, '#' comment lines allowed",
         },
     ),
     "content_link_exceptions_file": (
