@@ -87,8 +87,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     sys.stdout.reconfigure(line_buffering=True)
     arguments = list(sys.argv[1:] if argv is None else argv)
     try:
-        if arguments[:1] == ["harness"]:
-            return run_harness(arguments[1:])
         namespace = build_parser().parse_args(arguments)
         return namespace.handler(namespace)
     except KeyboardInterrupt:
