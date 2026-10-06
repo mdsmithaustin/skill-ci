@@ -165,6 +165,22 @@ class ManifestTests(ConsumerTestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(lines(result), ["OK: b — 0 cases, 0 ablations", "manifests checked: 1"])
 
+    def test_an_unreadable_directory_under_the_root_fails_discovery_and_is_named(self) -> None:
+        write_skill(self.root / "skills" / "a")
+        write(self.root / "evals/a/shared-benchmark.json", manifest("a", ["skills/a/SKILL.md"]))
+        locked = write(self.root / "evals/locked/shared-benchmark.json", "not a manifest").parent
+        locked.chmod(0)
+        self.addCleanup(locked.chmod, 0o755)
+        if os.access(locked, os.R_OK):
+            self.skipTest("this user can read a directory without read permission")
+        for command, stdout in (("validate", []), ("audit", []), ("check", ["checks run: 4; failed: 1 (manifests)"])):
+            with self.subTest(command=command):
+                result = self.skill_ci(command, "--evals-dir", "evals")
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("skill-ci: cannot search evals/locked for manifests: Permission denied", result.stderr.splitlines())
+                self.assertEqual(lines(result)[-1:], stdout)
+                self.assertNotIn("manifests checked", result.stdout)
+
     def test_a_manifest_whose_judge_is_a_model_under_test_fails_the_audit(self) -> None:
         write_skill(self.root / "skills" / "a")
         self_judging = {**json.loads(manifest("a", ["skills/a/SKILL.md"], [case()])), "judge": {"model": "m"}, "jetty": {"model": "m"}}
