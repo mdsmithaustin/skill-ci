@@ -143,6 +143,21 @@ class ManifestTests(ConsumerTestCase):
         self.assertEqual(audited.returncode, 1, audited.stdout + audited.stderr)
         self.assertIn("audit-manifest: 1 readiness blocker(s) for 'a'", audited.stderr)
 
+    def test_discovery_never_descends_into_a_symlinked_directory(self) -> None:
+        write_skill(self.root / "skills" / "a")
+        write_skill(self.root / "skills" / "b")
+        elsewhere = self.root.parent / "elsewhere"
+        write(elsewhere / "shared-benchmark.json", "not a manifest")
+        write(self.root / "skills/b/evals/shared-benchmark.json", manifest("b", ["SKILL.md"]))
+        write(self.root / "evals/b/shared-benchmark.json", manifest("b", ["skills/b/SKILL.md"]))
+        (self.root / "skills/a/evals").symlink_to(elsewhere, target_is_directory=True)
+        (self.root / "evals/a").symlink_to(elsewhere, target_is_directory=True)
+        for layout in ((), ("--evals-dir", "evals")):
+            with self.subTest(layout=layout):
+                result = self.skill_ci("validate", *layout)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(lines(result), ["OK: b — 0 cases, 0 ablations", "manifests checked: 1"])
+
     def test_a_missing_evals_directory_fails_before_the_harness(self) -> None:
         write_skill(self.root / "skills" / "example")
         result = self.skill_ci("validate", "--evals-dir", "does-not-exist")

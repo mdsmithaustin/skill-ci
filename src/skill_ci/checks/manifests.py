@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -41,11 +42,12 @@ def each_manifest(
     *,
     require_manifests: bool = False,
 ) -> int:
-    root, pattern = (skills_dir, f"**/evals/{MANIFEST}") if evals_dir is None else (evals_dir, f"**/{MANIFEST}")
+    root = skills_dir if evals_dir is None else evals_dir
     if not root.is_dir():
         print(f"skill-ci: {root} is not a directory; no manifest would be checked", file=sys.stderr)
         return 1
-    manifests = sorted(root.glob(pattern), key=str)
+    found = sorted((Path(top) / MANIFEST for top, _, files in os.walk(root, followlinks=False) if MANIFEST in files), key=str)
+    manifests = found if evals_dir is not None else [path for path in found if path.parent.name == "evals" and path.parent != root]
     codes = [step(manifest) for manifest in manifests]
     print(f"manifests checked: {len(manifests)}")
     if require_manifests and not manifests:
