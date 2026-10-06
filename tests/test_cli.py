@@ -162,6 +162,16 @@ class ManifestTests(ConsumerTestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(lines(result), ["OK: b — 0 cases, 0 ablations", "manifests checked: 1"])
 
+    def test_a_manifest_whose_judge_is_a_model_under_test_fails_the_audit(self) -> None:
+        write_skill(self.root / "skills" / "a")
+        self_judging = {**json.loads(manifest("a", ["skills/a/SKILL.md"], [case()])), "judge": {"model": "m"}, "jetty": {"model": "m"}}
+        write(self.root / "evals/a/shared-benchmark.json", json.dumps(self_judging))
+        for command in ("audit", "check"):
+            with self.subTest(command=command):
+                result = self.skill_ci(command, "--evals-dir", "evals")
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("strict-judge: judge model 'm' is also a model under test", result.stderr)
+
     def test_a_missing_evals_directory_fails_before_the_harness(self) -> None:
         write_skill(self.root / "skills" / "example")
         result = self.skill_ci("validate", "--evals-dir", "does-not-exist")
@@ -425,6 +435,26 @@ class FastCheckTests(ConsumerTestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(lines(result), ["checks run: 3; failed: 0"])
         self.assertFalse(marker.exists())
+
+
+class FullCheckTests(ConsumerTestCase):
+    def test_check_scans_every_tracked_file_in_the_pii_scope(self) -> None:
+        write_skill(self.root / "skills" / "example")
+        address = "@".join(("jane.doe", "corp-mail.net"))
+        write(self.root / "skills/example/notes.md", f"# Notes\n\nWrite to {address}.\n")
+        write(self.root / "docs/notes.md", f"Write to {address}.\n")
+        git("add", "-A", cwd=self.root)
+        author = ("-c", "user.name=t", "-c", "user.email=" + "@".join(("t", "example.com")), "-c", "commit.gpgsign=false")
+        git(*author, "commit", "-q", "-m", "committed findings", cwd=self.root)
+        skills = skill_ci("check", cwd=self.root)
+        self.assertEqual(skills.returncode, 1, skills.stdout + skills.stderr)
+        self.assertIn("skills/example/notes.md:3: possible email address", lines(skills))
+        self.assertNotIn("docs/notes.md:1: possible email address", lines(skills))
+        self.assertEqual(lines(skills)[-1], "checks run: 4; failed: 1 (pii)")
+        repository = skill_ci("check", "--pii-scope", "repository", cwd=self.root)
+        self.assertEqual(repository.returncode, 1, repository.stdout + repository.stderr)
+        self.assertIn("docs/notes.md:1: possible email address", lines(repository))
+        self.assertIn("skills/example/notes.md:3: possible email address", lines(repository))
 
 
 class CheckRunnerTests(unittest.TestCase):

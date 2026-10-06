@@ -4,10 +4,11 @@ import os
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
-from support import ENVIRONMENT, FakeHarness, skill_ci, write, write_skill
+from support import ENVIRONMENT, REPOSITORY, FakeHarness, skill_ci, write, write_skill
 
 
 class HarnessCommandTests(unittest.TestCase):
@@ -128,6 +129,15 @@ class HarnessIsolationTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(result.stdout.startswith("usage: skill-benchmark"), result.stdout[:200])
             self.assertFalse(marker.exists())
+
+
+class HarnessPinTests(unittest.TestCase):
+    def test_the_harness_is_pinned_to_a_full_commit_of_the_fork(self) -> None:
+        dependencies = tomllib.loads((REPOSITORY / "pyproject.toml").read_text())["project"]["dependencies"]
+        [harness] = [dependency for dependency in dependencies if dependency.startswith("skill-eval-harness")]
+        self.assertRegex(
+            harness, r"^skill-eval-harness-ext @ git\+https://github\.com/mdsmithaustin/skill-eval-harness\.git@[0-9a-f]{40}$"
+        )
 
 
 if __name__ == "__main__":
