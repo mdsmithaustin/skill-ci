@@ -606,6 +606,19 @@ class PaidRunTests(unittest.TestCase):
         self.assertEqual(list(self.package.iterdir()), [self.package / "SKILL.md"])
         self.assertFalse((self.checkout / "elsewhere").exists())
 
+    def test_a_symlink_loop_in_the_output_or_the_selection_fails_without_a_traceback(self) -> None:
+        loop = self.checkout / "links" / "loop"
+        loop.parent.mkdir()
+        loop.symlink_to("loop")
+        for selection, out in (("skills/example", "links/loop/sub"), ("links/loop", "elsewhere")):
+            for command in ("trigger", "run"):
+                with self.subTest(selection=selection, out=out, command=command):
+                    result = self.paid(command, selection, "--out", out)
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertRegex(result.stderr, rf"^skill-ci: output allocation failed: .*'({re.escape(str(self.checkout))}/)?links/loop(/sub)?'\n$")
+        self.assertEqual(self.fake.calls(), [])
+        self.assertFalse((self.checkout / "elsewhere").exists())
+
     def test_a_default_output_that_resolves_into_the_package_fails_before_any_harness_call(self) -> None:
         self.runs_root.symlink_to(self.package, target_is_directory=True)
         for command in ("trigger", "run"):
