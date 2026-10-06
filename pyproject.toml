@@ -12,7 +12,7 @@ dependencies = [
   "markdown-it-py==4.2.0",
   "mdurl==0.1.2",
   "PyYAML==6.0.3",
-  "skill-eval-harness-ext @ git+https://github.com/mdsmithaustin/skill-eval-harness.git@6b5c4933d46df3a0c444c7ab7f779e5c9e48a5a4",
+  "skill-eval-harness-ext @ git+https://github.com/mdsmithaustin/skill-eval-harness.git@f645f60a43981bd8932118d9b288392f3b51e827",
 ]
 
 [project.scripts]
