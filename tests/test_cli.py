@@ -156,7 +156,8 @@ class ManifestTests(ConsumerTestCase):
         write(self.root / "evals/b/shared-benchmark.json", manifest("b", ["skills/b/SKILL.md"]))
         (self.root / "skills/a/evals").symlink_to(elsewhere, target_is_directory=True)
         (self.root / "evals/a").symlink_to(elsewhere, target_is_directory=True)
-        for layout in ((), ("--evals-dir", "evals")):
+        (self.root / "linked evals").symlink_to(self.root / "evals", target_is_directory=True)
+        for layout in ((), ("--evals-dir", "evals"), ("--evals-dir", "linked evals")):
             with self.subTest(layout=layout):
                 result = self.skill_ci("validate", *layout)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
