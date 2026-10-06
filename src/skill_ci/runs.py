@@ -24,7 +24,7 @@ class TriggerOptions:
     evals_dir: Path | None = None
     out: Path | None = None
     runs: int = 3
-    model: str | None = None
+    matrix_model: str | None = None
     codex_cmd: str | None = None
 
 
@@ -56,7 +56,7 @@ def trigger(options: TriggerOptions) -> int:
     except SetupError as error:
         print(f"skill-ci: {error}", file=sys.stderr)
         return 1
-    model = ["--model", options.model] if options.model is not None else []
+    model = ["--model", options.matrix_model] if options.matrix_model is not None else []
     return harness.run(
         Command.TRIGGER_MATRIX,
         [

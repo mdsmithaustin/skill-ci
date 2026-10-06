@@ -58,10 +58,18 @@ OPTIONS: dict[str, tuple[str, dict[str, Any]]] = {
         "--package",
         {"action": "store_true", "help": "inspect every package entry and reject symlinks and special files"},
     ),
-    "out": ("--out", {"type": Path, "metavar": "DIR", "help": "output directory outside the skill package"}),
+    "out": (
+        "--out",
+        {
+            "type": Path,
+            "metavar": "DIR",
+            "help": "output directory outside the skill package; unset, a new directory under <checkout>.eval-runs/<skill>/",
+        },
+    ),
     "runs": ("--runs", {"type": int, "metavar": "N", "help": "runs per query or variant"}),
     "agents": ("--agent", {"action": "append", "type": Agent, "choices": tuple(Agent), "help": "agent to run; repeatable"}),
     "model": ("--model", {"help": "Claude model"}),
+    "matrix_model": ("--model", {"metavar": "MODEL", "help": "model for every agent; unset, each agent's own model list"}),
     "codex_model": ("--codex-model", {"help": "Codex model"}),
     "codex_cmd": (
         "--codex-cmd",
@@ -111,10 +119,10 @@ def build_parser() -> argparse.ArgumentParser:
     add_options(subcommand("audit", audit, "run the readiness audit on every manifest"), CheckOptions, MANIFESTS)
     check_parser = subcommand("check", check, "run the model-free checks that CI runs")
     add_options(check_parser, CheckOptions, tuple(field.name for field in fields(CheckOptions)))
-    check_parser.add_argument("--fast", action="store_true", default=False, help="lint and scan staged files for PII only")
+    check_parser.add_argument("--fast", action="store_true", default=False, help="run only the PII scan of staged files and the lint checks; other check flags are ignored")
     trigger_parser = subcommand("trigger", trigger, "run the trigger matrix for one skill on the host's logins (paid)")
     trigger_parser.add_argument("skill", type=Path, help="skill directory, such as skills/my-skill")
-    add_options(trigger_parser, TriggerOptions, ("evals_dir", "out", "runs", "model", "codex_cmd"))
+    add_options(trigger_parser, TriggerOptions, ("evals_dir", "out", "runs", "matrix_model", "codex_cmd"))
     run_parser = subcommand("run", run, "run the paired benchmark for one skill on the host's logins (paid)")
     run_parser.add_argument("skill", type=Path, help="skill directory, such as skills/my-skill")
     add_options(run_parser, RunOptions, tuple(field.name for field in fields(RunOptions) if field.name != "skill"))
