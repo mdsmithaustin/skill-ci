@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+from skill_ci import suite
 from support import ENVIRONMENT, INSTALLED_COMMAND, REPOSITORY, FakeHarness, case, git, manifest, skill_ci, write, write_skill
 
 
@@ -421,6 +425,16 @@ class FastCheckTests(ConsumerTestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(lines(result), ["checks run: 3; failed: 0"])
         self.assertFalse(marker.exists())
+
+
+class CheckRunnerTests(unittest.TestCase):
+    def test_a_check_that_exits_with_a_message_prints_it_and_counts_as_failed(self) -> None:
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = suite.run_checks([("first", lambda: sys.exit("the first check gave up")), ("second", lambda: 0)])
+        self.assertEqual(code, 1)
+        self.assertEqual(stderr.getvalue(), "the first check gave up\n")
+        self.assertEqual(stdout.getvalue(), "checks run: 2; failed: 1 (first)\n")
 
 
 class PaidRunTests(unittest.TestCase):

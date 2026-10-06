@@ -101,6 +101,16 @@ class HarnessCommandTests(unittest.TestCase):
                     self.assertIn(f"skill-ci: warning: {pyproject} requires {expected}", result.stderr)
 
 
+    def test_an_in_process_harness_exit_with_a_message_prints_it_and_fails(self) -> None:
+        write_skill(self.root / "skills" / "a")
+        write(self.root / "evals/a/shared-benchmark.json", "{}")
+        write(self.fake.purelib / "skill_benchmark.py", 'raise SystemExit("the harness refused this manifest")\n')
+        result = self.fake.run("validate", "--evals-dir", "evals", cwd=self.root)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(result.stderr, "the harness refused this manifest\n")
+        self.assertEqual(result.stdout, "manifests checked: 1\n")
+
+
 class HarnessIsolationTests(unittest.TestCase):
     def test_planted_harness_module_never_loads(self) -> None:
         with tempfile.TemporaryDirectory(prefix="skill-ci-isolation-") as temporary:

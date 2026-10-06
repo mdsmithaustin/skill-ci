@@ -59,10 +59,17 @@ def call(arguments: Sequence[str]) -> int:
         namespace = skill_benchmark.build_arg_parser().parse_args(arguments)
         return handlers[arguments[0]](skill_benchmark.CLIInvocation.from_namespace(namespace).to_legacy_namespace())
     except SystemExit as error:
-        return error.code if isinstance(error.code, int) else int(error.code is not None)
+        return exit_status(error)
     except Exception:
         traceback.print_exc()
         return 1
+
+
+def exit_status(error: SystemExit) -> int:
+    if error.code is None or isinstance(error.code, int):
+        return error.code or 0
+    print(error.code, file=sys.stderr)
+    return 1
 
 
 def shadowing_warnings(project: Path) -> list[str]:

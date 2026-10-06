@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+from skill_ci import harness
 from skill_ci.checks import content, coverage, frontmatter, manifests, package, pii
 
 
@@ -112,4 +113,4 @@ def exit_code(run: Callable[[], int]) -> int:
     try:
         return run()
     except SystemExit as error:
-        return error.code if isinstance(error.code, int) else int(error.code is not None)
+        return harness.exit_status(error)

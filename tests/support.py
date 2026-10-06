@@ -88,9 +88,10 @@ class FakeHarness:
         venv.create(environment, with_pip=False)
         paths = sysconfig.get_paths(scheme="venv", vars={"base": str(environment), "platbase": str(environment)})
         self.scripts = Path(paths["scripts"])
+        self.purelib = Path(paths["purelib"])
         self.python = self.scripts / "python"
         self.log = root / "harness.jsonl"
-        (Path(paths["purelib"]) / "skill_ci_source.pth").write_text(f"{source}\n{sysconfig.get_path('purelib')}\n")
+        (self.purelib / "skill_ci_source.pth").write_text(f"{source}\n{sysconfig.get_path('purelib')}\n")
         for command in ("skill-benchmark", "skill-trigger-matrix"):
             (self.scripts / command).write_text(FAKE_HARNESS)
             (self.scripts / command).chmod(0o755)
