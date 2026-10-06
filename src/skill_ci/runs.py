@@ -150,5 +150,6 @@ def output_directory(skill: Path, kind: str, out: Path | None) -> Path:
         if out is None:
             return outputs.allocate_output(skill, kind, outputs.checkout_root(Path.cwd()))
         return outputs.claim_output(out, skill)
-    except (OSError, ValueError) as error:
+    # Python 3.12's Path.resolve raises RuntimeError on a symlink loop; later versions raise OSError.
+    except (OSError, ValueError, RuntimeError) as error:
         raise SetupError(f"output allocation failed: {error}") from error
