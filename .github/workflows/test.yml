@@ -49,4 +49,5 @@ jobs:
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c
         with:
           version: 2026.8.2
+      - run: uv lock --check
       - run: mise run test
