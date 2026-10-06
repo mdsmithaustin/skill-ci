@@ -33,10 +33,15 @@ def checkout_root(directory: Path) -> Path:
     return Path(os.fsdecode(result.stdout.rstrip(b"\n")))
 
 
-def allocate_output(skill: Path, kind: str, task_dir: Path) -> Path:
+def selected_package(skill: Path) -> Path:
     package = skill.resolve(strict=True)
     if not package.is_dir() or not (package / "SKILL.md").is_file():
         raise ValueError(f"selected skill is not a package: {skill}")
+    return package
+
+
+def allocate_output(skill: Path, kind: str, task_dir: Path) -> Path:
+    package = selected_package(skill)
     checkout = task_dir.resolve(strict=True)
     destination = (checkout.parent / f"{checkout.name}.eval-runs" / package.name).resolve()
     if overlaps(destination, package):
@@ -47,7 +52,7 @@ def allocate_output(skill: Path, kind: str, task_dir: Path) -> Path:
 
 
 def claim_output(out: Path, skill: Path) -> Path:
-    if overlaps(out, skill):
+    if overlaps(out, selected_package(skill)):
         raise ValueError(f"{out} overlaps the selected skill package; pass --out with a directory outside the package")
     out.mkdir(parents=True, exist_ok=True)
     return out
