@@ -14,7 +14,6 @@ from skill_ci.harness import Command
 from skill_ci.runs import Agent, RunOptions, TriggerOptions
 from skill_ci.suite import CheckOptions, PiiScope
 
-# Keyed by options field. The defaults live on the dataclasses, so no flag states one.
 OPTIONS: dict[str, tuple[str, dict[str, Any]]] = {
     "skills_dir": ("--skills-dir", {"type": Path, "metavar": "DIR", "help": "directory holding one subdirectory per skill"}),
     "evals_dir": (
@@ -88,7 +87,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     sys.stdout.reconfigure(line_buffering=True)
     arguments = list(sys.argv[1:] if argv is None else argv)
     try:
-        # Routed before parsing so argparse never consumes the harness's own flags, such as --help.
         if arguments[:1] == ["harness"]:
             return run_harness(arguments[1:])
         namespace = build_parser().parse_args(arguments)

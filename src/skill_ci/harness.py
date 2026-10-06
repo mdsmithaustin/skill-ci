@@ -30,7 +30,6 @@ def isolated_argv(command: Command, arguments: Sequence[str]) -> list[str] | Non
     if not path.is_file():
         print(f"skill-ci: {path} does not exist; skill-ci's environment lacks the harness", file=sys.stderr)
         return None
-    # -I keeps PYTHON* variables and the working directory off the harness's sys.path.
     return [sys.executable, "-I", str(path), *arguments]
 
 
@@ -83,7 +82,6 @@ def declared_harness(pyproject: Path) -> str | None:
     except (OSError, ValueError):
         return None
     project = data.get("project", {})
-    # skill-ci's own pyproject declares the harness as its pin, which is the copy it runs.
     if normalized_name(project.get("name", "")) == "skill-ci":
         return None
     groups = [
