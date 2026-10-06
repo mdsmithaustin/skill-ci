@@ -15,5 +15,8 @@ dependencies = [
   "skill-eval-harness-ext @ git+https://github.com/mdsmithaustin/skill-eval-harness.git@6b5c4933d46df3a0c444c7ab7f779e5c9e48a5a4",
 ]
 
+[project.scripts]
+skill-ci = "skill_ci.cli:main"
+
 [project.optional-dependencies]
 test = []

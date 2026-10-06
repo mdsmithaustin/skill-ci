@@ -1,0 +1,107 @@
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import subprocess
+import sys
+import sysconfig
+import tomllib
+import traceback
+from collections.abc import Sequence
+from enum import StrEnum
+from pathlib import Path
+
+HARNESS_DISTRIBUTIONS = frozenset({"skill-eval-harness", "skill-eval-harness-ext"})
+REQUIREMENT_NAME = re.compile(r"\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)")
+
+
+class Command(StrEnum):
+    BENCHMARK = "skill-benchmark"
+    TRIGGER_MATRIX = "skill-trigger-matrix"
+
+
+def script(command: Command) -> Path:
+    return Path(sysconfig.get_path("scripts")) / command
+
+
+def isolated_argv(command: Command, arguments: Sequence[str]) -> list[str] | None:
+    path = script(command)
+    if not path.is_file():
+        print(f"skill-ci: {path} does not exist; skill-ci's environment lacks the harness", file=sys.stderr)
+        return None
+    # -I keeps PYTHON* variables and the working directory off the harness's sys.path.
+    return [sys.executable, "-I", str(path), *arguments]
+
+
+def run(command: Command, arguments: Sequence[str]) -> int:
+    argv = isolated_argv(command, arguments)
+    if argv is None:
+        return 127
+    sys.stdout.flush()
+    sys.stderr.flush()
+    return subprocess.run(argv, check=False).returncode
+
+
+def execute(command: Command, arguments: Sequence[str]) -> int:
+    argv = isolated_argv(command, arguments)
+    if argv is None:
+        return 127
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execv(sys.executable, argv)
+
+
+def call(arguments: Sequence[str]) -> int:
+    try:
+        import skill_benchmark
+
+        handlers = {"validate": skill_benchmark.validate_cli_command, "audit-manifest": skill_benchmark.audit_manifest}
+        namespace = skill_benchmark.build_arg_parser().parse_args(arguments)
+        return handlers[arguments[0]](skill_benchmark.CLIInvocation.from_namespace(namespace).to_legacy_namespace())
+    except SystemExit as error:
+        return error.code if isinstance(error.code, int) else int(error.code is not None)
+    except Exception:
+        traceback.print_exc()
+        return 1
+
+
+def shadowing_warnings(project: Path) -> list[str]:
+    warnings = []
+    found = shutil.which(Command.BENCHMARK)
+    if found is not None and Path(found).resolve() != script(Command.BENCHMARK).resolve():
+        warnings.append(f"{found} on PATH is not skill-ci's harness; skill-ci runs its own pinned copy")
+    declared = declared_harness(project / "pyproject.toml")
+    if declared is not None:
+        warnings.append(f"{project / 'pyproject.toml'} requires {declared!r}; skill-ci runs its own pinned copy")
+    return warnings
+
+
+def declared_harness(pyproject: Path) -> str | None:
+    try:
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    project = data.get("project", {})
+    # skill-ci's own pyproject declares the harness as its pin, which is the copy it runs.
+    if normalized_name(project.get("name", "")) == "skill-ci":
+        return None
+    groups = [
+        project.get("dependencies", []),
+        *project.get("optional-dependencies", {}).values(),
+        *data.get("dependency-groups", {}).values(),
+    ]
+    return next(
+        (
+            requirement
+            for group in groups
+            for requirement in group
+            if isinstance(requirement, str) and normalized_name(requirement) in HARNESS_DISTRIBUTIONS
+        ),
+        None,
+    )
+
+
+def normalized_name(requirement: str) -> str | None:
+    match = REQUIREMENT_NAME.match(requirement)
+    return re.sub(r"[-_.]+", "-", match.group(1)).lower() if match else None
