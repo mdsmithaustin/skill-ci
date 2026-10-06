@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from support import ENVIRONMENT, REPOSITORY, FakeHarness, case, git, manifest, skill_ci, write, write_skill
+from support import ENVIRONMENT, INSTALLED_COMMAND, REPOSITORY, FakeHarness, case, git, manifest, skill_ci, write, write_skill
 
 
 def lines(result: subprocess.CompletedProcess[str]) -> list[str]:
@@ -334,6 +334,29 @@ class FastCheckTests(ConsumerTestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("skills/example/notes.md:3: possible email address", lines(result))
         self.assertEqual(lines(result)[-1], "checks run: 3; failed: 1 (pii)")
+
+    def test_findings_print_in_check_order_when_output_is_piped(self) -> None:
+        write(self.root / "skills/example/notes.md", f"# Notes\n\nWrite to {self.address}.\n")
+        git("add", "-A", cwd=self.root)
+        result = subprocess.run(
+            [str(INSTALLED_COMMAND), "check", "--fast"],
+            cwd=self.root,
+            env=ENVIRONMENT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        self.assertEqual(
+            result.stdout.splitlines(),
+            [
+                "skills/example/notes.md:3: possible email address",
+                "frontmatter: 1 skills, 0 errors",
+                "content: 2 files, 0 findings",
+                "checks run: 3; failed: 1 (pii)",
+            ],
+        )
 
     def test_the_scope_decides_whether_pii_outside_the_skills_directory_counts(self) -> None:
         write(self.root / "docs/notes.md", f"Write to {self.address}.\n")

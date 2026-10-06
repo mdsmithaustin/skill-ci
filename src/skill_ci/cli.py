@@ -76,6 +76,8 @@ MANIFESTS = ("skills_dir", "evals_dir")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    # Piped stdout is block-buffered and stderr is not, so findings would print after later summaries.
+    sys.stdout.reconfigure(line_buffering=True)
     arguments = list(sys.argv[1:] if argv is None else argv)
     try:
         # Routed before parsing so argparse never consumes the harness's own flags, such as --help.
