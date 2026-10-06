@@ -6,80 +6,17 @@ import sys
 import traceback
 from collections.abc import Callable, Sequence
 from dataclasses import fields
+from datetime import UTC, datetime
 from importlib import metadata
 from pathlib import Path
-from typing import Any
 
-from skill_ci import harness, runs, suite
+from skill_ci import config, harness, pin, runs, suite
 from skill_ci.checks import coverage, manifests, package
+from skill_ci.config import OPTIONS
 from skill_ci.harness import Command
-from skill_ci.runs import Agent, RunOptions, TriggerOptions
-from skill_ci.suite import CheckOptions, PiiScope
+from skill_ci.runs import RunOptions, TriggerOptions
+from skill_ci.suite import CheckOptions
 
-OPTIONS: dict[str, tuple[str, dict[str, Any]]] = {
-    "skills_dir": ("--skills-dir", {"type": Path, "metavar": "DIR", "help": "directory holding one subdirectory per skill"}),
-    "evals_dir": (
-        "--evals-dir",
-        {
-            "type": Path,
-            "metavar": "DIR",
-            "help": "directory holding <skill>/shared-benchmark.json; unset, manifests sit at <skill>/evals/",
-        },
-    ),
-    "pii_scope": (
-        "--pii-scope",
-        {"type": PiiScope, "choices": tuple(PiiScope), "help": "limit the PII scan to the skills directory, or cover the whole repository"},
-    ),
-    "trigger_cases": (
-        "--trigger-cases",
-        {"type": Path, "metavar": "FILE", "help": "version-1 trigger declaration corpus that must declare every skill"},
-    ),
-    "content_ignore_file": (
-        "--content-ignore-file",
-        {
-            "type": Path,
-            "metavar": "FILE",
-            "help": "skill names that live in another repository, separated by commas or newlines, '#' comment lines allowed",
-        },
-    ),
-    "content_link_exceptions_file": (
-        "--content-link-exceptions-file",
-        {"type": Path, "metavar": "FILE", "help": "version-1 JSON file of missing inline links created at output time"},
-    ),
-    "content_conventions_file": (
-        "--content-conventions-file",
-        {"type": Path, "metavar": "FILE", "help": "version-1 JSON file of skill-name prefixes and retired text"},
-    ),
-    "require_manifests": ("--require-manifests", {"action": "store_true", "help": "fail when no manifest is found"}),
-    "require_populated_manifests": (
-        "--require-populated-manifests",
-        {"action": "store_true", "help": "require a manifest with cases bound to every skill"},
-    ),
-    "package": (
-        "--package",
-        {"action": "store_true", "help": "inspect every package entry and reject symlinks and special files"},
-    ),
-    "out": (
-        "--out",
-        {
-            "type": Path,
-            "metavar": "DIR",
-            "help": "output directory outside the skill package; unset, a new directory under <checkout>.eval-runs/<skill>/",
-        },
-    ),
-    "runs": ("--runs", {"type": int, "metavar": "N", "help": "runs per query or variant"}),
-    "agents": ("--agent", {"action": "append", "type": Agent, "choices": tuple(Agent), "help": "agent to run; repeatable"}),
-    "model": ("--model", {"help": "Claude model"}),
-    "matrix_model": ("--model", {"metavar": "MODEL", "help": "model for every agent; unset, each agent's own model list"}),
-    "codex_model": ("--codex-model", {"help": "Codex model"}),
-    "codex_cmd": (
-        "--codex-cmd",
-        {"metavar": "COMMAND", "help": "Codex command line (default: the bundled codex launcher, read-only sandbox)"},
-    ),
-    "timeout": ("--timeout", {"type": int, "metavar": "SECONDS", "help": "per-run timeout"}),
-    "judge_model": ("--judge-model", {"help": "Claude judge model"}),
-    "judge_runs": ("--judge-runs", {"type": int, "metavar": "N", "help": "judge repeats per run"}),
-}
 LINT = ("skills_dir", "trigger_cases", "content_ignore_file", "content_link_exceptions_file", "content_conventions_file")
 MANIFESTS = ("skills_dir", "evals_dir")
 
@@ -88,9 +25,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Piped stdout is block-buffered and stderr is not, so findings would print after later summaries.
     sys.stdout.reconfigure(line_buffering=True)
     arguments = list(sys.argv[1:] if argv is None else argv)
+    pinned = os.environ.pop(pin.PINNED, None)
+    running = pinned or pin.running_commit()
+    identity = f"skill-ci {metadata.version('skill-ci')} ({running or 'commit unknown'})"
     try:
-        namespace = build_parser().parse_args(arguments)
-        return namespace.handler(namespace)
+        found = config.find(Path.cwd())
+        if pinned is None and arguments[:1] != ["update"]:
+            if found is None:
+                print(identity, file=sys.stderr)
+            else:
+                selected = config.read_pin(found)
+                resolved = pin.resolve(selected, pin.cache_directory(), datetime.now(UTC))
+                announce(selected, resolved)
+                if resolved.commit != running:
+                    return pin.rerun(selected.source, resolved.commit, arguments)
+        settings = {} if found is None else config.read_settings(found)
+        namespace = build_parser(identity).parse_args(arguments)
+        # Subcommands suppress absent flags, so a given flag replaces the file's value and an absent one keeps it.
+        return namespace.handler(argparse.Namespace(**{**settings, **vars(namespace)}))
+    except (config.ConfigError, pin.PinError) as error:
+        for line in str(error).splitlines():
+            print(f"skill-ci: {line}", file=sys.stderr)
+        return 2
     except KeyboardInterrupt:
         return 130
     except Exception as error:
@@ -101,12 +57,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
 
-def build_parser() -> argparse.ArgumentParser:
+def announce(selected: config.Pin, resolved: pin.Resolved) -> None:
+    print(f"skill-ci {resolved.name} ({resolved.commit})", file=sys.stderr)
+    if resolved.offline is not None:
+        print(
+            f"skill-ci: warning: cannot reach {selected.source} ({resolved.offline.reason}); "
+            f"running {resolved.commit}, which {selected.version} named on {resolved.offline.fetched_at:%Y-%m-%d %H:%M} UTC",
+            file=sys.stderr,
+        )
+    if resolved.newer is not None:
+        print(f"skill-ci: {resolved.newer} is newer than the pinned {selected.version}; run skill-ci update to move the pin", file=sys.stderr)
+
+
+def build_parser(identity: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="skill-ci",
         description="Model-free checks and operator-local eval runs for repositories of Agent Skills.",
     )
-    parser.add_argument("--version", action="version", version=f"skill-ci {metadata.version('skill-ci')}")
+    parser.add_argument("--version", action="version", version=identity)
     commands = parser.add_subparsers(dest="command", metavar="COMMAND", required=True)
 
     def subcommand(name: str, handler: Callable[[argparse.Namespace], int], help_text: str) -> argparse.ArgumentParser:
@@ -134,6 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
         "harness", lambda namespace: run_harness(namespace.arguments), "run skill-benchmark or skill-trigger-matrix"
     )
     harness_parser.add_argument("arguments", nargs=argparse.REMAINDER, metavar="COMMAND [ARGS...]")
+    subcommand("update", update, f"set version in {config.FILE_NAME} to the newest tag, keeping comments and other keys")
     return parser
 
 
@@ -208,3 +177,23 @@ def run_harness(arguments: Sequence[str]) -> int:
         return 2
     warn_about_shadowing()
     return harness.execute(Command(arguments[0]), arguments[1:])
+
+
+def update(namespace: argparse.Namespace) -> int:
+    path = config.find(Path.cwd())
+    if path is None:
+        print(f"skill-ci: no {config.FILE_NAME} in this directory or above it, up to the repository root", file=sys.stderr)
+        return 2
+    selected = config.read_pin(path)
+    newest = pin.newest_tag(selected.source, pin.cache_directory(), datetime.now(UTC))
+    shown = os.path.relpath(path)
+    if selected.version == newest:
+        print(f"{shown}: version is already {newest}, the newest tag")
+        return 0
+    try:
+        path.write_text(config.with_version(path.read_text(encoding="utf-8"), newest), encoding="utf-8")
+    except (OSError, ValueError) as error:
+        print(f"skill-ci: cannot update {shown}: {error}", file=sys.stderr)
+        return 1
+    print(f"{shown}: version {selected.version} -> {newest}")
+    return 0

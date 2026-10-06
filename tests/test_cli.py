@@ -559,8 +559,10 @@ class FastCheckTests(ConsumerTestCase):
             timeout=60,
             check=False,
         )
+        banner, *findings = result.stdout.splitlines()
+        self.assertRegex(banner, r"^skill-ci \S+ \(commit unknown\)$")
         self.assertEqual(
-            result.stdout.splitlines(),
+            findings,
             [
                 "skills/example/notes.md:3: possible email address",
                 "frontmatter: 1 skills, 0 errors",
