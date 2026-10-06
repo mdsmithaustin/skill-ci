@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import shutil
 import subprocess
@@ -364,7 +365,8 @@ class FastCheckTests(ConsumerTestCase):
             write_skill(outside / "skills" / "example")
             no_repository = skill_ci("check", "--fast", cwd=outside)
             skills_elsewhere = self.skill_ci("check", "--fast", "--skills-dir", str(outside / "skills"))
-            dubious_owner = self.skill_ci("check", "--fast", env={**ENVIRONMENT, "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1"})
+            untrusted = {"GIT_TEST_ASSUME_DIFFERENT_OWNER": "1", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+            dubious_owner = self.skill_ci("check", "--fast", env={**ENVIRONMENT, **untrusted})
             no_git = self.skill_ci("check", "--fast", env={**ENVIRONMENT, "PATH": str(outside / "empty")})
         failed = "skill-ci: pii: the PII scan lists files with git, which failed: "
         self.assertEqual(no_repository.returncode, 2, no_repository.stdout + no_repository.stderr)
