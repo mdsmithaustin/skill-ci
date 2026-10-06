@@ -129,7 +129,9 @@ class HarnessCommandTests(unittest.TestCase):
         write(self.fake.purelib / "skill_benchmark.py", 'raise SystemExit("the harness refused this manifest")\n')
         result = self.fake.run("validate", "--evals-dir", "evals", cwd=self.root)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertEqual(result.stderr, "the harness refused this manifest\n")
+        banner, *reasons = result.stderr.splitlines()
+        self.assertRegex(banner, r"^skill-ci \S+ \(commit unknown\)$")
+        self.assertEqual(reasons, ["the harness refused this manifest"])
         self.assertEqual(result.stdout, "manifests checked: 1\n")
 
     def test_an_interrupt_inside_the_harness_stops_the_command_with_exit_130(self) -> None:
