@@ -256,6 +256,18 @@ class RerunGuardTests(PinTestCase):
         result = self.skill_ci("lint", PYTHONPATH=str(self.root / "impostor"))
         self.handed_off(result, self.commits["v0.9.0"], "lint")
 
+    def test_a_hand_off_without_a_runnable_uv_stops_with_the_reason(self) -> None:
+        self.pin("v0.9.0")
+        git_only = self.root / "git only"
+        write(git_only / "git", f'#!/bin/sh\nexec "{shutil.which("git")}" "$@"\n').chmod(0o755)
+        missing = self.skill_ci("lint", PATH=str(git_only))
+        self.assertEqual(missing.returncode, 127, missing.stderr)
+        self.assertIn(f"skill-ci: running the pinned commit {self.commits['v0.9.0']} needs uv on PATH\n", missing.stderr)
+        write(git_only / "uv", "#!/nonexistent/interpreter\n").chmod(0o755)
+        broken = self.skill_ci("lint", PATH=str(git_only))
+        self.assertEqual(broken.returncode, 126, broken.stderr)
+        self.assertIn(f"skill-ci: cannot run {git_only / 'uv'} for the pinned commit {self.commits['v0.9.0']}: ", broken.stderr)
+
     def test_an_empty_guard_still_resolves(self) -> None:
         self.pin("v0.9.0")
         self.handed_off(self.skill_ci("lint", SKILL_CI_PINNED=""), self.commits["v0.9.0"], "lint")
