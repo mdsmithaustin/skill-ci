@@ -173,14 +173,14 @@ requires-dist = [
     { name = "markdown-it-py", specifier = "==4.2.0" },
     { name = "mdurl", specifier = "==0.1.2" },
     { name = "pyyaml", specifier = "==6.0.3" },
-    { name = "skill-eval-harness-ext", git = "https://github.com/mdsmithaustin/skill-eval-harness.git?rev=f645f60a43981bd8932118d9b288392f3b51e827" },
+    { name = "skill-eval-harness-ext", git = "https://github.com/mdsmithaustin/skill-eval-harness.git?rev=15cc6126bb01673884dee14d1a87a46f618d63ea" },
 ]
 provides-extras = ["test"]
 
 [[package]]
 name = "skill-eval-harness-ext"
 version = "0.6.0"
-source = { git = "https://github.com/mdsmithaustin/skill-eval-harness.git?rev=f645f60a43981bd8932118d9b288392f3b51e827#f645f60a43981bd8932118d9b288392f3b51e827" }
+source = { git = "https://github.com/mdsmithaustin/skill-eval-harness.git?rev=15cc6126bb01673884dee14d1a87a46f618d63ea#15cc6126bb01673884dee14d1a87a46f618d63ea" }
 dependencies = [
     { name = "pyyaml" },
     { name = "regex" },
