@@ -17,7 +17,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import NewType, NoReturn
 
-from skill_ci.config import Pin, Tag, Track, Version
+from skill_ci.config import Pin, Tag, Track, Version, redact
 
 PINNED = "SKILL_CI_PINNED"
 STARTED = "SKILL_CI_STARTED"
@@ -73,7 +73,7 @@ class Resolved:
 
 
 def resolve(pin: Pin, cache: Path, now: datetime) -> Resolved:
-    cached = read_cache(cache, pin.source)
+    cached = read_cache(cache, pin.redacted_source)
     if (
         isinstance(pin.version, Tag)
         and cached is not None
@@ -82,10 +82,10 @@ def resolve(pin: Pin, cache: Path, now: datetime) -> Resolved:
     ):
         return answer(pin.version, cached, None)
     try:
-        return answer(pin.version, fetch(pin.source, cache, now), None)
+        return answer(pin.version, fetch(pin, cache, now), None)
     except Unreachable as error:
         if cached is None:
-            raise PinError(f"cannot reach {pin.source} ({error}), and no version was ever resolved from it") from error
+            raise PinError(f"cannot reach {pin.redacted_source} ({error}), and no version was ever resolved from it") from error
         return answer(pin.version, cached, Offline(str(error), cached.fetched_at))
 
 
@@ -109,22 +109,22 @@ def answer(version: Version, refs: Refs, offline: Offline | None) -> Resolved:
             return Resolved(str(Track.MAIN), refs.main, offline)
 
 
-def newest_tag(source: str, cache: Path, now: datetime) -> Tag:
+def newest_tag(pin: Pin, cache: Path, now: datetime) -> Tag:
     try:
-        refs = fetch(source, cache, now)
+        refs = fetch(pin, cache, now)
     except Unreachable as error:
-        raise PinError(f"cannot reach {source} ({error})") from error
+        raise PinError(f"cannot reach {pin.redacted_source} ({error})") from error
     if not refs.tags:
-        raise PinError(f"{source} has no tag such as v1.0.0")
+        raise PinError(f"{refs.source} has no tag such as v1.0.0")
     return max(refs.tags)
 
 
-def fetch(source: str, cache: Path, now: datetime) -> Refs:
+def fetch(pin: Pin, cache: Path, now: datetime) -> Refs:
     try:
         # In a session of its own, a timeout can stop git and the transport it starts together, and a transport that
         # prompts fails at once instead of stopping on a terminal it cannot read.
         git = subprocess.Popen(
-            ["git", "ls-remote", source, "refs/heads/main", "refs/tags/v*"],
+            ["git", "ls-remote", pin.source, "refs/heads/main", "refs/tags/v*"],
             env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -146,8 +146,8 @@ def fetch(source: str, cache: Path, now: datetime) -> Refs:
                     os.killpg(git.pid, signal.SIGKILL)
     if git.returncode != 0:
         reason = next((line for line in errors.splitlines() if line.strip()), f"git ls-remote exited {git.returncode}")
-        raise Unreachable(reason.removeprefix("fatal: "))
-    refs = parse_listing(source, now, listing)
+        raise Unreachable(redact(reason.removeprefix("fatal: "), pin.source))
+    refs = parse_listing(pin.redacted_source, now, listing)
     write_cache(cache, refs)
     return refs
 
@@ -241,7 +241,7 @@ def claim(environment: MutableMapping[str, str], running: Commit | None) -> bool
     return True
 
 
-def rerun(source: str, commit: Commit, arguments: Sequence[str]) -> NoReturn:
+def rerun(pin: Pin, commit: Commit, arguments: Sequence[str]) -> NoReturn:
     uv = shutil.which("uv")
     if uv is None:
         raise HandoffError(f"running the pinned commit {commit} needs uv on PATH", status=127)
@@ -251,7 +251,7 @@ def rerun(source: str, commit: Commit, arguments: Sequence[str]) -> NoReturn:
         scratch = tempfile.TemporaryDirectory(prefix="skill-ci-")
         started = Path(scratch.name) / "started"
         child = subprocess.Popen(
-            [uv, "tool", "run", "--isolated", "--from", f"git+{source}@{commit}", "skill-ci", *arguments],
+            [uv, "tool", "run", "--isolated", "--from", f"git+{pin.source}@{commit}", "skill-ci", *arguments],
             env={**{key: value for key, value in os.environ.items() if key not in SHADOWING}, PINNED: commit, STARTED: str(started)},
         )
     except OSError as error:
@@ -261,7 +261,7 @@ def rerun(source: str, commit: Commit, arguments: Sequence[str]) -> NoReturn:
         if status > 0 and not started.exists():
             raise HandoffError(
                 f"uv could not start the pinned commit {commit} (exit {status}); fix the uv error above, "
-                f"such as no network access to {source} or a UV_PYTHON that this commit does not support"
+                f"such as no network access to {pin.redacted_source} or a UV_PYTHON that this commit does not support"
             )
     raise SystemExit(status if status >= 0 else 128 - status)
 

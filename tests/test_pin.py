@@ -277,6 +277,41 @@ class OfflineTests(PinTestCase):
         )
         self.assertFalse(still_running(int(transport.read_text())), "the ssh transport outlived skill-ci")
 
+    def test_credentials_in_source_reach_git_and_uv_but_no_message_or_cache(self) -> None:
+        serving = write(self.root / "serving-ssh", '#!/bin/sh\nshift\neval "exec $1"\n')
+        refusing = write(self.root / "refusing-ssh", '#!/bin/sh\necho "$1: Permission denied (publickey)." >&2\nexit 255\n')
+        for script in (serving, refusing):
+            script.chmod(0o755)
+        source = f"ssh://alice:s3cr%40t@localhost{self.source}"
+        shown = f"ssh://alice@localhost{self.source}"
+        write(self.consumer / ".skill-ci.toml", f'version = "latest"\nsource = "{source}"\n')
+        ssh = {"GIT_SSH_VARIANT": "simple"}
+        served = self.skill_ci("lint", **ssh, GIT_SSH_COMMAND=str(serving))
+        self.assertEqual(served.returncode, 3, served.stderr)
+        [handed] = [json.loads(line) for line in self.uv_log.read_text().splitlines()]
+        self.assertEqual(handed["arguments"][4], f"git+{source}@{self.commits['v0.10.0']}")
+        cached, record = self.cache_record()
+        self.assertEqual(cached, pin.cache_file(self.cache / "skill-ci", shown))
+        self.assertEqual(record["source"], shown)
+        refused = self.skill_ci("lint", **ssh, GIT_SSH_COMMAND=str(refusing))
+        self.assertRegex(
+            refused.stderr.splitlines()[1],
+            rf"^skill-ci: warning: cannot reach {re.escape(shown)} \(alice@localhost: Permission denied \(publickey\)\.\); running ",
+        )
+        never_cached = self.skill_ci("lint", **ssh, GIT_SSH_COMMAND=str(refusing), XDG_CACHE_HOME=str(self.root / "empty cache"))
+        self.assertEqual(
+            never_cached.stderr.splitlines(),
+            [f"skill-ci: cannot reach {shown} (alice@localhost: Permission denied (publickey).), and no version was ever resolved from it"],
+        )
+        token = "https://ghp_t0ken@127.0.0.1:9/skill-ci.git"
+        write(self.consumer / ".skill-ci.toml", f'version = "latest"\nsource = "{token}"\n')
+        https = self.skill_ci("lint")
+        self.assertRegex(https.stderr, r"^skill-ci: cannot reach https://127\.0\.0\.1:9/skill-ci\.git \(.*\), and no version was ever resolved from it\n$")
+        for result in (served, refused, never_cached, https):
+            self.assertNotIn("s3cr", result.stdout + result.stderr)
+            self.assertNotIn("t0ken", result.stdout + result.stderr)
+        self.assertNotIn("s3cr", cached.read_text())
+
     def test_an_exact_tag_reads_a_fresh_cache_without_the_network(self) -> None:
         self.pin("v0.9.0")
         shimmed = self.shimmed()

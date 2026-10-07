@@ -176,6 +176,26 @@ class ConfigFileTests(unittest.TestCase):
                 config.read(self.write(f'version = "main"\nsource = "{value}"\n'))
             self.assertEqual(problems(caught.exception), [f"source {value!r} {problem}"])
 
+    def test_credentials_in_source_stay_out_of_every_message(self) -> None:
+        for value, source, shown in (
+            ("https://user:t0ken@example.com/skill-ci.git", "https://user:t0ken@example.com/skill-ci.git", "https://example.com/skill-ci.git"),
+            ("https://t0ken@example.com/skill-ci.git", "https://t0ken@example.com/skill-ci.git", "https://example.com/skill-ci.git"),
+            ("ssh://git:t0ken@example.com/skill-ci.git", "ssh://git:t0ken@example.com/skill-ci.git", "ssh://git@example.com/skill-ci.git"),
+            ("ssh://git@example.com/skill-ci.git", "ssh://git@example.com/skill-ci.git", "ssh://git@example.com/skill-ci.git"),
+        ):
+            with self.subTest(value=value):
+                pin = config.read(self.write(f'version = "main"\nsource = "{value}"\n')).pin
+                self.assertEqual((pin.source, pin.redacted_source), (source, shown))
+        for escaped, problem in (
+            ("https://user:t0ken@example.com/a b.git", "source 'https://example.com/a b.git' contains ' '; percent-encode it or remove it"),
+            ("ftp://user:t0ken@example.com/skill-ci.git", "source 'ftp://example.com/skill-ci.git' uses ftp; use one of https, ssh, file"),
+            ("ssh://git:t0ken@/skill-ci.git", "source 'ssh://git@/skill-ci.git' names no host"),
+            (r"https://user:t0ken@example.com/skill-ci.git\u0000", r"source 'https://example.com/skill-ci.git\x00' contains the control character '\x00'; remove it"),
+        ):
+            with self.subTest(value=escaped), self.assertRaises(ConfigError) as caught:
+                config.read(self.write(f'version = "main"\nsource = "{escaped}"\n'))
+            self.assertEqual(problems(caught.exception), [problem])
+
     def test_a_control_character_in_source_is_rejected_in_every_form(self) -> None:
         for escaped, value, character in (
             (r"https://git.example.com/skill-ci.git\u0000x", "https://git.example.com/skill-ci.git\x00x", "\x00"),

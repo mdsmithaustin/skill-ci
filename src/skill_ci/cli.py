@@ -43,7 +43,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise
             announce(loaded.pin, resolved)
             if resolved.commit != running:
-                pin.rerun(loaded.pin.source, resolved.commit, arguments)
+                pin.rerun(loaded.pin, resolved.commit, arguments)
         if loaded is not None and loaded.unknown_keys:
             raise config.ConfigError(loaded.path, loaded.unknown_keys)
         namespace = build_parser(identity).parse_args(arguments)
@@ -83,7 +83,7 @@ def announce(selected: config.Pin, resolved: pin.Resolved) -> None:
     print(f"skill-ci {resolved.name} ({resolved.commit})", file=sys.stderr)
     if resolved.offline is not None:
         print(
-            f"skill-ci: warning: cannot reach {selected.source} ({resolved.offline.reason}); "
+            f"skill-ci: warning: cannot reach {selected.redacted_source} ({resolved.offline.reason}); "
             f"running {resolved.commit}, which {selected.version} named on {resolved.offline.fetched_at:%Y-%m-%d %H:%M} UTC",
             file=sys.stderr,
         )
@@ -211,12 +211,12 @@ def update(namespace: argparse.Namespace) -> int:
     if isinstance(selected.version, Track):
         print(f"{shown}: version is {selected.version}, which floats; update moves only an exact tag, so the file is unchanged")
         return 0
-    newest = pin.newest_tag(selected.source, pin.cache_directory(), datetime.now(UTC))
+    newest = pin.newest_tag(selected, pin.cache_directory(), datetime.now(UTC))
     if selected.version == newest:
         print(f"{shown}: version is already {newest}, the newest tag")
         return 0
     if selected.version > newest:
-        print(f"skill-ci: {shown} pins {selected.version}, but the newest tag on {selected.source} is {newest}; left unchanged", file=sys.stderr)
+        print(f"skill-ci: {shown} pins {selected.version}, but the newest tag on {selected.redacted_source} is {newest}; left unchanged", file=sys.stderr)
         return 2
     try:
         text = path.read_bytes().decode("utf-8")

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from skill_ci.runs import Agent
 from skill_ci.suite import PiiScope
@@ -117,6 +117,10 @@ class Pin:
     version: Version
     source: str
 
+    @property
+    def redacted_source(self) -> str:
+        return redact(self.source, self.source)
+
 
 @dataclass(frozen=True)
 class Config:
@@ -186,24 +190,37 @@ def parse_version(value: object) -> Version:
 def parse_source(value: object, directory: Path) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"source {value!r} is not a git URL or a path")
-    reject_control_characters("source", value)
+    shown = redact(value, value)
+    reject_control_characters(f"source {shown!r}", value)
     scheme, separator, _ = value.partition("://")
     if not separator:
         if ":" in value.partition("/")[0]:
             raise ValueError(f"source {value!r} is an scp-style address; write it as ssh://user@host/path")
         return (directory / expand_user("source", value)).resolve().as_uri()
     if scheme not in SOURCE_SCHEMES:
-        raise ValueError(f"source {value!r} uses {scheme}; use one of {', '.join(SOURCE_SCHEMES)}")
+        raise ValueError(f"source {shown!r} uses {scheme}; use one of {', '.join(SOURCE_SCHEMES)}")
     # uv drops a query or a fragment from a git URL, and with it the @<commit> the hand-off appends.
     misread = [character for character in value if character.isspace() or character in "#?"]
     if misread:
-        raise ValueError(f"source {value!r} contains {misread[0]!r}; percent-encode it or remove it")
+        raise ValueError(f"source {shown!r} contains {misread[0]!r}; percent-encode it or remove it")
     parts = urlsplit(value)
     if scheme == "file" and (parts.netloc or not parts.path.startswith("/")):
-        raise ValueError(f"source {value!r} names no absolute path; write file:///absolute/path, or a plain path")
+        raise ValueError(f"source {shown!r} names no absolute path; write file:///absolute/path, or a plain path")
     if scheme != "file" and not parts.hostname:
-        raise ValueError(f"source {value!r} names no host")
+        raise ValueError(f"source {shown!r} names no host")
     return value
+
+
+def redact(text: str, source: str) -> str:
+    scheme, separator, rest = source.partition("://")
+    userinfo = re.split(r"[/?#]", rest, maxsplit=1)[0].rpartition("@")[0]
+    # Over https, a token often stands in for the user name, so only ssh keeps it.
+    kept = f"{userinfo.partition(':')[0]}@" if scheme == "ssh" else ""
+    if not separator or not userinfo or kept == f"{userinfo}@":
+        return text
+    for written in {userinfo, unquote(userinfo)}:
+        text = text.replace(f"{written}@", kept)
+    return text
 
 
 def parse_setting(key: str, value: object, base: Path) -> Any:
@@ -230,7 +247,7 @@ def parse_value(key: str, spec: Mapping[str, Any], value: object, base: Path) ->
     if "choices" in spec and value not in spec["choices"]:
         raise ValueError(f"{key} is {value!r}; set it to one of {', '.join(spec['choices'])}")
     if kind is Path:
-        reject_control_characters(key, value)
+        reject_control_characters(f"{key} {value!r}", value)
         return base / expand_user(key, value)
     return kind(value)
 
@@ -242,9 +259,9 @@ def expand_user(key: str, value: str) -> Path:
         raise ValueError(f"{key} {value!r} names a home directory that cannot be found; write the full path") from error
 
 
-def reject_control_characters(key: str, value: str) -> None:
+def reject_control_characters(named: str, value: str) -> None:
     if control := next((character for character in value if unicodedata.category(character) == "Cc"), None):
-        raise ValueError(f"{key} {value!r} contains the control character {control!r}; remove it")
+        raise ValueError(f"{named} contains the control character {control!r}; remove it")
 
 
 def with_version(text: str, tag: Tag) -> str:
