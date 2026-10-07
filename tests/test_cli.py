@@ -166,13 +166,20 @@ class ManifestTests(ConsumerTestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(lines(result), ["OK: b — 0 cases, 0 ablations", "manifests checked: 1"])
 
-    def test_a_manifest_directly_inside_a_skills_root_named_evals_is_not_checked(self) -> None:
-        write_skill(self.root / "evals" / "a")
-        write(self.root / "evals/shared-benchmark.json", "not a manifest")
-        write(self.root / "evals/a/evals/shared-benchmark.json", manifest("a", ["SKILL.md"]))
-        result = self.skill_ci("validate", "--skills-dir", "evals")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(lines(result), ["OK: a — 0 cases, 0 ablations", "manifests checked: 1"])
+    def test_a_manifest_directly_inside_a_skills_root_named_evals_is_checked_however_the_root_is_spelled(self) -> None:
+        write_skill(self.root / "sub/evals/a")
+        write(self.root / "sub/evals/shared-benchmark.json", manifest("a", ["evals/a/SKILL.md"]))
+        git("add", "-A", cwd=self.root)
+        for cwd, spelling in (
+            (self.root / "sub", "evals"),
+            (self.root / "sub", "./evals"),
+            (self.root, "sub/evals"),
+            (self.root, str(self.root / "sub/evals")),
+        ):
+            with self.subTest(spelling=spelling):
+                result = skill_ci("validate", "--skills-dir", spelling, cwd=cwd)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(lines(result), ["OK: a — 0 cases, 0 ablations", "manifests checked: 1"])
 
     def test_an_unreadable_directory_under_the_root_fails_discovery_and_is_named(self) -> None:
         write_skill(self.root / "skills" / "a")
@@ -215,6 +222,38 @@ class ManifestTests(ConsumerTestCase):
                     self.assertIn("manifests checked: 2", lines(result))
                     self.assertIn(evidence, result.stdout)
                 unreadable.chmod(restore)
+
+    def test_a_directory_named_like_a_manifest_is_one_failure_line_and_check_runs_its_other_checks(self) -> None:
+        write_skill(self.root / "skills" / "a")
+        write(self.root / "evals/a/shared-benchmark.json", manifest("a", ["skills/a/SKILL.md"], [case()]))
+        (self.root / "evals/b/shared-benchmark.json").mkdir(parents=True)
+        (self.root / "evals/c").mkdir()
+        (self.root / "evals/c/shared-benchmark.json").symlink_to(self.root / "evals/b/shared-benchmark.json")
+        failures = [
+            f"skill-ci: evals/{name}/shared-benchmark.json: IsADirectoryError: [Errno 21] Is a directory: 'evals/{name}/shared-benchmark.json'"
+            for name in ("b", "c")
+        ]
+        for command, evidence in (
+            ("validate", "OK: a — 1 cases, 0 ablations"),
+            ("audit", '"manifest": "evals/a/shared-benchmark.json"'),
+            ("check", "checks run: 4; failed: 1 (manifests)"),
+        ):
+            with self.subTest(command=command):
+                result = self.skill_ci(command, "--evals-dir", "evals")
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual([line for line in result.stderr.splitlines() if "Is a directory" in line], failures)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertIn("manifests checked: 3", lines(result))
+                self.assertIn(evidence, result.stdout)
+
+    def test_an_evals_root_named_like_a_manifest_is_itself_checked(self) -> None:
+        write_skill(self.root / "skills" / "a")
+        (self.root / "evals/a/shared-benchmark.json").mkdir(parents=True)
+        result = self.skill_ci("validate", "--evals-dir", "evals/a/shared-benchmark.json")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        failure = "skill-ci: evals/a/shared-benchmark.json: IsADirectoryError: [Errno 21] Is a directory: 'evals/a/shared-benchmark.json'"
+        self.assertEqual(result.stderr.splitlines(), [failure])
+        self.assertEqual(lines(result), ["manifests checked: 1"])
 
     def test_a_manifest_path_that_starts_with_a_dash_is_checked_not_read_as_an_option(self) -> None:
         write_skill(self.root / "skills" / "a")
