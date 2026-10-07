@@ -65,8 +65,8 @@ def trigger(options: TriggerOptions) -> int:
             "--claude-bin", claude,
             "--codex-cmd", codex_cmd,
             "--runs-per-query", str(options.runs), *model,
-            "--trace-runs", str(out / "traces"),
-            "--out", str(out / "trigger-matrix.json"),
+            "--trace-runs", harness.operand(out / "traces"),
+            "--out", harness.operand(out / "trigger-matrix.json"),
         ],
     )
 
@@ -84,14 +84,14 @@ def run(options: RunOptions) -> int:
     except SetupError as error:
         print(f"skill-ci: {error}", file=sys.stderr)
         return 1
-    tasks = str(out / "tasks.jsonl")
+    tasks = harness.operand(out / "tasks.jsonl")
     stages = [
         ["prepare", manifest, "--split", "tune", "--runs-per-variant", str(options.runs), "--out", tasks],
     ]
     for agent in options.agents:
-        runs = str(out / agent)
-        judged = str(out / f"{agent}-judge.jsonl")
-        benchmark = str(out / f"{agent}-benchmark.json")
+        runs = harness.operand(out / agent)
+        judged = harness.operand(out / f"{agent}-judge.jsonl")
+        benchmark = harness.operand(out / f"{agent}-benchmark.json")
         stages += [
             ["run-agent", "--agent", agent, *flags[agent], "--tasks", tasks, "--runs", runs, "--timeout", str(options.timeout)],
             ["grade", manifest, "--runs", runs, "--allow-scripts"],
