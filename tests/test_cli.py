@@ -421,6 +421,15 @@ class LintTests(ConsumerTestCase):
         )
         self.assertNotIn("Traceback", result.stderr)
 
+    def test_a_check_that_raises_is_named_on_one_line_and_the_next_check_still_runs(self) -> None:
+        (self.root / "skills/other").mkdir()
+        (self.root / "skills/other/SKILL.md").write_bytes(b"---\nname: other\ndescription: caf\xe9\n---\n")
+        result = self.skill_ci("lint")
+        decode = "UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe9 in position 32: invalid continuation byte"
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(lines(result), ["checks run: 2; failed: 2 (frontmatter, content)"])
+        self.assertEqual(result.stderr.splitlines(), [f"skill-ci: frontmatter check: {decode}", f"skill-ci: content check: {decode}"])
+
 
 class FastCheckTests(ConsumerTestCase):
     def setUp(self) -> None:
@@ -550,6 +559,17 @@ class CheckRunnerTests(unittest.TestCase):
             code = suite.run_checks([("first", lambda: sys.exit("the first check gave up")), ("second", lambda: 0)])
         self.assertEqual(code, 1)
         self.assertEqual(stderr.getvalue(), "the first check gave up\n")
+        self.assertEqual(stdout.getvalue(), "checks run: 2; failed: 1 (first)\n")
+
+    def test_a_check_that_raises_is_named_on_one_line_and_counts_as_failed(self) -> None:
+        def unreadable() -> int:
+            raise PermissionError(13, "Permission denied", "skills/a/SKILL.md")
+
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = suite.run_checks([("first", unreadable), ("second", lambda: 0)])
+        self.assertEqual(code, 1)
+        self.assertEqual(stderr.getvalue(), "skill-ci: first check: PermissionError: [Errno 13] Permission denied: 'skills/a/SKILL.md'\n")
         self.assertEqual(stdout.getvalue(), "checks run: 2; failed: 1 (first)\n")
 
 
