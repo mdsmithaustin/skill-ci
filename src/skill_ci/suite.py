@@ -102,15 +102,8 @@ def lint_content(options: CheckOptions) -> int:
 
 
 def run_checks(checks: Sequence[Check]) -> int:
-    results = [CheckResult(name, exit_code(run)) for name, run in checks]
+    results = [CheckResult(name, harness.exit_code(f"{name} check", run)) for name, run in checks]
     failed = [result.name for result in results if result.exit_code != 0]
     names = f" ({', '.join(failed)})" if failed else ""
     print(f"checks run: {len(results)}; failed: {len(failed)}{names}")
     return max((result.exit_code for result in results), default=0)
-
-
-def exit_code(run: Callable[[], int]) -> int:
-    try:
-        return run()
-    except SystemExit as error:
-        return harness.exit_status(error)

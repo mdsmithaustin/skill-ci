@@ -8,7 +8,7 @@ import sys
 import sysconfig
 import tomllib
 import traceback
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from enum import StrEnum
 from pathlib import Path
 
@@ -62,6 +62,16 @@ def call(arguments: Sequence[str]) -> int:
         return exit_status(error)
     except Exception:
         traceback.print_exc()
+        return 1
+
+
+def exit_code(unit: str, run: Callable[[], int]) -> int:
+    try:
+        return run()
+    except SystemExit as error:
+        return exit_status(error)
+    except Exception as error:
+        print(f"skill-ci: {unit}: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
 
 
