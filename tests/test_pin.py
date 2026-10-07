@@ -414,6 +414,7 @@ class RerunGuardTests(PinTestCase):
         other = self.commits["v0.9.1"]
         for variables, problem in (
             ({"SKILL_CI_PINNED": "1"}, "SKILL_CI_PINNED is '1', not a full commit"),
+            ({"SKILL_CI_PINNED": self.commits["v0.9.0"][:12], "PYTHONPATH": installed}, f"SKILL_CI_PINNED is '{self.commits['v0.9.0'][:12]}', not a full commit"),
             ({"SKILL_CI_PINNED": other}, f"SKILL_CI_PINNED names {other}, but this skill-ci was not installed from a git commit"),
             ({"SKILL_CI_PINNED": other, "PYTHONPATH": installed}, f"SKILL_CI_PINNED names {other}, but this skill-ci was installed from {self.commits['v0.9.0']}"),
         ):
@@ -434,6 +435,15 @@ class RerunGuardTests(PinTestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(started.is_file())
         self.assertEqual([call["skill_ci_variables"] for call in fake.calls()], [[]])
+
+    def test_a_child_that_cannot_mark_its_start_stops_before_the_command(self) -> None:
+        self.pin("v0.9.0")
+        marker = self.root / "removed" / "started"
+        child = {**self.running(self.commits["v0.9.0"]), "SKILL_CI_PINNED": self.commits["v0.9.0"], "SKILL_CI_STARTED": str(marker)}
+        result = self.skill_ci("check", "--fast", **child)
+        self.assertEqual(result.returncode, 126, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, f"skill-ci: cannot record that the pinned commit started: [Errno 2] No such file or directory: '{marker}'\n")
 
     def test_a_run_pinned_to_its_own_commit_stays_one_process(self) -> None:
         installed = fake_git_install(self.root / "installed", self.commits["v0.9.0"])

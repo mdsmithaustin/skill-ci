@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from support import ENVIRONMENT, FakeHarness, fake_git_install, skill_ci, write, write_skill
 
@@ -143,6 +144,8 @@ class ConfigFileTests(unittest.TestCase):
 
     def test_source_forms(self) -> None:
         mirror = self.root / "mirror.git"
+        home = self.root / "home"
+        self.enterContext(mock.patch.dict(os.environ, {"HOME": str(home)}))
         for value, source in (
             ("https://git.example.com/skill-ci.git", "https://git.example.com/skill-ci.git"),
             ("ssh://git@example.com/org/skill-ci.git", "ssh://git@example.com/org/skill-ci.git"),
@@ -151,6 +154,7 @@ class ConfigFileTests(unittest.TestCase):
             ("mirror.git", mirror.as_uri()),
             (str(mirror), mirror.as_uri()),
             ("my mirror#1.git", (self.root / "my mirror#1.git").as_uri()),
+            ("~/mirror.git", (home / "mirror.git").as_uri()),
         ):
             with self.subTest(value=value):
                 self.assertEqual(config.read(self.write(f'version = "main"\nsource = "{value}"\n')).pin.source, source)
@@ -165,6 +169,7 @@ class ConfigFileTests(unittest.TestCase):
             ("https://", "names no host"),
             ("ssh:///org/skill-ci.git", "names no host"),
             ("file://relative/skill-ci.git", "names no absolute path; write file:///absolute/path, or a plain path"),
+            ("file://", "names no absolute path; write file:///absolute/path, or a plain path"),
             ("   ", "is not a git URL or a path"),
         ):
             with self.subTest(value=value), self.assertRaises(ConfigError) as caught:
