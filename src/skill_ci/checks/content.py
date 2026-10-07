@@ -534,7 +534,11 @@ def check_content(
     files_checked = 0
     for path in iter_markdown_files(ROOT):
         files_checked += 1
-        parsed = parse_file(path)
+        try:
+            parsed = parse_file(path)
+        except OSError as error:
+            findings.append(Finding(path, 1, "unreadable", f"cannot read file: {error}"))
+            continue
         for _name, check in REGISTRY:
             findings.extend(check(parsed))
 
