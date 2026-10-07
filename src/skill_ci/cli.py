@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import traceback
 from collections.abc import Callable, Sequence
 from dataclasses import fields
 from importlib import metadata
@@ -91,6 +93,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return namespace.handler(namespace)
     except KeyboardInterrupt:
         return 130
+    except Exception as error:
+        if os.environ.get("SKILL_CI_DEBUG") == "1":
+            traceback.print_exc()
+        else:
+            print(f"skill-ci: {type(error).__name__}: {error}", file=sys.stderr)
+        return 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -147,7 +155,7 @@ def options[T](options_type: type[T], namespace: argparse.Namespace) -> T:
 def warn_about_shadowing() -> None:
     try:
         project = Path.cwd()
-    except FileNotFoundError:
+    except OSError:
         return
     for warning in harness.shadowing_warnings(project):
         print(f"skill-ci: warning: {warning}", file=sys.stderr)
