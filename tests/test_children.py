@@ -7,11 +7,14 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 import unittest
 from pathlib import Path
 
 from support import INSTALLED_COMMAND, REPOSITORY, FakeHarness, fake_git_install, write
 from test_pin import PinTestCase, still_running
+
+from skill_ci import children
 
 STOPS = tuple(
     getattr(signal, name)
@@ -268,6 +271,23 @@ class ChildStopTests(PinTestCase):
 
 
 class RunnerTests(unittest.TestCase):
+    def test_a_signal_handled_as_the_first_handler_starts_does_not_replace_its_signal(self) -> None:
+        for number in children.STOPPING:
+            if (handler := signal.getsignal(number)) is not None:
+                self.addCleanup(signal.signal, number, handler)
+        self.addCleanup(sys.setprofile, None)
+
+        def nest(frame: types.FrameType, event: str, _argument: object) -> None:
+            # CPython checks for pending signals as a handler starts, where it can run a second handler.
+            if event == "call" and frame.f_locals.get("number") == signal.SIGTERM:
+                sys.setprofile(None)
+                signal.getsignal(signal.SIGPROF)(signal.SIGPROF, frame)
+
+        with self.assertRaises(children.Stopped) as stopped, children.stopping_signals():
+            sys.setprofile(nest)
+            os.kill(os.getpid(), signal.SIGTERM)
+        self.assertEqual(stopped.exception.status, 128 + signal.SIGTERM)
+
     def test_only_the_runner_starts_a_child_process(self) -> None:
         spawning = {
             "subprocess": {"run", "Popen", "call", "check_call", "check_output", "getoutput", "getstatusoutput"},

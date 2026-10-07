@@ -8,6 +8,7 @@ import sys
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
+from types import FrameType
 
 STOPPING = frozenset(
     getattr(signal, name)
@@ -66,8 +67,10 @@ def run(
 def stopping_signals() -> Iterator[list[int]]:
     received: list[int] = []
 
-    def record(number: int, _frame: object) -> None:
-        if not received:
+    def record(number: int, frame: FrameType | None) -> None:
+        # CPython can run a handler at the start of the handler it is already running, before that one records its
+        # signal. The interrupted handler holds the first signal.
+        if not received and (frame is None or frame.f_code is not record.__code__):
             received.append(number)
 
     # A signal ignored at startup, as under nohup or in a background job, stays ignored here and in the child. Python
