@@ -8,7 +8,7 @@ import tomllib
 import unittest
 from pathlib import Path
 
-from support import ENVIRONMENT, REPOSITORY, FakeHarness, git, skill_ci, write, write_skill
+from support import ENVIRONMENT, REPOSITORY, FakeHarness, git, manifest, skill_ci, write, write_skill
 
 
 class HarnessCommandTests(unittest.TestCase):
@@ -144,6 +144,19 @@ class HarnessIsolationTests(unittest.TestCase):
             result = skill_ci("harness", "skill-benchmark", "--help", cwd=root, env=environment)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(result.stdout.startswith("usage: skill-benchmark"), result.stdout[:200])
+            self.assertFalse(marker.exists())
+
+    def test_a_module_planted_in_the_working_directory_never_loads_in_process(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="skill-ci-isolation-") as temporary:
+            root = Path(temporary).resolve()
+            marker = root / "planted-ran"
+            write(root / "skill_benchmark.py", f"open({str(marker)!r}, 'w').close()\n")
+            write_skill(root / "skills" / "a")
+            write(root / "evals/a/shared-benchmark.json", manifest("a", ["skills/a/SKILL.md"]))
+            environment = {key: value for key, value in ENVIRONMENT.items() if key != "PYTHONPATH"}
+            result = skill_ci("validate", "--evals-dir", "evals", cwd=root, env=environment)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(result.stdout.splitlines(), ["OK: a — 0 cases, 0 ablations", "manifests checked: 1"])
             self.assertFalse(marker.exists())
 
 
