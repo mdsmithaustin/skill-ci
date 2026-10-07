@@ -54,5 +54,4 @@ def allocate_output(skill: Path, kind: str, task_dir: Path) -> Path:
 def claim_output(out: Path, skill: Path) -> Path:
     if overlaps(out, selected_package(skill)):
         raise ValueError(f"{out} overlaps the selected skill package; pass --out with a directory outside the package")
-    out.mkdir(parents=True, exist_ok=True)
     return out

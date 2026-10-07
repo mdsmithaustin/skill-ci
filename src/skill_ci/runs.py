@@ -52,7 +52,7 @@ def trigger(options: TriggerOptions) -> int:
     try:
         claude = str(launcher("claude-project-only"))
         codex_cmd = codex_command(options.codex_cmd)
-        out = output_directory(options.skill, "trigger", options.out)
+        out = create_output(output_directory(options.skill, "trigger", options.out))
     except SetupError as error:
         print(f"skill-ci: {error}", file=sys.stderr)
         return 1
@@ -77,12 +77,15 @@ def run(options: RunOptions) -> int:
         claude = str(launcher("claude-project-only"))
         flags = {agent: agent_flags(agent, options, claude) for agent in options.agents}
         out = output_directory(options.skill, "run", options.out)
+        audited = harness.run(Command.BENCHMARK, ["audit-manifest", manifest, "--fail-on-blockers", "--strict-judge"])
+        if audited != 0:
+            return audited
+        create_output(out)
     except SetupError as error:
         print(f"skill-ci: {error}", file=sys.stderr)
         return 1
     tasks = str(out / "tasks.jsonl")
     stages = [
-        ["audit-manifest", manifest, "--fail-on-blockers", "--strict-judge"],
         ["prepare", manifest, "--split", "tune", "--runs-per-variant", str(options.runs), "--out", tasks],
     ]
     for agent in options.agents:
@@ -153,3 +156,11 @@ def output_directory(skill: Path, kind: str, out: Path | None) -> Path:
     # Path.resolve raises RuntimeError on a symlink loop before Python 3.13.
     except (OSError, ValueError, RuntimeError) as error:
         raise SetupError(f"output allocation failed: {error}") from error
+
+
+def create_output(out: Path) -> Path:
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise SetupError(f"output allocation failed: {error}") from error
+    return out
