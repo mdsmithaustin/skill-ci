@@ -9,9 +9,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-TOOLS = Path(__file__).resolve().parent
-CONTENT = TOOLS / "check-skill-content.py"
-FRONTMATTER = TOOLS / "check-skill-frontmatter.py"
+CHECKS = Path(__file__).resolve().parents[1] / "src" / "skill_ci" / "checks"
+CONTENT = "skill_ci.checks.content"
 SAMPLE_CONVENTIONS = {
     "version": 1,
     "retired_text": {
@@ -22,9 +21,9 @@ SAMPLE_CONVENTIONS = {
 }
 
 
-def run(script: Path, root: Path, *args: str) -> tuple[int, str]:
+def run(module: str, root: Path, *args: str) -> tuple[int, str]:
     p = subprocess.run(
-        [sys.executable, str(script), *args, str(root)],
+        [sys.executable, "-m", module, *args, str(root)],
         capture_output=True,
         text=True,
     )
@@ -1143,7 +1142,7 @@ class ConventionsLoader(ConventionsTree):
     def rejected(self, document: object) -> str:
         path = self.conventions(document)
         p = subprocess.run(
-            [sys.executable, str(CONTENT), "--conventions-file", str(path), str(self.root)],
+            [sys.executable, "-m", CONTENT, "--conventions-file", str(path), str(self.root)],
             capture_output=True,
             text=True,
         )
@@ -1181,7 +1180,7 @@ class ConventionsLoader(ConventionsTree):
 
     def test_missing_file_is_rejected(self) -> None:
         p = subprocess.run(
-            [sys.executable, str(CONTENT), "--conventions-file", str(Path(self.tmp.name) / "absent.json"), str(self.root)],
+            [sys.executable, "-m", CONTENT, "--conventions-file", str(Path(self.tmp.name) / "absent.json"), str(self.root)],
             capture_output=True,
             text=True,
         )
@@ -1199,7 +1198,7 @@ class FenceHandling(ConventionsTree):
         return run(CONTENT, self.root, *args)
 
     def test_scripts_parse(self) -> None:
-        for script in (CONTENT, FRONTMATTER):
+        for script in (CHECKS / "content.py", CHECKS / "frontmatter.py"):
             compile(script.read_text(encoding="utf-8"), str(script), "exec")
 
     def test_four_backtick_fence_survives_an_inner_fence(self) -> None:
