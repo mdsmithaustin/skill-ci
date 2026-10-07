@@ -9,6 +9,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import unittest
 from pathlib import Path
@@ -730,6 +731,23 @@ class UnexpectedErrorTests(unittest.TestCase):
                 with self.assertRaises(SystemExit) as raised:
                     self.package_that_raises(SystemExit(code))
                 self.assertEqual(raised.exception.code, code)
+
+    def test_a_run_without_an_installed_distribution_ends_on_one_line(self) -> None:
+        dependencies = Path(self.enterContext(tempfile.TemporaryDirectory(prefix="skill-ci-uninstalled-")))
+        for entry in Path(sysconfig.get_path("purelib")).iterdir():
+            if not entry.name.startswith("skill_ci"):
+                (dependencies / entry.name).symlink_to(entry)
+        result = subprocess.run(
+            [sys.executable, "-S", "-m", "skill_ci", "--version"],
+            cwd=dependencies,
+            env={**ENVIRONMENT, "PYTHONPATH": os.pathsep.join((str(REPOSITORY / "src"), str(dependencies)))},
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        self.assertEqual((result.returncode, result.stdout), (1, ""), result.stderr)
+        self.assertEqual(result.stderr, "skill-ci: PackageNotFoundError: No package metadata was found for skill-ci\n")
 
 
 class PaidRunTests(unittest.TestCase):

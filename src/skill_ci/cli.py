@@ -25,9 +25,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Piped stdout is block-buffered and stderr is not, so findings would print after later summaries.
     sys.stdout.reconfigure(line_buffering=True)
     arguments = list(sys.argv[1:] if argv is None else argv)
-    running = pin.running_commit()
-    identity = f"skill-ci {metadata.version('skill-ci')} ({running or 'commit unknown'})"
     try:
+        running = pin.running_commit()
+        identity = f"skill-ci {metadata.version('skill-ci')} ({running or 'commit unknown'})"
         child = pin.claim(os.environ, running)
         directory = working_directory()
         found = None if directory is None else config.find(directory)
