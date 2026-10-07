@@ -230,15 +230,16 @@ class ConfigFileTests(unittest.TestCase):
         self.assertEqual(config.read(path).pin.source, (self.root.parent / "mirror.git").as_uri())
 
     def test_the_nearest_file_up_to_the_repository_root_applies(self) -> None:
-        nested = self.root / "repository" / "skills" / "example"
+        # A relative path ends the search at self.root, so a repository that holds the temporary directory stays out of it.
+        nested = Path("repository", "skills", "example")
         nested.mkdir(parents=True)
         self.write('version = "main"\n')
         self.assertIsNone(config.find(nested), "outside a repository only the current directory counts")
-        self.assertEqual(config.find(self.root), self.path)
-        (self.root / "repository" / ".git").mkdir()
+        self.assertEqual(config.find(Path(".")), Path(".skill-ci.toml"))
+        Path("repository", ".git").mkdir()
         self.assertIsNone(config.find(nested), "a file above the repository root belongs to another project")
-        inner = write(self.root / "repository" / ".skill-ci.toml", 'version = "main"\n')
-        self.assertEqual(config.find(nested), inner)
+        write(Path("repository", ".skill-ci.toml"), 'version = "main"\n')
+        self.assertEqual(config.find(nested), Path("repository", ".skill-ci.toml"))
 
     def test_a_directory_that_cannot_be_read_counts_as_one_without_a_file(self) -> None:
         (self.root / ".git").mkdir()
