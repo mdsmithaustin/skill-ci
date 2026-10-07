@@ -7,6 +7,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import sysconfig
@@ -843,6 +844,12 @@ class PaidRunTests(unittest.TestCase):
         result = self.paid("run", "skills/example", "--out", "o", FAKE_HARNESS_EXIT="7", FAKE_HARNESS_FAIL_STAGE="grade")
         self.assertEqual(result.returncode, 7, result.stderr)
         self.assertEqual([stage[0] for stage in self.fake.arguments()], ["audit-manifest", "prepare", "run-agent", "grade"])
+
+    def test_a_harness_stage_killed_by_a_signal_exits_128_plus_its_number(self) -> None:
+        for command in (("trigger", "skills/example", "--out", "t"), ("run", "skills/example", "--out", "r")):
+            with self.subTest(command=command[0]):
+                result = self.paid(*command, FAKE_HARNESS_SIGNAL=str(int(signal.SIGTERM)))
+                self.assertEqual(result.returncode, 128 + signal.SIGTERM, result.stderr)
 
     def test_a_failed_readiness_audit_leaves_an_explicit_output_uncreated(self) -> None:
         result = self.paid("run", "skills/example", "--out", "o/nested", FAKE_HARNESS_EXIT="2", FAKE_HARNESS_FAIL_STAGE="audit-manifest")

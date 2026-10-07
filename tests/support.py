@@ -15,7 +15,7 @@ INSTALLED_COMMAND = Path(sysconfig.get_path("scripts")) / "skill-ci"
 ENVIRONMENT = {key: value for key, value in os.environ.items() if not key.startswith(("GIT_", "SKILL_CI_"))}
 PLANTED_EMAIL = "@".join(("jane.doe", "corp-mail.net"))
 FAKE_HARNESS = """\
-import json, os, sys
+import json, os, signal, sys
 arguments = sys.argv[1:]
 record = {
     "command": os.path.basename(sys.argv[0]),
@@ -28,6 +28,8 @@ with open(os.environ["FAKE_HARNESS_LOG"], "a", encoding="utf-8") as log:
     log.write(json.dumps(record) + "\\n")
 failing = os.environ.get("FAKE_HARNESS_FAIL_STAGE")
 stage = arguments[0] if arguments else ""
+if (killed := os.environ.get("FAKE_HARNESS_SIGNAL")) and (not failing or failing == stage):
+    os.kill(os.getpid(), int(killed))
 raise SystemExit(int(os.environ.get("FAKE_HARNESS_EXIT", "0")) if not failing or failing == stage else 0)
 """
 

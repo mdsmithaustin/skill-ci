@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import NewType, NoReturn
 
 from skill_ci.config import Pin, Tag, Track, Version, redact
+from skill_ci.harness import shell_status
 
 PINNED = "SKILL_CI_PINNED"
 STARTED = "SKILL_CI_STARTED"
@@ -285,7 +286,7 @@ def rerun(pin: Pin, commit: Commit, arguments: Sequence[str]) -> NoReturn:
                 f"uv could not start the pinned commit {commit} (exit {status}); fix the uv error above, "
                 f"such as no network access to {pin.redacted_source} or a UV_PYTHON that this commit does not support"
             )
-    raise SystemExit(status if status >= 0 else 128 - status)
+    raise SystemExit(shell_status(status))
 
 
 def supervise(child: subprocess.Popen[bytes]) -> int:

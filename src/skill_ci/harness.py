@@ -38,7 +38,12 @@ def run(command: Command, arguments: Sequence[str]) -> int:
         return 127
     sys.stdout.flush()
     sys.stderr.flush()
-    return subprocess.run(argv, check=False).returncode
+    return shell_status(subprocess.run(argv, check=False).returncode)
+
+
+def shell_status(returncode: int) -> int:
+    # subprocess reports a child that signal N ended as -N, which sys.exit would turn into 256 - N.
+    return 128 - returncode if returncode < 0 else returncode
 
 
 def execute(command: Command, arguments: Sequence[str]) -> int:
