@@ -10,7 +10,7 @@ import signal
 import subprocess
 import sys
 import tempfile
-from collections.abc import Mapping, MutableMapping, Sequence
+from collections.abc import Iterator, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from importlib import metadata
@@ -26,9 +26,17 @@ HANDOFF_FAILED = 126
 SHADOWING = frozenset({"PYTHONPATH", "PYTHONHOME"})
 # uv 0.12.7 passes these on to the tool it runs (crates/uv/src/child.rs). At a terminal, Ctrl-C already reaches
 # every process in the foreground group, so neither uv nor supervise forwards SIGINT there.
-FORWARDED = frozenset(getattr(signal, name) for name in ("SIGTERM", "SIGHUP", "SIGQUIT", "SIGUSR1", "SIGUSR2", "SIGALRM", "SIGWINCH", "SIGPIPE", "SIGINFO") if hasattr(signal, name))
+FORWARDED = frozenset(
+    getattr(signal, name)
+    for name in ("SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "SIGUSR1", "SIGUSR2", "SIGALRM", "SIGWINCH", "SIGPIPE", "SIGINFO")
+    if hasattr(signal, name)
+)
 # uv dies of these without passing them on, which would leave the pinned commit running.
 STOPPING = frozenset(getattr(signal, name) for name in ("SIGABRT", "SIGVTALRM", "SIGPROF", "SIGXCPU", "SIGPOLL", "SIGPWR") if hasattr(signal, name))
+# Both child stages, git ls-remote and the hand-off to uv, handle these.
+HANDLED = FORWARDED | STOPPING
+# A terminal sends these on a resize or a Ctrl-T. By default they end no process, so they cannot orphan git.
+HARMLESS = frozenset(getattr(signal, name) for name in ("SIGWINCH", "SIGINFO") if hasattr(signal, name))
 NEWER_TAG_CHECK_INTERVAL = timedelta(days=1)
 LS_REMOTE_TIMEOUT = 5
 COMMIT = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
@@ -134,7 +142,7 @@ def fetch(pin: Pin, cache: Path, now: datetime) -> Refs:
         )
     except OSError as error:
         raise Unreachable(f"cannot run git: {error}") from error
-    with git:
+    with git, ended_by_signals():
         try:
             listing, errors = git.communicate(timeout=LS_REMOTE_TIMEOUT)
         except subprocess.TimeoutExpired as error:
@@ -150,6 +158,20 @@ def fetch(pin: Pin, cache: Path, now: datetime) -> Refs:
     refs = parse_listing(pin.redacted_source, now, listing)
     write_cache(cache, refs)
     return refs
+
+
+@contextlib.contextmanager
+def ended_by_signals() -> Iterator[None]:
+    def end(number: int, _frame: object) -> NoReturn:
+        raise SystemExit(128 + number)
+
+    previous = {number: signal.signal(number, end) for number in HANDLED - HARMLESS}
+    try:
+        yield
+    finally:
+        for number, handler in previous.items():
+            # signal.signal reports a handler installed outside Python, such as faulthandler's, as None.
+            signal.signal(number, signal.SIG_DFL if handler is None else handler)
 
 
 def parse_listing(source: str, fetched_at: datetime, listing: str) -> Refs:
@@ -277,7 +299,7 @@ def supervise(child: subprocess.Popen[bytes]) -> int:
         elif number != signal.SIGINT or not at_terminal:
             child.send_signal(number)
 
-    for number in (signal.SIGINT, *FORWARDED, *STOPPING):
+    for number in HANDLED:
         signal.signal(number, forward)
     status = child.wait()
     return -stopped_by[0] if stopped_by else status

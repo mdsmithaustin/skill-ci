@@ -49,7 +49,7 @@ if received := os.environ.get("FAKE_UV_SIGNALS"):
         with open(received, "a") as log:
             log.write(f"{number}\\n")
         raise SystemExit(100 + number)
-    for number in (signal.SIGINT, signal.SIGTERM, signal.SIGALRM, signal.SIGXCPU):
+    for number in signal.valid_signals() - {signal.SIGKILL, signal.SIGSTOP}:
         signal.signal(number, record)
     with open(received + ".pid", "w") as log:
         log.write(str(os.getpid()))
@@ -57,6 +57,10 @@ if received := os.environ.get("FAKE_UV_SIGNALS"):
     time.sleep(30)
 raise SystemExit(int(os.environ.get("FAKE_UV_EXIT", "3")))
 """
+# What uv 0.12.7 does with each signal (crates/uv/src/child.rs), and so what skill-ci must do around it.
+PASSED_ON_BY_UV = tuple(getattr(signal, name) for name in ("SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "SIGUSR1", "SIGUSR2", "SIGALRM", "SIGWINCH", "SIGPIPE", "SIGINFO") if hasattr(signal, name))
+FATAL_TO_UV = tuple(getattr(signal, name) for name in ("SIGABRT", "SIGVTALRM", "SIGPROF", "SIGXCPU", "SIGPOLL", "SIGPWR") if hasattr(signal, name))
+SENT_BY_A_TERMINAL = tuple(getattr(signal, name) for name in ("SIGWINCH", "SIGINFO") if hasattr(signal, name))
 
 
 def still_running(pid: int) -> bool:
@@ -276,6 +280,44 @@ class OfflineTests(PinTestCase):
             ["skill-ci: cannot reach ssh://git@example.com/skill-ci.git (git ls-remote gave no answer in 5 s), and no version was ever resolved from it"],
         )
         self.assertFalse(still_running(int(transport.read_text())), "the ssh transport outlived skill-ci")
+
+    def signalled_during_ls_remote(self, *numbers: signal.Signals) -> int:
+        transport = Path(tempfile.mkdtemp(dir=self.root)) / "transport"
+        slow = write(transport.with_name("slow-ssh"), f'#!/bin/sh\necho $$ > "{transport}.partial"\nmv "{transport}.partial" "{transport}"\nexec sleep 30\n')
+        slow.chmod(0o755)
+        write(self.consumer / ".skill-ci.toml", 'version = "latest"\nsource = "ssh://git@example.com/skill-ci.git"\n')
+        process = subprocess.Popen(
+            [str(INSTALLED_COMMAND), "lint"],
+            cwd=self.consumer,
+            env={**self.environment, "GIT_SSH_COMMAND": str(slow)},
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            deadline = time.monotonic() + 30
+            while not transport.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.05)
+            for index, number in enumerate(numbers):
+                time.sleep(0.5 if index else 0)
+                os.kill(process.pid, number)
+            status = process.wait(timeout=30)
+        finally:
+            if process.poll() is None:
+                process.kill()
+        self.assertFalse(still_running(int(transport.read_text())), "the ssh transport outlived skill-ci")
+        self.assertFalse(self.uv_log.exists())
+        return status
+
+    def test_a_signal_during_ls_remote_stops_git_and_its_transport(self) -> None:
+        for number in sorted(set(PASSED_ON_BY_UV + FATAL_TO_UV) - set(SENT_BY_A_TERMINAL)):
+            with self.subTest(signal=number.name):
+                self.assertEqual(self.signalled_during_ls_remote(number), 128 + number)
+
+    def test_a_resize_or_a_status_request_during_ls_remote_is_ignored(self) -> None:
+        for number in SENT_BY_A_TERMINAL:
+            with self.subTest(signal=number.name):
+                self.assertEqual(self.signalled_during_ls_remote(number, signal.SIGTERM), 128 + signal.SIGTERM)
 
     def test_credentials_in_source_reach_git_and_uv_but_no_message_or_cache(self) -> None:
         serving = write(self.root / "serving-ssh", '#!/bin/sh\nshift\neval "exec $1"\n')
@@ -647,9 +689,9 @@ class HandOffTests(PinTestCase):
             deadline = time.monotonic() + 30
             while not received.exists() and process.poll() is None and time.monotonic() < deadline:
                 time.sleep(0.05)
-            for number in numbers:
+            for index, number in enumerate(numbers):
+                time.sleep(0.5 if index else 0)
                 os.kill(process.pid, number)
-                time.sleep(0.5)
             status = process.wait(timeout=30)
         finally:
             if process.poll() is None:
@@ -662,12 +704,14 @@ class HandOffTests(PinTestCase):
         return status, [int(line) for line in received.read_text().split()]
 
     def test_a_signal_that_uv_passes_on_reaches_the_pinned_commit(self) -> None:
-        for number in (signal.SIGTERM, signal.SIGINT, signal.SIGALRM):
+        for number in PASSED_ON_BY_UV:
             with self.subTest(signal=number.name):
                 self.assertEqual(self.signalled(number), (100 + number, [number]))
 
     def test_a_signal_that_uv_would_die_of_stops_the_pinned_commit_with_sigterm(self) -> None:
-        self.assertEqual(self.signalled(signal.SIGXCPU), (128 + signal.SIGXCPU, [signal.SIGTERM]))
+        for number in FATAL_TO_UV:
+            with self.subTest(signal=number.name):
+                self.assertEqual(self.signalled(number), (128 + number, [signal.SIGTERM]))
 
     def test_an_interrupt_at_a_terminal_is_left_to_the_terminal(self) -> None:
         self.assertEqual(self.signalled(signal.SIGINT, signal.SIGTERM, terminal=True), (100 + signal.SIGTERM, [signal.SIGTERM]))
