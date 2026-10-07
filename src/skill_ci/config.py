@@ -4,6 +4,7 @@ import argparse
 import difflib
 import os
 import re
+import stat
 import tomllib
 import unicodedata
 from collections.abc import Callable, Mapping, Sequence
@@ -132,16 +133,19 @@ class ConfigError(Exception):
 
 def find(directory: Path) -> Path | None:
     searched = (directory, *directory.parents)
-    # Before Python 3.14, Path.exists and Path.is_file raise PermissionError inside a directory that cannot be searched.
+    # Before Python 3.14, Path.exists raises PermissionError inside a directory that cannot be searched.
     root = next((candidate for candidate in searched if os.path.exists(candidate / ".git")), directory)
     for candidate in searched[: searched.index(root) + 1]:
-        if os.path.isfile(candidate / FILE_NAME):
+        if os.path.lexists(candidate / FILE_NAME):
             return candidate / FILE_NAME
     return None
 
 
 def read(path: Path, *, ignore_unknown: bool = False) -> Config:
     try:
+        # Reading a FIFO would wait for a writer.
+        if not stat.S_ISREG(path.stat().st_mode):
+            raise ConfigError(path, ["cannot read: not a regular file"])
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
         raise ConfigError(path, [f"cannot read: {error}"]) from error

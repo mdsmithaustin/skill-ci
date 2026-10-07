@@ -297,6 +297,29 @@ class FlagPrecedenceTests(unittest.TestCase):
                 runs = [stage[:3] for stage in fake.arguments() if stage[0] == "run-agent"]
                 self.assertEqual(runs, [["run-agent", "--agent", agent]])
 
+    def test_a_file_name_that_is_not_a_regular_file_stops_the_run(self) -> None:
+        self.settings('skills_dir = "skills"')
+        for kind, make, problem in (
+            ("directory", Path.mkdir, "not a regular file"),
+            ("FIFO", os.mkfifo, "not a regular file"),
+            ("dangling symlink", lambda path: path.symlink_to(self.root / "missing.toml"), r"\[Errno 2\] No such file or directory: .*"),
+            ("symlink loop", lambda path: path.symlink_to(path), r"\[Errno \d+\] Too many levels of symbolic links: .*"),
+        ):
+            with self.subTest(kind=kind):
+                nested = self.checkout / kind
+                nested.mkdir()
+                make(nested / ".skill-ci.toml")
+                result = self.run_cli("lint", cwd=nested)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertRegex(result.stderr, rf"^skill-ci: \.skill-ci\.toml: cannot read: {problem}\n$")
+        linked = self.checkout / "linked"
+        linked.mkdir()
+        (linked / ".skill-ci.toml").symlink_to(write(self.root / "outer" / ".skill-ci.toml", 'version = "v1.0.0"\nskills_dir = "../skills"\n'))
+        followed = self.run_cli("lint", cwd=linked)
+        self.assertEqual(followed.returncode, 0, followed.stdout + followed.stderr)
+        self.assertEqual(followed.stdout.splitlines(), ["checks run: 2; failed: 0"])
+
     def test_a_bad_file_stops_every_command_with_each_problem(self) -> None:
         write(self.checkout / ".skill-ci.toml", 'version = "v1"\nskils_dir = "skills"\nevals_dir = "evals\\u0000"\n')
         result = skill_ci("check", cwd=self.checkout, env={key: value for key, value in self.environment.items() if key != "SKILL_CI_PINNED"})
