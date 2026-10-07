@@ -8,7 +8,7 @@ import tomllib
 import unittest
 from pathlib import Path
 
-from support import ENVIRONMENT, REPOSITORY, FakeHarness, git, manifest, skill_ci, write, write_skill
+from support import ENVIRONMENT, INSTALLED_COMMAND, REPOSITORY, FakeHarness, case, git, manifest, skill_ci, write, write_skill
 
 
 class HarnessCommandTests(unittest.TestCase):
@@ -100,6 +100,31 @@ class HarnessCommandTests(unittest.TestCase):
                     self.assertNotIn("warning", result.stderr)
                 else:
                     self.assertIn(f"skill-ci: warning: {pyproject} requires {expected}", result.stderr)
+
+    def test_a_deleted_working_directory_skips_the_warnings_and_the_command_still_runs(self) -> None:
+        write_skill(self.root / "skills" / "a")
+        write(self.root / "evals/a/shared-benchmark.json", manifest("a", ["skills/a/SKILL.md"], [case()]))
+        layout = ("--skills-dir", str(self.root / "skills"), "--evals-dir", str(self.root / "evals"))
+        gone = self.root / "gone"
+        for arguments, returncode, last in (
+            (("validate", *layout), 0, "manifests checked: 1"),
+            (("audit", *layout), 0, "manifests checked: 1"),
+            (("check", *layout), 2, "checks run: 4; failed: 1 (pii)"),
+            (("harness", "skill-benchmark", "validate", str(self.root / "evals/a/shared-benchmark.json")), 0, "OK: a — 1 cases, 0 ablations"),
+        ):
+            with self.subTest(command=arguments[0]):
+                gone.mkdir()
+                result = subprocess.run(
+                    ["/bin/sh", "-c", 'cd "$1" && rmdir "$1" && shift && exec "$@"', "sh", str(gone), str(INSTALLED_COMMAND), *arguments],
+                    env=ENVIRONMENT,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, returncode, result.stdout + result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(result.stdout.splitlines()[-1], last)
 
 
     def test_an_in_process_harness_exit_with_a_message_prints_it_and_fails(self) -> None:
