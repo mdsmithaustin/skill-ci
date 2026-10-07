@@ -911,7 +911,7 @@ class PaidRunTests(unittest.TestCase):
             with self.subTest(command=command):
                 result = self.paid(command, "skills/example", "--out", "afile/sub")
                 self.assertEqual(result.returncode, 1, result.stderr)
-                self.assertEqual(result.stderr, "skill-ci: output allocation failed: [Errno 20] Not a directory: 'afile/sub'\n")
+                self.assertRegex(result.stderr, r"^skill-ci \S+ \(commit unknown\)\nskill-ci: output allocation failed: \[Errno 20\] Not a directory: 'afile/sub'\n$")
                 self.assertEqual([stage[0] for stage in self.fake.arguments()], stages)
 
     def test_an_explicit_output_still_needs_a_selected_package(self) -> None:
