@@ -7,14 +7,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from support import ENVIRONMENT, FakeHarness, skill_ci, write, write_skill
+from support import ENVIRONMENT, FakeHarness, install_record, skill_ci, write, write_skill
 
 from skill_ci import config
 from skill_ci.config import ConfigError, Tag, Track
 from skill_ci.runs import Agent
 from skill_ci.suite import PiiScope
 
-ALREADY_PINNED = {"SKILL_CI_PINNED": "0" * 40}
+INSTALLED_COMMIT = "0" * 40
 
 
 def problems(error: ConfigError) -> list[str]:
@@ -40,7 +40,7 @@ class ConfigFileTests(unittest.TestCase):
             ("main", Track.MAIN),
         ):
             with self.subTest(text=text):
-                pin = config.read_pin(self.write(f'version = "{text}"\n'))
+                pin = config.read(self.write(f'version = "{text}"\n')).pin
                 self.assertEqual(pin.version, version)
                 self.assertEqual(pin.source, "https://github.com/mdsmithaustin/skill-ci.git")
 
@@ -56,12 +56,12 @@ class ConfigFileTests(unittest.TestCase):
         ):
             with self.subTest(line=line):
                 with self.assertRaises(ConfigError) as caught:
-                    config.read_pin(self.write(line + "\n"))
+                    config.read(self.write(line + "\n"))
                 self.assertEqual(problems(caught.exception), [f"version is {shown}; set it to latest, main, or a tag such as v1.0.0"])
 
     def test_a_bad_version_and_an_unknown_key_are_reported_together(self) -> None:
         with self.assertRaises(ConfigError) as caught:
-            config.read_pin(self.write('version = "v1"\nskils_dir = "skills"\n'))
+            config.read(self.write('version = "v1"\nskils_dir = "skills"\n'))
         self.assertEqual(
             str(caught.exception).splitlines(),
             [
@@ -69,13 +69,6 @@ class ConfigFileTests(unittest.TestCase):
                 ".skill-ci.toml: unknown key 'skils_dir'; did you mean 'skills_dir'?",
             ],
         )
-
-    def test_an_unknown_key_leaves_the_pin_readable_for_the_version_that_knows_it(self) -> None:
-        path = self.write('version = "v2.0.0"\nnew_key = true\n')
-        self.assertEqual(config.read_pin(path).version, Tag(2, 0, 0))
-        with self.assertRaises(ConfigError) as caught:
-            config.read_settings(path)
-        self.assertEqual(problems(caught.exception), ["unknown key 'new_key'"])
 
     def test_settings_take_the_types_their_flags_parse_to(self) -> None:
         path = self.write(
@@ -95,7 +88,7 @@ class ConfigFileTests(unittest.TestCase):
             )
         )
         self.assertEqual(
-            config.read_settings(path),
+            config.read(path).settings,
             {
                 "skills_dir": Path("skills"),
                 "evals_dir": Path("evals"),
@@ -111,7 +104,7 @@ class ConfigFileTests(unittest.TestCase):
     def test_a_wrong_value_names_its_key(self) -> None:
         path = self.write('version = "main"\nrequire_manifests = "yes"\npii_scope = "all"\nruns = true\nagents = []\nskills_dir = 3\n')
         with self.assertRaises(ConfigError) as caught:
-            config.read_settings(path)
+            config.read(path)
         self.assertEqual(
             problems(caught.exception),
             [
@@ -125,7 +118,7 @@ class ConfigFileTests(unittest.TestCase):
 
     def test_unreadable_toml_names_the_file(self) -> None:
         with self.assertRaises(ConfigError) as caught:
-            config.read_pin(self.write("version = \n"))
+            config.read(self.write("version = \n"))
         self.assertRegex(str(caught.exception), r"^\.skill-ci\.toml: cannot read: ")
 
     def test_source_forms(self) -> None:
@@ -133,20 +126,37 @@ class ConfigFileTests(unittest.TestCase):
         for value, source in (
             ("https://git.example.com/skill-ci.git", "https://git.example.com/skill-ci.git"),
             ("ssh://git@example.com/org/skill-ci.git", "ssh://git@example.com/org/skill-ci.git"),
+            ("https://git.example.com/a%20b.git", "https://git.example.com/a%20b.git"),
+            ("file:///srv/skill-ci.git", "file:///srv/skill-ci.git"),
             ("mirror.git", mirror.as_uri()),
             (str(mirror), mirror.as_uri()),
+            ("my mirror#1.git", (self.root / "my mirror#1.git").as_uri()),
         ):
             with self.subTest(value=value):
-                self.assertEqual(config.read_pin(self.write(f'version = "main"\nsource = "{value}"\n')).source, source)
+                self.assertEqual(config.read(self.write(f'version = "main"\nsource = "{value}"\n')).pin.source, source)
         for value, problem in (
             ("git@example.com:org/skill-ci.git", "is an scp-style address; write it as ssh://user@host/path"),
             ("ftp://git.example.com/skill-ci.git", "uses ftp; use one of https, ssh, file"),
             ("http://git.example.com/skill-ci.git", "uses http; use one of https, ssh, file"),
             ("git://git.example.com/skill-ci.git", "uses git; use one of https, ssh, file"),
+            ("https://git.example.com/skill-ci.git#subdirectory=x", "contains '#'; uv would misread it, so percent-encode it or remove it"),
+            ("https://git.example.com/skill-ci.git?ref=main", "contains '?'; uv would misread it, so percent-encode it or remove it"),
+            ("https://git.example.com/a b.git", "contains ' '; uv would misread it, so percent-encode it or remove it"),
+            ("https://", "names no host"),
+            ("ssh:///org/skill-ci.git", "names no host"),
+            ("file://relative/skill-ci.git", "names no absolute path; write file:///absolute/path, or a plain path"),
+            ("   ", "is not a git URL or a path"),
         ):
             with self.subTest(value=value), self.assertRaises(ConfigError) as caught:
-                config.read_pin(self.write(f'version = "main"\nsource = "{value}"\n'))
+                config.read(self.write(f'version = "main"\nsource = "{value}"\n'))
             self.assertEqual(problems(caught.exception), [f"source {value!r} {problem}"])
+
+    def test_a_relative_source_resolves_from_the_file_not_the_working_directory(self) -> None:
+        nested = self.root / "skills" / "example"
+        nested.mkdir(parents=True)
+        path = self.write('version = "main"\nsource = "../mirror.git"\n')
+        os.chdir(nested)
+        self.assertEqual(config.read(path).pin.source, (self.root.parent / "mirror.git").as_uri())
 
     def test_the_nearest_file_up_to_the_repository_root_applies(self) -> None:
         nested = self.root / "repository" / "skills" / "example"
@@ -179,7 +189,11 @@ class FlagPrecedenceTests(unittest.TestCase):
         environment = {**ENVIRONMENT, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
         subprocess.run(["git", "init", "-q"], cwd=self.checkout, env=environment, capture_output=True, check=True)
         subprocess.run(["git", "add", "-A"], cwd=self.checkout, env=environment, capture_output=True, check=True)
-        self.environment = {**environment, **ALREADY_PINNED}
+        self.environment = {
+            **environment,
+            "PYTHONPATH": str(install_record(self.root / "installed", INSTALLED_COMMIT)),
+            "SKILL_CI_PINNED": INSTALLED_COMMIT,
+        }
 
     def settings(self, *lines: str) -> None:
         write(self.checkout / ".skill-ci.toml", "\n".join(('version = "v1.0.0"', *lines, "")))
@@ -214,17 +228,18 @@ class FlagPrecedenceTests(unittest.TestCase):
     def test_a_repeated_flag_replaces_the_file_list(self) -> None:
         self.settings('agents = ["codex"]')
         fake = FakeHarness(self.root)
+        install_record(fake.purelib, INSTALLED_COMMIT)
         for flags, agent in (((), "codex"), (("--agent", "claude"), "claude")):
             with self.subTest(flags=flags):
                 fake.log.unlink(missing_ok=True)
-                result = fake.run("run", "skills/example", "--out", "out", *flags, cwd=self.checkout, **ALREADY_PINNED)
+                result = fake.run("run", "skills/example", "--out", "out", *flags, cwd=self.checkout, SKILL_CI_PINNED=INSTALLED_COMMIT)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 runs = [stage[:3] for stage in fake.arguments() if stage[0] == "run-agent"]
                 self.assertEqual(runs, [["run-agent", "--agent", agent]])
 
     def test_a_bad_file_stops_every_command_with_each_problem(self) -> None:
         write(self.checkout / ".skill-ci.toml", 'version = "v1"\nskils_dir = "skills"\n')
-        result = skill_ci("check", cwd=self.checkout, env={key: value for key, value in self.environment.items() if key not in ALREADY_PINNED})
+        result = skill_ci("check", cwd=self.checkout, env={key: value for key, value in self.environment.items() if key != "SKILL_CI_PINNED"})
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertEqual(result.stdout, "")
         self.assertEqual(

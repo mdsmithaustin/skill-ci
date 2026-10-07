@@ -12,7 +12,7 @@ from pathlib import Path
 
 from skill_ci import config, harness, pin, runs, suite
 from skill_ci.checks import coverage, manifests, package
-from skill_ci.config import OPTIONS, Tag
+from skill_ci.config import OPTIONS, Track
 from skill_ci.harness import Command
 from skill_ci.runs import RunOptions, TriggerOptions
 from skill_ci.suite import CheckOptions
@@ -25,27 +25,32 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Piped stdout is block-buffered and stderr is not, so findings would print after later summaries.
     sys.stdout.reconfigure(line_buffering=True)
     arguments = list(sys.argv[1:] if argv is None else argv)
-    pinned = os.environ.pop(pin.PINNED, "") or None
     running = pin.running_commit()
     identity = f"skill-ci {metadata.version('skill-ci')} ({running or 'commit unknown'})"
     try:
-        found = config.find(Path.cwd())
+        child = pin.claim(os.environ, running)
+        directory = working_directory()
+        found = None if directory is None else config.find(directory)
+        loaded = None if found is None else config.read(found)
         updating = arguments[:1] == ["update"]
-        selected = None if found is None or pinned is not None or updating else config.read_pin(found)
-        if selected is not None:
-            resolved = pin.resolve(selected, pin.cache_directory(), datetime.now(UTC))
-            announce(selected, resolved)
+        announced = loaded is not None and not child and not updating
+        if announced:
+            resolved = pin.resolve(loaded.pin, pin.cache_directory(), datetime.now(UTC))
+            announce(loaded.pin, resolved)
             if resolved.commit != running:
-                return pin.rerun(selected.source, resolved.commit, arguments)
-        settings = {} if found is None or updating else config.read_settings(found)
+                return pin.rerun(loaded.pin.source, resolved.commit, arguments)
         namespace = build_parser(identity).parse_args(arguments)
-        if pinned is None and selected is None:
+        if not child and not announced:
             print(identity, file=sys.stderr)
-        return namespace.handler(argparse.Namespace(**settings | vars(namespace)))
+        settings = {} if loaded is None else loaded.settings
+        return namespace.handler(argparse.Namespace(**settings | vars(namespace), loaded=loaded))
     except (config.ConfigError, pin.PinError) as error:
         for line in str(error).splitlines():
             print(f"skill-ci: {line}", file=sys.stderr)
         return 2
+    except pin.HandoffError as error:
+        print(f"skill-ci: {error}", file=sys.stderr)
+        return error.status
     except KeyboardInterrupt:
         return 130
     except Exception as error:
@@ -54,6 +59,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             print(f"skill-ci: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
+
+
+def working_directory() -> Path | None:
+    try:
+        return Path.cwd()
+    except FileNotFoundError:
+        return None
 
 
 def announce(selected: config.Pin, resolved: pin.Resolved) -> None:
@@ -101,7 +113,7 @@ def build_parser(identity: str) -> argparse.ArgumentParser:
         "harness", lambda namespace: run_harness(namespace.arguments), "run skill-benchmark or skill-trigger-matrix"
     )
     harness_parser.add_argument("arguments", nargs=argparse.REMAINDER, metavar="COMMAND [ARGS...]")
-    subcommand("update", update, f"set version in {config.FILE_NAME} to the newest tag, keeping comments and other keys")
+    subcommand("update", update, f"move an exact-tag version in {config.FILE_NAME} to the newest release tag, keeping comments and other keys")
     return parser
 
 
@@ -179,17 +191,20 @@ def run_harness(arguments: Sequence[str]) -> int:
 
 
 def update(namespace: argparse.Namespace) -> int:
-    path = config.find(Path.cwd())
-    if path is None:
+    loaded: config.Config | None = namespace.loaded
+    if loaded is None:
         print(f"skill-ci: no {config.FILE_NAME} in this directory or above it, up to the repository root", file=sys.stderr)
         return 2
-    selected = config.read_pin(path)
-    newest = pin.newest_tag(selected.source, pin.cache_directory(), datetime.now(UTC))
+    path, selected = loaded.path, loaded.pin
     shown = os.path.relpath(path)
+    if isinstance(selected.version, Track):
+        print(f"{shown}: version is {selected.version}, which floats; update moves only an exact tag, so the file is unchanged")
+        return 0
+    newest = pin.newest_tag(selected.source, pin.cache_directory(), datetime.now(UTC))
     if selected.version == newest:
         print(f"{shown}: version is already {newest}, the newest tag")
         return 0
-    if isinstance(selected.version, Tag) and selected.version > newest:
+    if selected.version > newest:
         print(f"skill-ci: {shown} pins {selected.version}, but the newest tag on {selected.source} is {newest}; left unchanged", file=sys.stderr)
         return 2
     try:

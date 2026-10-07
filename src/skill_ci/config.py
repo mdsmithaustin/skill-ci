@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from skill_ci.runs import Agent
 from skill_ci.suite import PiiScope
@@ -115,6 +116,13 @@ class Pin:
     source: str
 
 
+@dataclass(frozen=True)
+class Config:
+    path: Path
+    pin: Pin
+    settings: Mapping[str, Any]
+
+
 class ConfigError(Exception):
     def __init__(self, path: Path, problems: list[str]) -> None:
         super().__init__("\n".join(f"{os.path.relpath(path)}: {problem}" for problem in problems))
@@ -129,25 +137,11 @@ def find(directory: Path) -> Path | None:
     return None
 
 
-def read_pin(path: Path) -> Pin:
-    pin, _, problems = parse(path)
-    if pin is None:
-        raise ConfigError(path, problems)
-    return pin
-
-
-def read_settings(path: Path) -> dict[str, Any]:
-    _, settings, problems = parse(path)
-    if problems:
-        raise ConfigError(path, problems)
-    return settings
-
-
-def parse(path: Path) -> tuple[Pin | None, dict[str, Any], list[str]]:
+def read(path: Path) -> Config:
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
-        return None, {}, [f"cannot read: {error}"]
+        raise ConfigError(path, [f"cannot read: {error}"]) from error
     problems: list[str] = []
 
     def attempt[T](parser: Callable[..., T], *arguments: object) -> T | None:
@@ -161,8 +155,9 @@ def parse(path: Path) -> tuple[Pin | None, dict[str, Any], list[str]]:
     source = attempt(parse_source, data.pop("source", DEFAULT_SOURCE), path.parent)
     base = Path(os.path.relpath(path.parent))
     settings = {key: value for key in data if (value := attempt(parse_setting, key, data[key], base)) is not None}
-    pin = Pin(version, source) if version is not None and source is not None else None
-    return pin, settings, problems
+    if problems or version is None or source is None:
+        raise ConfigError(path, problems)
+    return Config(path, Pin(version, source), settings)
 
 
 def parse_version(value: object) -> Version:
@@ -176,16 +171,25 @@ def parse_version(value: object) -> Version:
 
 
 def parse_source(value: object, directory: Path) -> str:
-    if not isinstance(value, str) or not value:
+    if not isinstance(value, str) or not value.strip():
         raise ValueError(f"source {value!r} is not a git URL or a path")
     scheme, separator, _ = value.partition("://")
-    if separator:
-        if scheme not in SOURCE_SCHEMES:
-            raise ValueError(f"source {value!r} uses {scheme}; use one of {', '.join(SOURCE_SCHEMES)}")
-        return value
-    if ":" in value.partition("/")[0]:
-        raise ValueError(f"source {value!r} is an scp-style address; write it as ssh://user@host/path")
-    return (directory / Path(value).expanduser()).resolve().as_uri()
+    if not separator:
+        if ":" in value.partition("/")[0]:
+            raise ValueError(f"source {value!r} is an scp-style address; write it as ssh://user@host/path")
+        return (directory / Path(value).expanduser()).resolve().as_uri()
+    if scheme not in SOURCE_SCHEMES:
+        raise ValueError(f"source {value!r} uses {scheme}; use one of {', '.join(SOURCE_SCHEMES)}")
+    # The hand-off appends @<commit>, and uv reads # and ? as the start of a fragment or a query.
+    misread = [character for character in value if character.isspace() or character in "#?"]
+    if misread:
+        raise ValueError(f"source {value!r} contains {misread[0]!r}; uv would misread it, so percent-encode it or remove it")
+    parts = urlsplit(value)
+    if scheme == "file" and (parts.netloc or not parts.path.startswith("/")):
+        raise ValueError(f"source {value!r} names no absolute path; write file:///absolute/path, or a plain path")
+    if scheme != "file" and not parts.hostname:
+        raise ValueError(f"source {value!r} names no host")
+    return value
 
 
 def parse_setting(key: str, value: object, base: Path) -> Any:

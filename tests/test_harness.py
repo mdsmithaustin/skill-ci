@@ -51,6 +51,7 @@ class HarnessCommandTests(unittest.TestCase):
                     "arguments": ["validate", "a path/with spaces", "--help"],
                     "cwd": str(self.root),
                     "inherited": "host-login",
+                    "skill_ci_variables": [],
                 }
             ],
         )

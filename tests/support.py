@@ -22,6 +22,7 @@ record = {
     "arguments": arguments,
     "cwd": os.getcwd(),
     "inherited": os.environ.get("FAKE_HARNESS_INHERITED"),
+    "skill_ci_variables": sorted(key for key in os.environ if key.startswith("SKILL_CI_")),
 }
 with open(os.environ["FAKE_HARNESS_LOG"], "a", encoding="utf-8") as log:
     log.write(json.dumps(record) + "\\n")
@@ -94,6 +95,14 @@ def write(path: Path, text: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
     return path
+
+
+def install_record(directory: Path, commit: str) -> Path:
+    """Write the metadata uv leaves for skill-ci installed from git at commit, so a run from directory reports it."""
+    dist_info = directory / "skill_ci-1.0.0.dist-info"
+    write(dist_info / "METADATA", "Metadata-Version: 2.1\nName: skill-ci\nVersion: 1.0.0\n")
+    write(dist_info / "direct_url.json", json.dumps({"url": "https://git.example.com/skill-ci.git", "vcs_info": {"vcs": "git", "commit_id": commit}}))
+    return directory
 
 
 class FakeHarness:
