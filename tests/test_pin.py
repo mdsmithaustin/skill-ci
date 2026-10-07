@@ -66,12 +66,22 @@ SENT_BY_A_TERMINAL = tuple(getattr(signal, name) for name in ("SIGWINCH", "SIGIN
 def still_running(pid: int) -> bool:
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
+        if exited(pid):
             return False
         time.sleep(0.05)
     return True
+
+
+def exited(pid: int) -> bool:
+    # A zombie has exited, but it stays listed until its parent reaps it, and nothing reaps it when the tests run as
+    # PID 1 in a container without an init process. A slim Linux image may have no ps, so read /proc there.
+    if Path("/proc/self/stat").exists():
+        try:
+            return Path(f"/proc/{pid}/stat").read_text().rpartition(")")[2].split()[0] == "Z"
+        except FileNotFoundError:
+            return True
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False).stdout.strip()
+    return state[:1] in ("", "Z")
 
 
 class PinTestCase(unittest.TestCase):
@@ -448,6 +458,17 @@ class OfflineTests(PinTestCase):
         self.handed_off(self.skill_ci("lint", XDG_CACHE_HOME=".cache"), self.commits["v0.9.0"], "lint")
         self.assertFalse((self.consumer / ".cache").exists())
         self.assertEqual(len(list((self.root / "home" / ".cache" / "skill-ci" / "refs").glob("*.json"))), 1)
+
+
+class StillRunningTests(unittest.TestCase):
+    def test_a_zombie_counts_as_gone_and_a_live_process_as_running(self) -> None:
+        zombie = subprocess.Popen(["true"])
+        self.addCleanup(zombie.wait)
+        self.assertFalse(still_running(zombie.pid))
+        live = subprocess.Popen(["sleep", "30"])
+        self.addCleanup(live.wait)
+        self.addCleanup(live.kill)
+        self.assertTrue(still_running(live.pid))
 
 
 class CacheWriteTests(unittest.TestCase):
