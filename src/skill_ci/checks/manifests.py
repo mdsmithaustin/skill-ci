@@ -49,12 +49,13 @@ def each_manifest(
         return 1
     unreadable: list[OSError] = []
     walk = os.walk(root, onerror=unreadable.append, followlinks=False)
-    found = sorted((Path(top) / MANIFEST for top, _, files in walk if MANIFEST in files), key=str)
+    below = [Path(top) / MANIFEST for top, dirs, files in walk if MANIFEST in dirs + files]
+    found = sorted([root, *below] if root.name == MANIFEST else below, key=str)
     if unreadable:
         for error in unreadable:
             print(f"skill-ci: cannot search {error.filename} for manifests: {error.strerror}", file=sys.stderr)
         return 1
-    manifests = found if evals_dir is not None else [path for path in found if path.parent.name == "evals" and path.parent != root]
+    manifests = found if evals_dir is not None else [path for path in found if path.parent.name == "evals"]
     codes = [harness.exit_code(str(manifest), partial(step, manifest)) for manifest in manifests]
     print(f"manifests checked: {len(manifests)}")
     if require_manifests and not manifests:
