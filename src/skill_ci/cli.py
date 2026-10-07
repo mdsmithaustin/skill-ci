@@ -145,7 +145,11 @@ def options[T](options_type: type[T], namespace: argparse.Namespace) -> T:
 
 
 def warn_about_shadowing() -> None:
-    for warning in harness.shadowing_warnings(Path.cwd()):
+    try:
+        project = Path.cwd()
+    except FileNotFoundError:
+        return
+    for warning in harness.shadowing_warnings(project):
         print(f"skill-ci: warning: {warning}", file=sys.stderr)
 
 
