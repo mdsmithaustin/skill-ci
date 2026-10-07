@@ -43,7 +43,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise
             announce(loaded.pin, resolved)
             if resolved.commit != running:
-                return pin.rerun(loaded.pin.source, resolved.commit, arguments)
+                pin.rerun(loaded.pin.source, resolved.commit, arguments)
         if loaded is not None and loaded.unknown_keys:
             raise config.ConfigError(loaded.path, loaded.unknown_keys)
         namespace = build_parser(identity).parse_args(arguments)

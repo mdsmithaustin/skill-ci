@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from importlib import metadata
 from pathlib import Path
-from typing import NewType
+from typing import NewType, NoReturn
 
 from skill_ci.config import Pin, Tag, Track, Version
 
@@ -24,9 +24,8 @@ STARTED = "SKILL_CI_STARTED"
 HANDOFF_FAILED = 126
 # uv's console script starts Python without -I, so these would load other code under the pinned commit's name.
 SHADOWING = frozenset({"PYTHONPATH", "PYTHONHOME"})
-# uv 0.12.7 passes these on to the tool it runs (crates/uv/src/child.rs); SIGINFO exists only on macOS and the BSDs.
-# At a terminal, Ctrl-C already reaches every process in the foreground group, so neither uv nor supervise forwards
-# SIGINT there.
+# uv 0.12.7 passes these on to the tool it runs (crates/uv/src/child.rs). At a terminal, Ctrl-C already reaches
+# every process in the foreground group, so neither uv nor supervise forwards SIGINT there.
 FORWARDED = frozenset(getattr(signal, name) for name in ("SIGTERM", "SIGHUP", "SIGQUIT", "SIGUSR1", "SIGUSR2", "SIGALRM", "SIGWINCH", "SIGPIPE", "SIGINFO") if hasattr(signal, name))
 # uv dies of these without passing them on, which would leave the pinned commit running.
 STOPPING = frozenset(getattr(signal, name) for name in ("SIGABRT", "SIGVTALRM", "SIGPROF", "SIGXCPU", "SIGPOLL", "SIGPWR") if hasattr(signal, name))
@@ -142,7 +141,7 @@ def fetch(source: str, cache: Path, now: datetime) -> Refs:
             raise Unreachable(f"git ls-remote gave no answer in {LS_REMOTE_TIMEOUT} s") from error
         finally:
             if git.returncode is None:
-                # The group is gone, or on macOS holds only git as an unreaped zombie, when git exits as the timeout fires.
+                # On macOS, killpg raises PermissionError on a group that holds only git's unreaped zombie.
                 with contextlib.suppress(ProcessLookupError, PermissionError):
                     os.killpg(git.pid, signal.SIGKILL)
     if git.returncode != 0:
@@ -242,7 +241,7 @@ def claim(environment: MutableMapping[str, str], running: Commit | None) -> bool
     return True
 
 
-def rerun(source: str, commit: Commit, arguments: Sequence[str]) -> int:
+def rerun(source: str, commit: Commit, arguments: Sequence[str]) -> NoReturn:
     uv = shutil.which("uv")
     if uv is None:
         raise HandoffError(f"running the pinned commit {commit} needs uv on PATH", status=127)
@@ -264,11 +263,10 @@ def rerun(source: str, commit: Commit, arguments: Sequence[str]) -> int:
                 f"uv could not start the pinned commit {commit} (exit {status}); fix the uv error above, "
                 f"such as no network access to {source} or a UV_PYTHON that this commit does not support"
             )
-    return status if status >= 0 else 128 - status
+    raise SystemExit(status if status >= 0 else 128 - status)
 
 
 def supervise(child: subprocess.Popen[bytes]) -> int:
-    """Wait for uv and return its status, or minus the number of a stopping signal, as if that signal ended the run."""
     at_terminal = os.isatty(0)
     stopped_by: list[int] = []
 
@@ -279,8 +277,6 @@ def supervise(child: subprocess.Popen[bytes]) -> int:
         elif number != signal.SIGINT or not at_terminal:
             child.send_signal(number)
 
-    # rerun is the last thing skill-ci does, so the handlers stay. Restoring would fail on a handler set outside
-    # Python, such as the one faulthandler sets for SIGABRT.
     for number in (signal.SIGINT, *FORWARDED, *STOPPING):
         signal.signal(number, forward)
     status = child.wait()

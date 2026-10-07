@@ -599,6 +599,11 @@ class HandOffTests(PinTestCase):
                 self.assertEqual(result.returncode, code, result.stderr)
                 self.assertEqual(result.stderr.splitlines(), [self.banner])
 
+    def test_a_hand_off_under_faulthandler_keeps_the_pinned_commits_exit_code(self) -> None:
+        result = self.skill_ci("lint", FAKE_UV_EXIT="4", PYTHONFAULTHANDLER="1")
+        self.assertEqual(result.returncode, 4, result.stderr)
+        self.assertEqual(result.stderr.splitlines(), [self.banner])
+
     def signalled(self, *numbers: signal.Signals, terminal: bool = False) -> tuple[int, list[int]]:
         received = Path(tempfile.mkdtemp(dir=self.root)) / "received"
         primary, replica = pty.openpty() if terminal else (None, None)
