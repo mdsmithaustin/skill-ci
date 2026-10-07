@@ -46,6 +46,27 @@ subprocess.Popen = SignalledFirst
 from skill_ci import cli
 raise SystemExit(cli.main(sys.argv[1:]))
 """
+STOPPED_NEAR = """\
+import importlib, os, signal, sys
+side, target = os.environ.pop("DRIVER_STOP").split()
+module, name = target.rsplit(".", 1)
+owner = importlib.import_module(module)
+real = getattr(owner, name)
+
+
+def stop(*arguments, **options):
+    if side == "before":
+        os.kill(os.getpid(), signal.SIGTERM)
+    result = real(*arguments, **options)
+    if side == "after":
+        os.kill(os.getpid(), signal.SIGTERM)
+    return result
+
+
+setattr(owner, name, stop)
+from skill_ci import cli
+raise SystemExit(cli.main(sys.argv[1:]))
+"""
 
 FAKE_PINNED = """\
 import os, signal, time
@@ -183,6 +204,19 @@ class ChildStopTests(PinTestCase):
                 transports = [int(pid) for pid in transport.read_text().split()] if transport.exists() else []
                 self.assertEqual(self.survivors(*transports), [])
                 self.assertEqual(list(self.scratch.iterdir()), [])
+
+    def test_a_stop_while_a_temporary_file_exists_leaves_none_behind(self) -> None:
+        driver = write(self.root / "stopped near.py", STOPPED_NEAR)
+        for name, version, command, stop, directory in (
+            ("update", "v0.9.0", "update", "after os.fsync", self.consumer),
+        ):
+            with self.subTest(file=name):
+                path = self.pin(version)
+                listing = sorted(os.listdir(directory)) if directory.exists() else []
+                process = self.start(sys.executable, str(driver), command, DRIVER_STOP=stop)
+                self.assertEqual(process.wait(timeout=30), 128 + signal.SIGTERM)
+                self.assertEqual(sorted(os.listdir(directory)), listing)
+                self.assertIn(path.read_text(), {f'version = "{tag}"\nsource = "{self.source}"\n' for tag in (version, "v0.10.0")})
 
     def test_a_burst_of_signals_stops_once_with_the_first(self) -> None:
         transport = self.root / "transport"

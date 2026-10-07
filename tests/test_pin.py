@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -804,6 +805,41 @@ class UpdateTests(PinTestCase):
                 self.assertEqual(result.stdout, f".skill-ci.toml: version is {version}, which floats; update moves only an exact tag, so the file is unchanged\n")
                 self.assertEqual(path.read_text(), text)
         self.assertFalse(self.git_log.exists())
+
+    def test_a_write_that_fails_leaves_the_file_whole(self) -> None:
+        path = self.pin("v0.9.0", "# " + "padding " * 1000)
+        before = path.read_bytes()
+        listing = sorted(os.listdir(self.consumer))
+        limited = (
+            "import os, resource, sys\n"
+            "resource.setrlimit(resource.RLIMIT_FSIZE, (4096, resource.getrlimit(resource.RLIMIT_FSIZE)[1]))\n"
+            "os.execv(sys.argv[1], sys.argv[1:])\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", limited, str(INSTALLED_COMMAND), "update"],
+            cwd=self.consumer,
+            env=self.environment,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertRegex(result.stderr.splitlines()[-1], r"^skill-ci: cannot update \.skill-ci\.toml: \[Errno \d+\] File too large$")
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(sorted(os.listdir(self.consumer)), listing)
+
+    def test_update_replaces_the_file_a_link_names_and_keeps_its_mode(self) -> None:
+        target = write(self.root / "shared" / "pin.toml", f'version = "v0.9.0"\nsource = "{self.source}"\n')
+        target.chmod(0o640)
+        link = self.consumer / ".skill-ci.toml"
+        link.symlink_to(target)
+        result = self.skill_ci("update")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(target.read_text(), f'version = "v0.10.0"\nsource = "{self.source}"\n')
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o640)
+        self.assertEqual(os.listdir(target.parent), ["pin.toml"])
 
     def test_update_needs_the_source(self) -> None:
         self.pin("v0.9.0")

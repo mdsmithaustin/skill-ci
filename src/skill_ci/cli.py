@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import os
+import stat
 import sys
+import tempfile
 import traceback
 from collections.abc import Callable, Sequence
 from dataclasses import fields
@@ -222,9 +224,25 @@ def update(namespace: argparse.Namespace) -> int:
         return 2
     try:
         text = path.read_bytes().decode("utf-8")
-        path.write_bytes(config.with_version(text, newest).encode("utf-8"))
+        replace(path, config.with_version(text, newest).encode("utf-8"))
     except (OSError, ValueError) as error:
         print(f"skill-ci: cannot update {shown}: {error}", file=sys.stderr)
         return 2
     print(f"{shown}: version {selected.version} -> {newest}")
     return 0
+
+
+def replace(path: Path, data: bytes) -> None:
+    # Writing in place would leave the file cut short when the disk fills or a stop comes mid-write. A link stays a link
+    # to the file this replaces.
+    target = path.resolve()
+    with (
+        children.stopping_signals(),
+        tempfile.NamedTemporaryFile(dir=target.parent, prefix=f"{target.name}.", delete_on_close=False) as partial,
+    ):
+        os.fchmod(partial.fileno(), stat.S_IMODE(target.stat().st_mode))
+        partial.write(data)
+        partial.flush()
+        os.fsync(partial.fileno())
+        partial.close()
+        os.replace(partial.name, target)
