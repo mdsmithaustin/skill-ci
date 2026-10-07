@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -141,6 +142,9 @@ class ConfigFileTests(unittest.TestCase):
         with self.assertRaises(ConfigError) as caught:
             config.read(self.write("version = \n"))
         self.assertRegex(str(caught.exception), r"^\.skill-ci\.toml: cannot read: ")
+        with self.assertRaises(ConfigError) as caught:
+            config.read(self.write(f'version = "main"\nskills_dir = {"[" * 3000}{"]" * 3000}\n'))
+        self.assertEqual(str(caught.exception), ".skill-ci.toml: cannot read: maximum recursion depth exceeded")
 
     def test_source_forms(self) -> None:
         mirror = self.root / "mirror.git"
@@ -367,6 +371,26 @@ class FlagPrecedenceTests(unittest.TestCase):
         followed = self.run_cli("lint", cwd=linked)
         self.assertEqual(followed.returncode, 0, followed.stdout + followed.stderr)
         self.assertEqual(followed.stdout.splitlines(), ["checks run: 2; failed: 0"])
+
+    def test_a_source_in_a_symlink_loop_or_a_file_nested_too_deep_stops_on_one_line(self) -> None:
+        (self.checkout / "loop").symlink_to(self.checkout / "loop")
+        unpinned = {key: value for key, value in self.environment.items() if key != "SKILL_CI_PINNED"}
+        # Path.resolve raises on a symlink loop only before Python 3.13; later, git is what fails to read it.
+        loop = (
+            r"skill-ci: \.skill-ci\.toml: source names a path that cannot be resolved, such as one in a symlink loop"
+            if sys.version_info < (3, 13)
+            else r"skill-ci: cannot reach file://\S+/loop/skill-ci\.git \(.+\), and no version was ever resolved from it"
+        )
+        for text, line in (
+            ('version = "v1.0.0"\nsource = "loop/skill-ci.git"\n', loop),
+            (f'version = "v1.0.0"\nskills_dir = {"[" * 3000}{"]" * 3000}\n', r"skill-ci: \.skill-ci\.toml: cannot read: maximum recursion depth exceeded"),
+        ):
+            with self.subTest(line=line):
+                write(self.checkout / ".skill-ci.toml", text)
+                result = skill_ci("lint", cwd=self.checkout, env=unpinned)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertRegex(result.stderr, rf"^{line}\n$")
 
     def test_a_home_directory_that_cannot_be_found_names_its_key(self) -> None:
         unknown = "~skill-ci-no-such-user"

@@ -150,7 +150,7 @@ def read(path: Path, *, ignore_unknown: bool = False) -> Config:
         if not stat.S_ISREG(path.stat().st_mode):
             raise ConfigError(path, ["cannot read: not a regular file"])
         data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, RecursionError) as error:
         raise ConfigError(path, [f"cannot read: {error}"]) from error
     problems: list[str] = []
 
@@ -195,7 +195,11 @@ def parse_source(value: object, directory: Path) -> Source:
     if not separator:
         if ":" in value.partition("/")[0]:
             raise ValueError("source is an scp-style address; write it as ssh://user@host/path")
-        return Source((directory / expand_user("source", value)).resolve().as_uri())
+        try:
+            return Source((directory / expand_user("source", value)).resolve().as_uri())
+        # Path.resolve raises RuntimeError on a symlink loop before Python 3.13.
+        except (OSError, RuntimeError) as error:
+            raise ValueError("source names a path that cannot be resolved, such as one in a symlink loop") from error
     if holds_credentials(scheme, rest):
         raise ValueError(CREDENTIALS)
     if scheme not in SOURCE_SCHEMES:
