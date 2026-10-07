@@ -193,7 +193,7 @@ def run_harness(arguments: Sequence[str]) -> int:
 def update(namespace: argparse.Namespace) -> int:
     loaded: config.Config | None = namespace.loaded
     if loaded is None:
-        print(f"skill-ci: no {config.FILE_NAME} in this directory or above it, up to the repository root", file=sys.stderr)
+        print(f"skill-ci: no {config.FILE_NAME} in the working directory, or in a parent directory inside the same git repository", file=sys.stderr)
         return 2
     path, selected = loaded.path, loaded.pin
     shown = os.path.relpath(path)

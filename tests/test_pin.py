@@ -451,7 +451,7 @@ class RerunGuardTests(PinTestCase):
         self.assertEqual(lint.stdout, "checks run: 2; failed: 0\n")
         update = from_gone("update")
         self.assertEqual(update.returncode, 2, update.stderr)
-        self.assertEqual(update.stderr.splitlines()[1:], ["skill-ci: no .skill-ci.toml in this directory or above it, up to the repository root"])
+        self.assertEqual(update.stderr.splitlines()[1:], ["skill-ci: no .skill-ci.toml in the working directory, or in a parent directory inside the same git repository"])
 
     def test_without_a_file_the_run_names_its_own_version(self) -> None:
         result = self.skill_ci("check", "--fast")
