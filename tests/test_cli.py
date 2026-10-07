@@ -408,7 +408,7 @@ class PackageTests(ConsumerTestCase):
         result = run_in_a_broken_cwd(self.root / "gone", "rmdir", sys.executable, "-I", "-m", "skill_ci", "package", "--skills-dir", "../skills")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual(result.stdout, "")
-        self.assertEqual(result.stderr, "skill-ci: FileNotFoundError: [Errno 2] No such file or directory\n")
+        self.assertRegex(result.stderr, r"^skill-ci \S+ \(commit unknown\)\nskill-ci: FileNotFoundError: \[Errno 2\] No such file or directory\n$")
 
 
 class LintTests(ConsumerTestCase):
@@ -690,6 +690,9 @@ class CheckRunnerTests(unittest.TestCase):
         self.assertEqual(stdout.getvalue(), "checks run: 2; failed: 1 (first)\n")
 
 
+ONE_LINE = r"^skill-ci \S+ \(commit unknown\)\nskill-ci: RuntimeError: the inventory broke\n$"
+
+
 class UnexpectedErrorTests(unittest.TestCase):
     def package_that_raises(self, error: BaseException, **variables: str) -> tuple[int, str]:
         stderr = io.StringIO()
@@ -702,24 +705,24 @@ class UnexpectedErrorTests(unittest.TestCase):
         return code, stderr.getvalue()
 
     def test_an_unexpected_error_in_a_command_prints_one_line_and_exits_1(self) -> None:
-        self.assertEqual(
-            self.package_that_raises(RuntimeError("the inventory broke")),
-            (1, "skill-ci: RuntimeError: the inventory broke\n"),
-        )
+        code, stderr = self.package_that_raises(RuntimeError("the inventory broke"))
+        self.assertEqual(code, 1)
+        self.assertRegex(stderr, ONE_LINE)
 
     def test_skill_ci_debug_of_exactly_1_prints_the_traceback_instead(self) -> None:
         code, stderr = self.package_that_raises(RuntimeError("the inventory broke"), SKILL_CI_DEBUG="1")
+        banner, printed = stderr.split("\n", 1)
         self.assertEqual(code, 1)
-        self.assertTrue(stderr.startswith("Traceback (most recent call last):\n"), stderr)
-        self.assertTrue(stderr.endswith("\nRuntimeError: the inventory broke\n"), stderr)
+        self.assertRegex(banner, r"^skill-ci \S+ \(commit unknown\)$")
+        self.assertTrue(printed.startswith("Traceback (most recent call last):\n"), stderr)
+        self.assertTrue(printed.endswith("\nRuntimeError: the inventory broke\n"), stderr)
 
     def test_any_other_skill_ci_debug_value_keeps_the_one_line(self) -> None:
         for value in ("0", "true", "", "11", " 1"):
             with self.subTest(value=value):
-                self.assertEqual(
-                    self.package_that_raises(RuntimeError("the inventory broke"), SKILL_CI_DEBUG=value),
-                    (1, "skill-ci: RuntimeError: the inventory broke\n"),
-                )
+                code, stderr = self.package_that_raises(RuntimeError("the inventory broke"), SKILL_CI_DEBUG=value)
+                self.assertEqual(code, 1)
+                self.assertRegex(stderr, ONE_LINE)
 
     def test_a_system_exit_passes_through_with_its_code(self) -> None:
         for code in (0, 3):

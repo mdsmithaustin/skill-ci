@@ -17,7 +17,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from support import ENVIRONMENT, INSTALLED_COMMAND, REPOSITORY, FakeHarness, fake_git_install, skill_ci, write, write_skill
+from support import ENVIRONMENT, INSTALLED_COMMAND, REPOSITORY, FakeHarness, fake_git_install, run_in_a_broken_cwd, skill_ci, write, write_skill
 
 from skill_ci import pin
 from skill_ci.config import Tag
@@ -526,30 +526,25 @@ class RerunGuardTests(PinTestCase):
         self.assertEqual(result.stderr.splitlines(), [UNKNOWN_KEY])
         self.assertFalse(self.uv_log.exists())
 
-    def test_a_deleted_working_directory_counts_as_no_file(self) -> None:
-        gone = self.consumer / "gone"
-
-        def from_gone(*arguments: str) -> subprocess.CompletedProcess[str]:
-            gone.mkdir()
-            return subprocess.run(
-                ["sh", "-c", 'cd "$0" && rmdir "$0" && exec "$@"', str(gone), str(INSTALLED_COMMAND), *arguments],
-                cwd=self.consumer,
-                env=self.environment,
-                capture_output=True,
-                text=True,
-                timeout=60,
-                check=False,
-            )
-
-        version = from_gone("--version")
-        self.assertEqual(version.returncode, 0, version.stderr)
-        self.assertRegex(version.stdout, r"^skill-ci \S+ \(commit unknown\)\n$")
-        lint = from_gone("lint", "--skills-dir", str(self.consumer / "skills"))
-        self.assertEqual(lint.returncode, 0, lint.stderr)
-        self.assertEqual(lint.stdout, "checks run: 2; failed: 0\n")
-        update = from_gone("update")
-        self.assertEqual(update.returncode, 2, update.stderr)
-        self.assertEqual(update.stderr.splitlines()[1:], ["skill-ci: no .skill-ci.toml in the working directory, or in a parent directory inside the same git repository"])
+    def test_a_deleted_or_unreadable_working_directory_counts_as_no_file(self) -> None:
+        getcwd = run_in_a_broken_cwd(self.root / "probe", "chmod 000", sys.executable, "-c", "import os; os.getcwd()")
+        for breaking_command in ("rmdir", "chmod 000"):
+            with self.subTest(cwd=breaking_command):
+                if breaking_command == "chmod 000" and getcwd.returncode == 0:
+                    self.skipTest("getcwd works in a directory with mode 000 on this platform")
+                version, lint, update = (
+                    run_in_a_broken_cwd(self.consumer / f"{breaking_command} {arguments[0]}", breaking_command, str(INSTALLED_COMMAND), *arguments)
+                    for arguments in (("--version",), ("lint", "--skills-dir", str(self.consumer / "skills")), ("update",))
+                )
+                self.assertEqual(version.returncode, 0, version.stderr)
+                self.assertRegex(version.stdout, r"^skill-ci \S+ \(commit unknown\)\n$")
+                self.assertEqual(lint.returncode, 0, lint.stderr)
+                self.assertEqual(lint.stdout, "checks run: 2; failed: 0\n")
+                self.assertEqual(update.returncode, 2, update.stderr)
+                self.assertEqual(
+                    update.stderr.splitlines()[1:],
+                    ["skill-ci: no .skill-ci.toml in the working directory, or in a parent directory inside the same git repository"],
+                )
 
     def test_without_a_file_the_run_names_its_own_version(self) -> None:
         result = self.skill_ci("check", "--fast")

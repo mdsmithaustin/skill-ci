@@ -75,7 +75,7 @@ def report(error: Exception) -> None:
 def working_directory() -> Path | None:
     try:
         return Path.cwd()
-    except FileNotFoundError:
+    except OSError:
         return None
 
 
