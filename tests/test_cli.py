@@ -685,25 +685,42 @@ class CheckRunnerTests(unittest.TestCase):
 
 
 class UnexpectedErrorTests(unittest.TestCase):
-    def package_that_raises(self, **variables: str) -> tuple[int, str]:
-        environment = {key: value for key, value in os.environ.items() if key != "SKILL_CI_DEBUG"} | variables
+    def package_that_raises(self, error: BaseException, **variables: str) -> tuple[int, str]:
         stderr = io.StringIO()
         with (
-            mock.patch.object(package, "check_packages", side_effect=RuntimeError("the inventory broke")),
-            mock.patch.dict(os.environ, environment, clear=True),
+            mock.patch.object(package, "check_packages", side_effect=error),
+            mock.patch.dict(os.environ, ENVIRONMENT | variables, clear=True),
             contextlib.redirect_stderr(stderr),
         ):
             code = cli.main(["package"])
         return code, stderr.getvalue()
 
     def test_an_unexpected_error_in_a_command_prints_one_line_and_exits_1(self) -> None:
-        self.assertEqual(self.package_that_raises(), (1, "skill-ci: RuntimeError: the inventory broke\n"))
+        self.assertEqual(
+            self.package_that_raises(RuntimeError("the inventory broke")),
+            (1, "skill-ci: RuntimeError: the inventory broke\n"),
+        )
 
-    def test_skill_ci_debug_prints_the_traceback_instead(self) -> None:
-        code, stderr = self.package_that_raises(SKILL_CI_DEBUG="1")
+    def test_skill_ci_debug_of_exactly_1_prints_the_traceback_instead(self) -> None:
+        code, stderr = self.package_that_raises(RuntimeError("the inventory broke"), SKILL_CI_DEBUG="1")
         self.assertEqual(code, 1)
         self.assertTrue(stderr.startswith("Traceback (most recent call last):\n"), stderr)
         self.assertTrue(stderr.endswith("\nRuntimeError: the inventory broke\n"), stderr)
+
+    def test_any_other_skill_ci_debug_value_keeps_the_one_line(self) -> None:
+        for value in ("0", "true", "", "11", " 1"):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    self.package_that_raises(RuntimeError("the inventory broke"), SKILL_CI_DEBUG=value),
+                    (1, "skill-ci: RuntimeError: the inventory broke\n"),
+                )
+
+    def test_a_system_exit_passes_through_with_its_code(self) -> None:
+        for code in (0, 3):
+            with self.subTest(code=code):
+                with self.assertRaises(SystemExit) as raised:
+                    self.package_that_raises(SystemExit(code))
+                self.assertEqual(raised.exception.code, code)
 
 
 class PaidRunTests(unittest.TestCase):
