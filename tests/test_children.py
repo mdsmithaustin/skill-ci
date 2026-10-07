@@ -66,6 +66,12 @@ raise SystemExit(3)
 class ChildStopTests(PinTestCase):
     def setUp(self) -> None:
         super().setUp()
+        # A suite started as a background job ignores SIGINT and SIGQUIT, and skill-ci would keep ignoring them. A
+        # Python handler resets to the default action in a child.
+        for number in STOPS:
+            if number != signal.SIGPIPE and signal.getsignal(number) == signal.SIG_IGN:
+                self.addCleanup(signal.signal, number, signal.SIG_IGN)
+                signal.signal(number, lambda _number, _frame: None)
         self.fake = FakeHarness(self.root)
         self.inner = write(self.root / "inner skill-ci", f'#!/bin/sh\nexec "{self.fake.python}" -m skill_ci "$@"\n')
         self.inner.chmod(0o755)
