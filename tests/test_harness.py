@@ -149,7 +149,9 @@ class HarnessCommandTests(unittest.TestCase):
                 result = self.fake.run(command, "--evals-dir", "evals", cwd=self.root)
                 self.assertEqual(result.returncode, 130, result.stdout + result.stderr)
                 self.assertEqual(result.stdout, "")
-                self.assertEqual(result.stderr.splitlines(), stderr)
+                banner, *rest = result.stderr.splitlines()
+                self.assertRegex(banner, r"^skill-ci \S+ \(commit unknown\)$")
+                self.assertEqual(rest, stderr)
 
 
 class HarnessIsolationTests(unittest.TestCase):
