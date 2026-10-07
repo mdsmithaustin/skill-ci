@@ -132,7 +132,7 @@ class ConfigError(Exception):
 
 def find(directory: Path) -> Path | None:
     searched = (directory, *directory.parents)
-    # Before Python 3.14, Path.exists and Path.is_file raise PermissionError inside a directory that cannot be read.
+    # Before Python 3.14, Path.exists and Path.is_file raise PermissionError inside a directory that cannot be searched.
     root = next((candidate for candidate in searched if os.path.exists(candidate / ".git")), directory)
     for candidate in searched[: searched.index(root) + 1]:
         if os.path.isfile(candidate / FILE_NAME):
