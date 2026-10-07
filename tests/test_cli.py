@@ -603,6 +603,14 @@ class CheckRunnerTests(unittest.TestCase):
         self.assertEqual(stderr.getvalue(), "the first check gave up\n")
         self.assertEqual(stdout.getvalue(), "checks run: 2; failed: 1 (first)\n")
 
+    def test_a_check_that_exits_with_a_status_keeps_that_status(self) -> None:
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = suite.run_checks([("zero", lambda: sys.exit(0)), ("bare", lambda: sys.exit()), ("three", lambda: sys.exit(3))])
+        self.assertEqual(code, 3)
+        self.assertEqual(stderr.getvalue(), "")
+        self.assertEqual(stdout.getvalue(), "checks run: 3; failed: 1 (three)\n")
+
     def test_a_check_that_raises_is_named_on_one_line_and_counts_as_failed(self) -> None:
         def unreadable() -> int:
             raise PermissionError(13, "Permission denied", "skills/a/SKILL.md")
@@ -736,8 +744,9 @@ class PaidRunTests(unittest.TestCase):
                     self.fake.log.unlink()
 
     def test_explicit_outputs_reach_the_harness_unchanged(self) -> None:
-        for out in ("output with spaces", str(self.root / "absolute output")):
+        for base in ("output with spaces", str(self.root / "absolute output")):
             for command, product in (("trigger", "trigger-matrix.json"), ("run", "tasks.jsonl")):
+                out = f"{base} {command}"
                 with self.subTest(out=out, command=command):
                     result = self.paid(command, "skills/example", "--out", out)
                     self.assertEqual(result.returncode, 0, result.stderr)
@@ -767,6 +776,15 @@ class PaidRunTests(unittest.TestCase):
                 ["report", "--benchmark"],
             ],
         )
+
+    def test_an_output_that_cannot_be_created_fails_on_one_line(self) -> None:
+        write(self.checkout / "afile", "")
+        for command, stages in (("trigger", []), ("run", ["audit-manifest"])):
+            with self.subTest(command=command):
+                result = self.paid(command, "skills/example", "--out", "afile/sub")
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual(result.stderr, "skill-ci: output allocation failed: [Errno 20] Not a directory: 'afile/sub'\n")
+                self.assertEqual([stage[0] for stage in self.fake.arguments()], stages)
 
     def test_an_explicit_output_still_needs_a_selected_package(self) -> None:
         missing = rf"\[Errno 2\] No such file or directory: '(?:{re.escape(str(self.checkout))}/)?example'"

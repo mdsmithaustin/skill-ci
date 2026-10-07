@@ -8,7 +8,7 @@ import tomllib
 import unittest
 from pathlib import Path
 
-from support import ENVIRONMENT, REPOSITORY, FakeHarness, skill_ci, write, write_skill
+from support import ENVIRONMENT, REPOSITORY, FakeHarness, git, skill_ci, write, write_skill
 
 
 class HarnessCommandTests(unittest.TestCase):
@@ -110,6 +110,22 @@ class HarnessCommandTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual(result.stderr, "the harness refused this manifest\n")
         self.assertEqual(result.stdout, "manifests checked: 1\n")
+
+    def test_an_interrupt_inside_the_harness_stops_the_command_with_exit_130(self) -> None:
+        write_skill(self.root / "skills" / "a")
+        write(self.root / "evals/a/shared-benchmark.json", "{}")
+        write(self.fake.purelib / "skill_benchmark.py", "raise KeyboardInterrupt\n")
+        git("init", "-q", cwd=self.root)
+        git("add", "skills", "evals", cwd=self.root)
+        for command, stderr in (
+            ("validate", []),
+            ("check", ["frontmatter: 1 skills, 0 errors", "content: 1 files, 0 findings"]),
+        ):
+            with self.subTest(command=command):
+                result = self.fake.run(command, "--evals-dir", "evals", cwd=self.root)
+                self.assertEqual(result.returncode, 130, result.stdout + result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(result.stderr.splitlines(), stderr)
 
 
 class HarnessIsolationTests(unittest.TestCase):
