@@ -402,7 +402,8 @@ class PackageTests(ConsumerTestCase):
 
     def test_a_relative_skills_dir_from_a_deleted_working_directory_fails_on_one_line(self) -> None:
         write_skill(self.root / "skills" / "example")
-        result = run_in_a_broken_cwd(self.root / "gone", "rmdir", str(INSTALLED_COMMAND), "package", "--skills-dir", "../skills")
+        # Past the shebang length limit, uv writes a /bin/sh launcher, which warns on stderr when the working directory is gone.
+        result = run_in_a_broken_cwd(self.root / "gone", "rmdir", sys.executable, "-I", "-m", "skill_ci", "package", "--skills-dir", "../skills")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual(result.stdout, "")
         self.assertEqual(result.stderr, "skill-ci: FileNotFoundError: [Errno 2] No such file or directory\n")
