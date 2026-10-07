@@ -920,7 +920,7 @@ class PaidRunTests(unittest.TestCase):
                     with self.subTest(selection=selection, out=out, command=command):
                         result = self.paid(command, selection, "--evals-dir", "evals", "--out", out)
                         self.assertEqual(result.returncode, 1, result.stderr)
-                        self.assertRegex(result.stderr, rf"^skill-ci: output allocation failed: {error}\n$")
+                        self.assertRegex(result.stderr, rf"^skill-ci \S+ \(commit unknown\)\nskill-ci: output allocation failed: {error}\n$")
         self.assertEqual(self.fake.calls(), [])
         self.assertEqual(list(self.package.iterdir()), [self.package / "SKILL.md"])
         self.assertFalse((self.checkout / "elsewhere").exists())
@@ -934,7 +934,7 @@ class PaidRunTests(unittest.TestCase):
                 with self.subTest(selection=selection, out=out, command=command):
                     result = self.paid(command, selection, "--out", out)
                     self.assertEqual(result.returncode, 1, result.stderr)
-                    self.assertRegex(result.stderr, rf"^skill-ci: output allocation failed: .*'({re.escape(str(self.checkout))}/)?links/loop(/sub)?'\n$")
+                    self.assertRegex(result.stderr, rf"^skill-ci \S+ \(commit unknown\)\nskill-ci: output allocation failed: .*'({re.escape(str(self.checkout))}/)?links/loop(/sub)?'\n$")
         self.assertEqual(self.fake.calls(), [])
         self.assertFalse((self.checkout / "elsewhere").exists())
 
