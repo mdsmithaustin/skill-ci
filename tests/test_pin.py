@@ -5,6 +5,7 @@ import io
 import json
 import os
 import pty
+import re
 import shutil
 import signal
 import subprocess
@@ -29,14 +30,19 @@ ISOLATED_GIT = {
     "GIT_COMMITTER_NAME": "skill-ci tests",
     "GIT_COMMITTER_EMAIL": "tests@example.com",
 }
+UNKNOWN_KEY = "skill-ci: .skill-ci.toml: unknown key 'skils_dir'; did you mean 'skills_dir'?"
 FAKE_UV = """\
 import json, os, signal, sys, time
-with open(os.environ["FAKE_UV_LOG"], "w", encoding="utf-8") as log:
-    json.dump({"arguments": sys.argv[1:], "pinned": os.environ.get("SKILL_CI_PINNED"), "pythonpath": os.environ.get("PYTHONPATH")}, log)
+with open(os.environ["FAKE_UV_LOG"], "a", encoding="utf-8") as log:
+    record = {"arguments": sys.argv[1:], "pinned": os.environ.get("SKILL_CI_PINNED"), "pythonpath": os.environ.get("PYTHONPATH")}
+    log.write(json.dumps(record) + "\\n")
 if os.environ.get("FAKE_UV_DIES"):
     os.kill(os.getpid(), signal.SIGTERM)
 if os.environ.get("FAKE_UV_FAILS"):
     sys.exit("error: Failed to fetch the pinned commit")
+if installed := os.environ.get("FAKE_UV_CHILD"):
+    command = os.environ["FAKE_UV_COMMAND"]
+    os.execve(command, [command, *sys.argv[7:]], {**os.environ, "PYTHONPATH": installed})
 open(os.environ["SKILL_CI_STARTED"], "x").close()
 if received := os.environ.get("FAKE_UV_SIGNALS"):
     def record(number, frame):
@@ -108,17 +114,22 @@ class PinTestCase(unittest.TestCase):
     def skill_ci(self, *arguments: str, **variables: str) -> subprocess.CompletedProcess[str]:
         return skill_ci(*arguments, cwd=self.consumer, env={**self.environment, **variables})
 
-    def handed_off(self, result: subprocess.CompletedProcess[str], commit: str, *arguments: str) -> None:
-        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+    def handed_off(self, result: subprocess.CompletedProcess[str], commit: str, *arguments: str, status: int = 3) -> None:
+        self.assertEqual(result.returncode, status, result.stdout + result.stderr)
         self.assertEqual(
-            json.loads(self.uv_log.read_text()),
-            {
-                "arguments": ["tool", "run", "--isolated", "--from", f"git+{self.source.as_uri()}@{commit}", "skill-ci", *arguments],
-                "pinned": commit,
-                "pythonpath": None,
-            },
+            [json.loads(line) for line in self.uv_log.read_text().splitlines()],
+            [
+                {
+                    "arguments": ["tool", "run", "--isolated", "--from", f"git+{self.source.as_uri()}@{commit}", "skill-ci", *arguments],
+                    "pinned": commit,
+                    "pythonpath": None,
+                }
+            ],
         )
         self.uv_log.unlink()
+
+    def running(self, commit: str) -> dict[str, str]:
+        return {"PYTHONPATH": str(fake_git_install(self.root / "installed", commit))}
 
     def unreachable(self) -> None:
         self.source.rename(self.root / "moved.git")
@@ -177,6 +188,22 @@ class ResolutionTests(PinTestCase):
         result = self.skill_ci("lint")
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertEqual(result.stderr.splitlines(), [f"skill-ci: {self.source.as_uri()} has no tag v9.9.9"])
+        self.assertFalse(self.uv_log.exists())
+
+    def test_an_unknown_key_is_reported_before_a_resolution_error(self) -> None:
+        self.pin("v9.9.9", 'skils_dir = "skills"')
+        missing = self.skill_ci("lint")
+        self.assertEqual(missing.returncode, 2, missing.stderr)
+        self.assertEqual(missing.stderr.splitlines(), [UNKNOWN_KEY, f"skill-ci: {self.source.as_uri()} has no tag v9.9.9"])
+        shutil.rmtree(self.cache)
+        self.unreachable()
+        self.pin("latest", 'skils_dir = "skills"')
+        unreachable = self.skill_ci("lint")
+        self.assertEqual(unreachable.returncode, 2, unreachable.stderr)
+        self.assertRegex(
+            unreachable.stderr,
+            rf"^{re.escape(UNKNOWN_KEY)}\nskill-ci: cannot reach {re.escape(self.source.as_uri())} \(.*\), and no version was ever resolved from it\n$",
+        )
         self.assertFalse(self.uv_log.exists())
 
 
@@ -413,19 +440,40 @@ class RerunGuardTests(PinTestCase):
         self.handed_off(self.skill_ci("lint", SKILL_CI_PINNED=""), self.commits["v0.9.0"], "lint")
 
     def test_a_bad_key_stops_the_run_before_any_resolution_or_hand_off(self) -> None:
-        problems = [
-            "skill-ci: .skill-ci.toml: unknown key 'skils_dir'; did you mean 'skills_dir'?",
-            "skill-ci: .skill-ci.toml: runs is 'five'; set it to a whole number",
-        ]
-        for version in ("v0.9.0", "latest", "unreachable latest"):
-            with self.subTest(version=version):
+        problems = ["skill-ci: .skill-ci.toml: runs is 'five'; set it to a whole number", UNKNOWN_KEY]
+        running = self.running(self.commits["v0.10.0"])
+        for version, variables in (
+            ("v0.10.0", running),
+            ("v0.9.0", running),
+            ("v0.9.0", {}),
+            ("latest", {}),
+            ("unreachable latest", {}),
+        ):
+            with self.subTest(version=version, running=bool(variables)):
                 if version == "unreachable latest":
                     self.unreachable()
                 self.pin(version.split()[-1], 'skils_dir = "skills"', 'runs = "five"')
-                result = self.skill_ci("check", "--fast", **self.shimmed())
+                result = self.skill_ci("check", "--fast", **self.shimmed(), **variables)
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                 self.assertEqual(result.stderr.splitlines(), problems)
         self.assertFalse(self.git_log.exists())
+        self.assertFalse(self.uv_log.exists())
+
+    def test_a_pin_on_the_running_commit_reports_an_unknown_key_without_a_hand_off(self) -> None:
+        self.pin("v0.10.0", 'skils_dir = "skills"')
+        result = self.skill_ci("check", "--fast", **self.running(self.commits["v0.10.0"]))
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr.splitlines(), [f"skill-ci v0.10.0 ({self.commits['v0.10.0']})", UNKNOWN_KEY])
+        self.assertFalse(self.uv_log.exists())
+
+    def test_a_direct_child_run_reports_an_unknown_key_and_nothing_else(self) -> None:
+        self.pin("v0.9.1", 'skils_dir = "skills"')
+        child = {**self.running(self.commits["v0.9.0"]), "SKILL_CI_PINNED": self.commits["v0.9.0"]}
+        result = self.skill_ci("check", "--fast", **child)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr.splitlines(), [UNKNOWN_KEY])
         self.assertFalse(self.uv_log.exists())
 
     def test_a_deleted_working_directory_counts_as_no_file(self) -> None:
@@ -484,6 +532,14 @@ class HandOffTests(PinTestCase):
         killed = self.skill_ci("lint", FAKE_UV_DIES="1")
         self.assertEqual(killed.returncode, 128 + signal.SIGTERM, killed.stderr)
         self.assertEqual(killed.stderr.splitlines(), [self.banner])
+
+    def test_a_pin_on_another_commit_hands_off_once_and_the_child_reports_an_unknown_key(self) -> None:
+        self.pin("v0.10.0", 'skils_dir = "skills"')
+        installed = fake_git_install(self.root / "installed by uv", self.commits["v0.10.0"])
+        result = self.skill_ci("check", "--fast", FAKE_UV_CHILD=str(installed), FAKE_UV_COMMAND=str(INSTALLED_COMMAND))
+        self.handed_off(result, self.commits["v0.10.0"], "check", "--fast", status=2)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr.splitlines(), [self.banner, UNKNOWN_KEY])
 
     def test_the_pinned_commit_keeps_its_own_exit_code(self) -> None:
         for code in (0, 1, 2):
@@ -552,18 +608,21 @@ class UpdateTests(PinTestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(path.read_bytes(), f'version = "v0.10.0"\r\nsource = "{self.source}"\r\nskills_dir = "skills"\r\n'.encode())
 
-    def test_update_checks_every_key_before_it_asks_the_source(self) -> None:
+    def test_update_moves_the_pin_in_a_file_with_a_key_this_version_does_not_know(self) -> None:
+        text = f'# Pinned by hand.\nversion = "v0.9.0"  # move with skill-ci update\nsource = "{self.source}"\n\nskils_dir = "skills"  # typo kept\n'
+        path = write(self.consumer / ".skill-ci.toml", text)
+        result = self.skill_ci("update")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, ".skill-ci.toml: version v0.9.0 -> v0.10.0\n")
+        self.assertNotIn("skils_dir", result.stderr)
+        self.assertEqual(path.read_text(), text.replace('"v0.9.0"', '"v0.10.0"'))
+
+    def test_update_checks_every_known_key_before_it_asks_the_source(self) -> None:
         path = self.pin("v0.9.0", 'skils_dir = "skills"', 'runs = "five"')
         text = path.read_text()
         result = self.skill_ci("update", **self.shimmed())
         self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertEqual(
-            result.stderr.splitlines(),
-            [
-                "skill-ci: .skill-ci.toml: unknown key 'skils_dir'; did you mean 'skills_dir'?",
-                "skill-ci: .skill-ci.toml: runs is 'five'; set it to a whole number",
-            ],
-        )
+        self.assertEqual(result.stderr.splitlines(), ["skill-ci: .skill-ci.toml: runs is 'five'; set it to a whole number"])
         self.assertEqual(path.read_text(), text)
         self.assertFalse(self.git_log.exists())
 

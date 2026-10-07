@@ -31,22 +31,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         child = pin.claim(os.environ, running)
         directory = working_directory()
         found = None if directory is None else config.find(directory)
-        loaded = None if found is None else config.read(found)
         updating = arguments[:1] == ["update"]
+        loaded = None if found is None else config.read(found, ignore_unknown=updating)
         announced = loaded is not None and not child and not updating
         if announced:
-            resolved = pin.resolve(loaded.pin, pin.cache_directory(), datetime.now(UTC))
+            try:
+                resolved = pin.resolve(loaded.pin, pin.cache_directory(), datetime.now(UTC))
+            except pin.PinError:
+                if loaded.unknown_keys:
+                    report(config.ConfigError(loaded.path, loaded.unknown_keys))
+                raise
             announce(loaded.pin, resolved)
             if resolved.commit != running:
                 return pin.rerun(loaded.pin.source, resolved.commit, arguments)
+        if loaded is not None and loaded.unknown_keys:
+            raise config.ConfigError(loaded.path, loaded.unknown_keys)
         namespace = build_parser(identity).parse_args(arguments)
         if not child and not announced:
             print(identity, file=sys.stderr)
         settings = {} if loaded is None else loaded.settings
         return namespace.handler(argparse.Namespace(**settings | vars(namespace), loaded=loaded))
     except (config.ConfigError, pin.PinError) as error:
-        for line in str(error).splitlines():
-            print(f"skill-ci: {line}", file=sys.stderr)
+        report(error)
         return 2
     except pin.HandoffError as error:
         print(f"skill-ci: {error}", file=sys.stderr)
@@ -59,6 +65,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             print(f"skill-ci: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
+
+
+def report(error: Exception) -> None:
+    for line in str(error).splitlines():
+        print(f"skill-ci: {line}", file=sys.stderr)
 
 
 def working_directory() -> Path | None:

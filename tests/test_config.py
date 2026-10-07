@@ -70,6 +70,26 @@ class ConfigFileTests(unittest.TestCase):
             ],
         )
 
+    def test_an_unknown_key_is_returned_with_a_file_that_is_otherwise_valid(self) -> None:
+        text = 'version = "main"\nskils_dir = "skills"\nruns = 5\nflavor = "mint"\n'
+        loaded = config.read(self.write(text))
+        self.assertEqual(loaded.unknown_keys, ("unknown key 'skils_dir'; did you mean 'skills_dir'?", "unknown key 'flavor'"))
+        self.assertEqual(loaded.settings, {"runs": 5})
+        ignoring = config.read(self.path, ignore_unknown=True)
+        self.assertEqual((ignoring.unknown_keys, ignoring.settings), ((), {"runs": 5}))
+
+    def test_a_known_problem_comes_before_an_unknown_key(self) -> None:
+        self.write('version = "main"\nskils_dir = "skills"\nruns = "five"\nflavor = "mint"\n')
+        with self.assertRaises(ConfigError) as caught:
+            config.read(self.path)
+        self.assertEqual(
+            problems(caught.exception),
+            ["runs is 'five'; set it to a whole number", "unknown key 'skils_dir'; did you mean 'skills_dir'?", "unknown key 'flavor'"],
+        )
+        with self.assertRaises(ConfigError) as ignoring:
+            config.read(self.path, ignore_unknown=True)
+        self.assertEqual(problems(ignoring.exception), ["runs is 'five'; set it to a whole number"])
+
     def test_settings_take_the_types_their_flags_parse_to(self) -> None:
         path = self.write(
             "\n".join(

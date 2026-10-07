@@ -5,7 +5,7 @@ import difflib
 import os
 import re
 import tomllib
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -121,10 +121,11 @@ class Config:
     path: Path
     pin: Pin
     settings: Mapping[str, Any]
+    unknown_keys: tuple[str, ...]
 
 
 class ConfigError(Exception):
-    def __init__(self, path: Path, problems: list[str]) -> None:
+    def __init__(self, path: Path, problems: Sequence[str]) -> None:
         super().__init__("\n".join(f"{os.path.relpath(path)}: {problem}" for problem in problems))
 
 
@@ -137,7 +138,7 @@ def find(directory: Path) -> Path | None:
     return None
 
 
-def read(path: Path) -> Config:
+def read(path: Path, *, ignore_unknown: bool = False) -> Config:
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
@@ -154,10 +155,16 @@ def read(path: Path) -> Config:
     version = attempt(parse_version, data.pop("version", None))
     source = attempt(parse_source, data.pop("source", DEFAULT_SOURCE), path.parent)
     base = Path(os.path.relpath(path.parent))
-    settings = {key: value for key in data if (value := attempt(parse_setting, key, data[key], base)) is not None}
+    settings = {key: value for key in data if key in OPTIONS and (value := attempt(parse_setting, key, data[key], base)) is not None}
+    unknown = () if ignore_unknown else tuple(unknown_key_problem(key) for key in data if key not in OPTIONS)
     if problems or version is None or source is None:
-        raise ConfigError(path, problems)
-    return Config(path, Pin(version, source), settings)
+        raise ConfigError(path, [*problems, *unknown])
+    return Config(path, Pin(version, source), settings, unknown)
+
+
+def unknown_key_problem(key: str) -> str:
+    close = difflib.get_close_matches(key, [*OPTIONS, "version", "source"], n=1)
+    return f"unknown key {key!r}" + (f"; did you mean {close[0]!r}?" if close else "")
 
 
 def parse_version(value: object) -> Version:
@@ -193,9 +200,6 @@ def parse_source(value: object, directory: Path) -> str:
 
 
 def parse_setting(key: str, value: object, base: Path) -> Any:
-    if key not in OPTIONS:
-        close = difflib.get_close_matches(key, [*OPTIONS, "version", "source"], n=1)
-        raise ValueError(f"unknown key {key!r}" + (f"; did you mean {close[0]!r}?" if close else ""))
     spec = OPTIONS[key][1]
     if spec.get("action") is argparse.BooleanOptionalAction:
         if not isinstance(value, bool):
