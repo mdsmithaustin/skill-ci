@@ -203,7 +203,7 @@ def read_cache(cache: Path, source: str) -> Refs | None:
         tags = {tag: as_commit(commit) for name, commit in record["tags"].items() if (tag := Tag.parse(name)) is not None}
         main = None if record["main"] is None else as_commit(record["main"])
         fetched_at = datetime.fromisoformat(record["fetched_at"])
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
         return None
     return Refs(source, fetched_at, main, tags) if fetched_at.tzinfo is not None else None
 

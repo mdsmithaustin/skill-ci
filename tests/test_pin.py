@@ -356,8 +356,9 @@ class OfflineTests(PinTestCase):
             json.dumps({**record, "fetched_at": "2026-10-06T00:00:00"}),
             json.dumps({**record, "main": "not a commit"}),
             json.dumps({**record, "tags": {"v0.10.0": "not a commit"}}),
+            "[" * 200_000 + "]" * 200_000,
         ):
-            with self.subTest(text=text):
+            with self.subTest(text=text[:80]):
                 cached.write_text(text)
                 result = self.skill_ci("lint")
                 self.assertEqual(result.returncode, 2, result.stderr)
