@@ -257,7 +257,9 @@ class ManifestTests(ConsumerTestCase):
             with self.subTest(layout=layout):
                 result = self.skill_ci("validate", layout, root)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                self.assertEqual(result.stderr.splitlines(), [failure])
+                banner, *rest = result.stderr.splitlines()
+                self.assertRegex(banner, r"^skill-ci \S+ \(commit unknown\)$")
+                self.assertEqual(rest, [failure])
                 self.assertEqual(lines(result), ["OK: b — 0 cases, 0 ablations", "manifests checked: 2"])
 
     def test_the_skills_tree_checks_only_manifests_directly_inside_an_evals_directory(self) -> None:
