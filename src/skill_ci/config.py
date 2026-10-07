@@ -11,7 +11,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, NewType
 from urllib.parse import unquote, urlsplit
 
 from skill_ci.runs import Agent
@@ -20,6 +20,7 @@ from skill_ci.suite import PiiScope
 FILE_NAME = ".skill-ci.toml"
 DEFAULT_SOURCE = "https://github.com/mdsmithaustin/skill-ci.git"
 SOURCE_SCHEMES = ("https", "ssh", "file")
+CREDENTIALS = "source may hold a user name, password or token; keep credentials in a git credential helper, and name at most an ssh user, as in ssh://git@host/path"
 TAG = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 VERSION_LINE = re.compile(r"""^[ \t]*version[ \t]*=[ \t]*(?P<quote>["'])(?P<value>[^"'\n]*)(?P=quote)""", re.MULTILINE)
 
@@ -110,16 +111,14 @@ class Track(StrEnum):
 
 
 Version = Tag | Track
+# A git URL or a file:// URI that holds no credentials, so messages show it and the version cache keys on it as written.
+Source = NewType("Source", str)
 
 
 @dataclass(frozen=True)
 class Pin:
     version: Version
-    source: str
-
-    @property
-    def redacted_source(self) -> str:
-        return redact(self.source, self.source)
+    source: Source
 
 
 @dataclass(frozen=True)
@@ -187,40 +186,40 @@ def parse_version(value: object) -> Version:
     raise ValueError(f"version is {shown}; set it to latest, main, or a tag such as v1.0.0")
 
 
-def parse_source(value: object, directory: Path) -> str:
+def parse_source(value: object, directory: Path) -> Source:
+    # A rejected source may hold a credential, so no message here repeats the value.
     if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"source {value!r} is not a git URL or a path")
-    shown = redact(value, value)
-    reject_control_characters(f"source {shown!r}", value)
-    scheme, separator, _ = value.partition("://")
+        raise ValueError("source is not a git URL or a path")
+    reject_control_characters("source", value)
+    scheme, separator, rest = value.partition("://")
     if not separator:
         if ":" in value.partition("/")[0]:
-            raise ValueError(f"source {value!r} is an scp-style address; write it as ssh://user@host/path")
-        return (directory / expand_user("source", value)).resolve().as_uri()
+            raise ValueError("source is an scp-style address; write it as ssh://user@host/path")
+        return Source((directory / expand_user("source", value)).resolve().as_uri())
+    if holds_credentials(scheme, rest):
+        raise ValueError(CREDENTIALS)
     if scheme not in SOURCE_SCHEMES:
-        raise ValueError(f"source {shown!r} uses {scheme}; use one of {', '.join(SOURCE_SCHEMES)}")
+        raise ValueError(f"source uses a scheme other than {', '.join(SOURCE_SCHEMES)}")
     # uv drops a query or a fragment from a git URL, and with it the @<commit> the hand-off appends.
     misread = [character for character in value if character.isspace() or character in "#?"]
     if misread:
-        raise ValueError(f"source {shown!r} contains {misread[0]!r}; percent-encode it or remove it")
+        raise ValueError(f"source contains {misread[0]!r}; percent-encode it or remove it")
     parts = urlsplit(value)
     if scheme == "file" and (parts.netloc or not parts.path.startswith("/")):
-        raise ValueError(f"source {shown!r} names no absolute path; write file:///absolute/path, or a plain path")
+        raise ValueError("source names no absolute path; write file:///absolute/path, or a plain path")
     if scheme != "file" and not parts.hostname:
-        raise ValueError(f"source {shown!r} names no host")
-    return value
+        raise ValueError("source names no host")
+    return Source(value)
 
 
-def redact(text: str, source: str) -> str:
-    scheme, separator, rest = source.partition("://")
-    userinfo = re.split(r"[/?#]", rest, maxsplit=1)[0].rpartition("@")[0]
-    # Over https, a token often stands in for the user name, so only ssh keeps it.
-    kept = f"{userinfo.partition(':')[0]}@" if scheme == "ssh" else ""
-    if not separator or not userinfo or kept == f"{userinfo}@":
-        return text
-    for written in {userinfo, unquote(userinfo)}:
-        text = text.replace(f"{written}@", kept)
-    return text
+def holds_credentials(scheme: str, rest: str) -> bool:
+    # git splits userinfo at the first '@' and RFC 3986 at the last, a '/', '#' or '?' in a password moves its '@' out
+    # of the authority, and git percent-decodes an ssh URL before ssh reads user@host. One '@' after a plain ssh user
+    # name is the only form that means the same thing to all of them.
+    if scheme == "ssh":
+        user, at, after = unquote(rest).partition("@")
+        return bool(at) and ("@" in after or any(character in user for character in ":/"))
+    return "@" in rest or "%" in rest.partition("/")[0]
 
 
 def parse_setting(key: str, value: object, base: Path) -> Any:
@@ -247,16 +246,17 @@ def parse_value(key: str, spec: Mapping[str, Any], value: object, base: Path) ->
     if "choices" in spec and value not in spec["choices"]:
         raise ValueError(f"{key} is {value!r}; set it to one of {', '.join(spec['choices'])}")
     if kind is Path:
-        reject_control_characters(f"{key} {value!r}", value)
-        return base / expand_user(key, value)
+        named = f"{key} {value!r}"
+        reject_control_characters(named, value)
+        return base / expand_user(named, value)
     return kind(value)
 
 
-def expand_user(key: str, value: str) -> Path:
+def expand_user(named: str, value: str) -> Path:
     try:
         return Path(value).expanduser()
     except RuntimeError as error:
-        raise ValueError(f"{key} {value!r} names a home directory that cannot be found; write the full path") from error
+        raise ValueError(f"{named} names a home directory that cannot be found; write the full path") from error
 
 
 def reject_control_characters(named: str, value: str) -> None:

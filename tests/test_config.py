@@ -159,55 +159,82 @@ class ConfigFileTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertEqual(config.read(self.write(f'version = "main"\nsource = "{value}"\n')).pin.source, source)
         for value, problem in (
-            ("git@example.com:org/skill-ci.git", "is an scp-style address; write it as ssh://user@host/path"),
-            ("ftp://git.example.com/skill-ci.git", "uses ftp; use one of https, ssh, file"),
-            ("http://git.example.com/skill-ci.git", "uses http; use one of https, ssh, file"),
-            ("git://git.example.com/skill-ci.git", "uses git; use one of https, ssh, file"),
-            ("https://git.example.com/skill-ci.git#subdirectory=x", "contains '#'; percent-encode it or remove it"),
-            ("https://git.example.com/skill-ci.git?ref=main", "contains '?'; percent-encode it or remove it"),
-            ("https://git.example.com/a b.git", "contains ' '; percent-encode it or remove it"),
-            ("https://", "names no host"),
-            ("ssh:///org/skill-ci.git", "names no host"),
-            ("file://relative/skill-ci.git", "names no absolute path; write file:///absolute/path, or a plain path"),
-            ("file://", "names no absolute path; write file:///absolute/path, or a plain path"),
-            ("   ", "is not a git URL or a path"),
+            ("git@example.com:org/skill-ci.git", "source is an scp-style address; write it as ssh://user@host/path"),
+            ("ftp://git.example.com/skill-ci.git", "source uses a scheme other than https, ssh, file"),
+            ("http://git.example.com/skill-ci.git", "source uses a scheme other than https, ssh, file"),
+            ("git://git.example.com/skill-ci.git", "source uses a scheme other than https, ssh, file"),
+            ("https://git.example.com/skill-ci.git#subdirectory=x", "source contains '#'; percent-encode it or remove it"),
+            ("https://git.example.com/skill-ci.git?ref=main", "source contains '?'; percent-encode it or remove it"),
+            ("https://git.example.com/a b.git", "source contains ' '; percent-encode it or remove it"),
+            ("https://", "source names no host"),
+            ("ssh:///org/skill-ci.git", "source names no host"),
+            ("file://relative/skill-ci.git", "source names no absolute path; write file:///absolute/path, or a plain path"),
+            ("file://", "source names no absolute path; write file:///absolute/path, or a plain path"),
+            ("   ", "source is not a git URL or a path"),
         ):
             with self.subTest(value=value), self.assertRaises(ConfigError) as caught:
                 config.read(self.write(f'version = "main"\nsource = "{value}"\n'))
-            self.assertEqual(problems(caught.exception), [f"source {value!r} {problem}"])
-
-    def test_credentials_in_source_stay_out_of_every_message(self) -> None:
-        for value, source, shown in (
-            ("https://user:t0ken@example.com/skill-ci.git", "https://user:t0ken@example.com/skill-ci.git", "https://example.com/skill-ci.git"),
-            ("https://t0ken@example.com/skill-ci.git", "https://t0ken@example.com/skill-ci.git", "https://example.com/skill-ci.git"),
-            ("ssh://git:t0ken@example.com/skill-ci.git", "ssh://git:t0ken@example.com/skill-ci.git", "ssh://git@example.com/skill-ci.git"),
-            ("ssh://git@example.com/skill-ci.git", "ssh://git@example.com/skill-ci.git", "ssh://git@example.com/skill-ci.git"),
-        ):
-            with self.subTest(value=value):
-                pin = config.read(self.write(f'version = "main"\nsource = "{value}"\n')).pin
-                self.assertEqual((pin.source, pin.redacted_source), (source, shown))
-        for escaped, problem in (
-            ("https://user:t0ken@example.com/a b.git", "source 'https://example.com/a b.git' contains ' '; percent-encode it or remove it"),
-            ("ftp://user:t0ken@example.com/skill-ci.git", "source 'ftp://example.com/skill-ci.git' uses ftp; use one of https, ssh, file"),
-            ("ssh://git:t0ken@/skill-ci.git", "source 'ssh://git@/skill-ci.git' names no host"),
-            (r"https://user:t0ken@example.com/skill-ci.git\u0000", r"source 'https://example.com/skill-ci.git\x00' contains the control character '\x00'; remove it"),
-        ):
-            with self.subTest(value=escaped), self.assertRaises(ConfigError) as caught:
-                config.read(self.write(f'version = "main"\nsource = "{escaped}"\n'))
             self.assertEqual(problems(caught.exception), [problem])
 
-    def test_a_control_character_in_source_is_rejected_in_every_form(self) -> None:
-        for escaped, value, character in (
-            (r"https://git.example.com/skill-ci.git\u0000x", "https://git.example.com/skill-ci.git\x00x", "\x00"),
-            (r"ssh://git@example.com/skill-ci\u001b.git", "ssh://git@example.com/skill-ci\x1b.git", "\x1b"),
-            (r"file:///srv/skill-ci.git\u007f", "file:///srv/skill-ci.git\x7f", "\x7f"),
-            (r"mirror\u0000.git", "mirror\x00.git", "\x00"),
-            (r"mirror\t.git", "mirror\t.git", "\t"),
+    def test_a_credential_in_source_is_rejected_and_never_shown(self) -> None:
+        for value in (
+            "https://alice:s3cr3t@example.com/skill-ci.git",
+            "https://ghp_s3cr3t@example.com/skill-ci.git",
+            "https://al@ice:s3cr3t@example.com/skill-ci.git",
+            "https://alice:p#s3cr3t@example.com/skill-ci.git",
+            "https://alice:p?s3cr3t@example.com/skill-ci.git",
+            "https://alice:p/s3cr3t@example.com/skill-ci.git",
+            "https://alice:123/s3cr3t@example.com/skill-ci.git",
+            "https://alice%40corp:s3cr3t@example.com/skill-ci.git",
+            "https://alice%3As3cr3t@example.com/skill-ci.git",
+            "https://s3cr3t%40example.com/skill-ci.git",
+            "https://example.com/org/s3cr3t@skill-ci.git",
+            "http://alice:s3cr3t@example.com/skill-ci.git",
+            "file://alice:s3cr3t@/srv/skill-ci.git",
+            "ssh://alice:s3cr3t@example.com/skill-ci.git",
+            "ssh://alice%3As3cr3t@example.com/skill-ci.git",
+            "ssh://git%40s3cr3t@example.com/skill-ci.git",
+            "ssh://git@s3cr3t@example.com/skill-ci.git",
+            "ssh://alice/s3cr3t@example.com/skill-ci.git",
         ):
-            with self.subTest(value=value):
+            with self.subTest(value=value), self.assertRaises(ConfigError) as caught:
+                config.read(self.write(f'version = "main"\nsource = "{value}"\n'))
+            self.assertEqual(
+                str(caught.exception),
+                ".skill-ci.toml: source may hold a user name, password or token; keep credentials in a git credential helper, "
+                "and name at most an ssh user, as in ssh://git@host/path",
+            )
+
+    def test_no_rejected_source_is_shown(self) -> None:
+        for line in (
+            'source = "s3cr3t@example.com:org/skill-ci.git"',
+            'source = "s3cr3t://example.com/skill-ci.git"',
+            'source = "https://example.com/skill-ci.git?private_token=s3cr3t"',
+            'source = "https://example.com/skill-ci.git#s3cr3t"',
+            'source = "https://example.com/s3cr3t skill-ci.git"',
+            'source = "https://example.com/skill-ci.git\\u001bs3cr3t"',
+            'source = "file://s3cr3t/skill-ci.git"',
+            'source = "https:///s3cr3t"',
+            'source = "~s3cr3t-no-such-user/skill-ci.git"',
+            'source = ["s3cr3t"]',
+        ):
+            with self.subTest(line=line), self.assertRaises(ConfigError) as caught:
+                config.read(self.write(f'version = "main"\n{line}\n'))
+            self.assertNotIn("s3cr3t", str(caught.exception))
+            self.assertRegex(str(caught.exception), r"^\.skill-ci\.toml: source [^\n]+$")
+
+    def test_a_control_character_in_source_is_rejected_in_every_form(self) -> None:
+        for escaped, character in (
+            (r"https://git.example.com/skill-ci.git\u0000x", "\x00"),
+            (r"ssh://git@example.com/skill-ci\u001b.git", "\x1b"),
+            (r"file:///srv/skill-ci.git\u007f", "\x7f"),
+            (r"mirror\u0000.git", "\x00"),
+            (r"mirror\t.git", "\t"),
+        ):
+            with self.subTest(value=escaped):
                 with self.assertRaises(ConfigError) as caught:
                     config.read(self.write(f'version = "main"\nsource = "{escaped}"\n'))
-                self.assertEqual(problems(caught.exception), [f"source {value!r} contains the control character {character!r}; remove it"])
+                self.assertEqual(problems(caught.exception), [f"source contains the control character {character!r}; remove it"])
 
     def test_a_control_character_in_a_path_setting_is_rejected(self) -> None:
         keys = ("skills_dir", "evals_dir", "trigger_cases", "content_ignore_file", "content_link_exceptions_file", "content_conventions_file", "out")
@@ -350,7 +377,7 @@ class FlagPrecedenceTests(unittest.TestCase):
         self.assertEqual(
             result.stderr.splitlines(),
             [
-                f"skill-ci: .skill-ci.toml: source '{unknown}/skill-ci.git' names a home directory that cannot be found; write the full path",
+                "skill-ci: .skill-ci.toml: source names a home directory that cannot be found; write the full path",
                 f"skill-ci: .skill-ci.toml: skills_dir '{unknown}/skills' names a home directory that cannot be found; write the full path",
                 "skill-ci: .skill-ci.toml: runs is 'five'; set it to a whole number",
             ],

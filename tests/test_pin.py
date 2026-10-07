@@ -226,7 +226,7 @@ class ResolutionTests(PinTestCase):
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertEqual(
             result.stderr.splitlines(),
-            ["skill-ci: .skill-ci.toml: source 'https://git.example.com/skill-ci.git\\x00x' contains the control character '\\x00'; remove it"],
+            ["skill-ci: .skill-ci.toml: source contains the control character '\\x00'; remove it"],
         )
         self.assertFalse(self.git_log.exists())
 
@@ -329,40 +329,49 @@ class OfflineTests(PinTestCase):
             with self.subTest(signal=number.name):
                 self.assertEqual(self.signalled_during_ls_remote(number, signal.SIGTERM), 128 + signal.SIGTERM)
 
-    def test_credentials_in_source_reach_git_and_uv_but_no_message_or_cache(self) -> None:
+    def test_a_credential_in_source_stops_before_git_or_uv_and_is_never_shown(self) -> None:
+        credentials = (
+            "skill-ci: .skill-ci.toml: source may hold a user name, password or token; keep credentials in a git credential helper, "
+            "and name at most an ssh user, as in ssh://git@host/path"
+        )
+        for source, line in (
+            ("https://alice:s3cr3t@127.0.0.1:9/x.git", credentials),
+            ("https://ghp_s3cr3t@127.0.0.1:9/x.git", credentials),
+            ("https://al@ice:s3cr3t@127.0.0.1:1/x.git", credentials),
+            ("https://alice:p#s3cr3t@127.0.0.1:9/x.git", credentials),
+            ("https://alice:p?s3cr3t@127.0.0.1:9/x.git", credentials),
+            ("https://alice:p/s3cr3t@127.0.0.1:9/x.git", credentials),
+            ("https://127.0.0.1:9/x.git?private_token=s3cr3t", "skill-ci: .skill-ci.toml: source contains '?'; percent-encode it or remove it"),
+            ("https://alice:s3cr3t%40x@127.0.0.1:9/x.git", credentials),
+            ("https://alice%3As3cr3t@127.0.0.1:9/x.git", credentials),
+            ("https://127.0.0.1:9/org/s3cr3t@x.git", credentials),
+            ("ssh://alice:s3cr3t@localhost/x.git", credentials),
+            ("ssh://alice%3As3cr3t@localhost/x.git", credentials),
+            ("ssh://git%40s3cr3t@localhost/x.git", credentials),
+        ):
+            with self.subTest(source=source):
+                write(self.consumer / ".skill-ci.toml", f'version = "latest"\nsource = "{source}"\n')
+                for command in ("lint", "update"):
+                    result = self.skill_ci(command, **self.shimmed())
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertEqual(result.stderr.splitlines()[-1:], [line])
+                    self.assertNotIn("s3cr3t", result.stderr)
+                self.assertFalse(self.cache.exists(), "nothing was cached")
+                self.assertFalse(self.git_log.exists(), "git never ran")
+                self.assertFalse(self.uv_log.exists(), "uv never ran")
+
+    def test_an_ssh_user_name_reaches_git_and_uv_and_keys_the_cache_as_written(self) -> None:
         serving = write(self.root / "serving-ssh", '#!/bin/sh\nshift\neval "exec $1"\n')
-        refusing = write(self.root / "refusing-ssh", '#!/bin/sh\necho "$1: Permission denied (publickey)." >&2\nexit 255\n')
-        for script in (serving, refusing):
-            script.chmod(0o755)
-        source = f"ssh://alice:s3cr%40t@localhost{self.source}"
-        shown = f"ssh://alice@localhost{self.source}"
+        serving.chmod(0o755)
+        source = f"ssh://git@localhost{self.source}"
         write(self.consumer / ".skill-ci.toml", f'version = "latest"\nsource = "{source}"\n')
-        ssh = {"GIT_SSH_VARIANT": "simple"}
-        served = self.skill_ci("lint", **ssh, GIT_SSH_COMMAND=str(serving))
-        self.assertEqual(served.returncode, 3, served.stderr)
+        result = self.skill_ci("lint", GIT_SSH_VARIANT="simple", GIT_SSH_COMMAND=str(serving))
+        self.assertEqual(result.returncode, 3, result.stderr)
         [handed] = [json.loads(line) for line in self.uv_log.read_text().splitlines()]
         self.assertEqual(handed["arguments"][4], f"git+{source}@{self.commits['v0.10.0']}")
         cached, record = self.cache_record()
-        self.assertEqual(cached, pin.cache_file(self.cache / "skill-ci", shown))
-        self.assertEqual(record["source"], shown)
-        refused = self.skill_ci("lint", **ssh, GIT_SSH_COMMAND=str(refusing))
-        self.assertRegex(
-            refused.stderr.splitlines()[1],
-            rf"^skill-ci: warning: cannot reach {re.escape(shown)} \(alice@localhost: Permission denied \(publickey\)\.\); running ",
-        )
-        never_cached = self.skill_ci("lint", **ssh, GIT_SSH_COMMAND=str(refusing), XDG_CACHE_HOME=str(self.root / "empty cache"))
-        self.assertEqual(
-            never_cached.stderr.splitlines(),
-            [f"skill-ci: cannot reach {shown} (alice@localhost: Permission denied (publickey).), and no version was ever resolved from it"],
-        )
-        token = "https://ghp_t0ken@127.0.0.1:9/skill-ci.git"
-        write(self.consumer / ".skill-ci.toml", f'version = "latest"\nsource = "{token}"\n')
-        https = self.skill_ci("lint")
-        self.assertRegex(https.stderr, r"^skill-ci: cannot reach https://127\.0\.0\.1:9/skill-ci\.git \(.*\), and no version was ever resolved from it\n$")
-        for result in (served, refused, never_cached, https):
-            self.assertNotIn("s3cr", result.stdout + result.stderr)
-            self.assertNotIn("t0ken", result.stdout + result.stderr)
-        self.assertNotIn("s3cr", cached.read_text())
+        self.assertEqual((cached, record["source"]), (pin.cache_file(self.cache / "skill-ci", source), source))
 
     def test_an_exact_tag_reads_a_fresh_cache_without_the_network(self) -> None:
         self.pin("v0.9.0")

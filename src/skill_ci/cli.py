@@ -83,7 +83,7 @@ def announce(selected: config.Pin, resolved: pin.Resolved) -> None:
     print(f"skill-ci {resolved.name} ({resolved.commit})", file=sys.stderr)
     if resolved.offline is not None:
         print(
-            f"skill-ci: warning: cannot reach {selected.redacted_source} ({resolved.offline.reason}); "
+            f"skill-ci: warning: cannot reach {selected.source} ({resolved.offline.reason}); "
             f"running {resolved.commit}, which {selected.version} named on {resolved.offline.fetched_at:%Y-%m-%d %H:%M} UTC",
             file=sys.stderr,
         )
@@ -216,7 +216,7 @@ def update(namespace: argparse.Namespace) -> int:
         print(f"{shown}: version is already {newest}, the newest tag")
         return 0
     if selected.version > newest:
-        print(f"skill-ci: {shown} pins {selected.version}, but the newest tag on {selected.redacted_source} is {newest}; left unchanged", file=sys.stderr)
+        print(f"skill-ci: {shown} pins {selected.version}, but the newest tag on {selected.source} is {newest}; left unchanged", file=sys.stderr)
         return 2
     try:
         text = path.read_bytes().decode("utf-8")

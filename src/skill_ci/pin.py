@@ -17,7 +17,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import NewType, NoReturn
 
-from skill_ci.config import Pin, Tag, Track, Version, redact
+from skill_ci.config import Pin, Source, Tag, Track, Version
 from skill_ci.harness import shell_status
 
 PINNED = "SKILL_CI_PINNED"
@@ -61,7 +61,7 @@ class HandoffError(Exception):
 
 @dataclass(frozen=True)
 class Refs:
-    source: str
+    source: Source
     fetched_at: datetime
     main: Commit | None
     tags: Mapping[Tag, Commit]
@@ -82,7 +82,7 @@ class Resolved:
 
 
 def resolve(pin: Pin, cache: Path, now: datetime) -> Resolved:
-    cached = read_cache(cache, pin.redacted_source)
+    cached = read_cache(cache, pin.source)
     if (
         isinstance(pin.version, Tag)
         and cached is not None
@@ -94,7 +94,7 @@ def resolve(pin: Pin, cache: Path, now: datetime) -> Resolved:
         return answer(pin.version, fetch(pin, cache, now), None)
     except Unreachable as error:
         if cached is None:
-            raise PinError(f"cannot reach {pin.redacted_source} ({error}), and no version was ever resolved from it") from error
+            raise PinError(f"cannot reach {pin.source} ({error}), and no version was ever resolved from it") from error
         return answer(pin.version, cached, Offline(str(error), cached.fetched_at))
 
 
@@ -122,7 +122,7 @@ def newest_tag(pin: Pin, cache: Path, now: datetime) -> Tag:
     try:
         refs = fetch(pin, cache, now)
     except Unreachable as error:
-        raise PinError(f"cannot reach {pin.redacted_source} ({error})") from error
+        raise PinError(f"cannot reach {pin.source} ({error})") from error
     if not refs.tags:
         raise PinError(f"{refs.source} has no tag such as v1.0.0")
     return max(refs.tags)
@@ -155,8 +155,8 @@ def fetch(pin: Pin, cache: Path, now: datetime) -> Refs:
                     os.killpg(git.pid, signal.SIGKILL)
     if git.returncode != 0:
         reason = next((line for line in errors.splitlines() if line.strip()), f"git ls-remote exited {git.returncode}")
-        raise Unreachable(redact(reason.removeprefix("fatal: "), pin.source))
-    refs = parse_listing(pin.redacted_source, now, listing)
+        raise Unreachable(reason.removeprefix("fatal: "))
+    refs = parse_listing(pin.source, now, listing)
     write_cache(cache, refs)
     return refs
 
@@ -175,7 +175,7 @@ def ended_by_signals() -> Iterator[None]:
             signal.signal(number, signal.SIG_DFL if handler is None else handler)
 
 
-def parse_listing(source: str, fetched_at: datetime, listing: str) -> Refs:
+def parse_listing(source: Source, fetched_at: datetime, listing: str) -> Refs:
     main: Commit | None = None
     tags: dict[Tag, Commit] = {}
     peeled: dict[Tag, Commit] = {}
@@ -196,7 +196,7 @@ def cache_directory() -> Path:
     return (configured if configured.is_absolute() else Path.home() / ".cache") / "skill-ci"
 
 
-def cache_file(cache: Path, source: str) -> Path:
+def cache_file(cache: Path, source: Source) -> Path:
     return cache / "refs" / f"{hashlib.sha256(source.encode()).hexdigest()}.json"
 
 
@@ -218,7 +218,7 @@ def write_cache(cache: Path, refs: Refs) -> None:
         print(f"skill-ci: warning: cannot cache the versions of {refs.source} in {path}: {error}", file=sys.stderr)
 
 
-def read_cache(cache: Path, source: str) -> Refs | None:
+def read_cache(cache: Path, source: Source) -> Refs | None:
     try:
         record = json.loads(cache_file(cache, source).read_text(encoding="utf-8"))
         if record["source"] != source:
@@ -284,7 +284,7 @@ def rerun(pin: Pin, commit: Commit, arguments: Sequence[str]) -> NoReturn:
         if status > 0 and not started.exists():
             raise HandoffError(
                 f"uv could not start the pinned commit {commit} (exit {status}); fix the uv error above, "
-                f"such as no network access to {pin.redacted_source} or a UV_PYTHON that this commit does not support"
+                f"such as no network access to {pin.source} or a UV_PYTHON that this commit does not support"
             )
     raise SystemExit(shell_status(status))
 
