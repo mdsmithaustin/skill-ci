@@ -93,9 +93,9 @@ def wait(
     while True:
         now = time.monotonic()
         if interrupted is None and (received or (timeout is not None and now - started >= timeout)):
-            # The harness stops the agents it started only on KeyboardInterrupt, uv 0.12.7 passes a SIGINT sent to its
-            # pid on to the pinned skill-ci and waits for it, Python and uv ignore SIGPIPE, and several STOPPING signals
-            # make uv exit at once when they reach its whole group.
+            # The harness stops the agents it started only on KeyboardInterrupt. uv 0.12.7 passes a SIGINT sent to its
+            # pid on to the pinned skill-ci and waits for it, and several STOPPING signals make uv exit at once when they
+            # reach its whole group. Python ignores SIGPIPE, so a SIGPIPE that uv passes on ends nothing.
             child.send_signal(signal.SIGINT)
             interrupted = now
         if interrupted is not None and now - interrupted >= grace:
