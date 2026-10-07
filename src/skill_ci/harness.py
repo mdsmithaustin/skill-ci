@@ -51,7 +51,6 @@ def execute(command: Command, arguments: Sequence[str]) -> int:
 
 
 def operand(path: Path) -> str:
-    # The harness's argparse reads "-h/a/shared-benchmark.json" as -h, prints help, and exits 0.
     text = str(path)
     return os.path.join(os.curdir, text) if text.startswith("-") else text
 
