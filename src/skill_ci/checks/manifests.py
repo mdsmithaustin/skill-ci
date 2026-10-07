@@ -15,11 +15,11 @@ AUDIT = ("audit-manifest", "--fail-on-blockers", "--strict-judge")
 
 
 def validate(skills_dir: Path, evals_dir: Path | None) -> int:
-    return each_manifest(skills_dir, evals_dir, lambda manifest: harness.call([*VALIDATE, str(manifest)]))
+    return each_manifest(skills_dir, evals_dir, lambda manifest: harness.call(VALIDATE, manifest))
 
 
 def audit(skills_dir: Path, evals_dir: Path | None) -> int:
-    return each_manifest(skills_dir, evals_dir, lambda manifest: harness.call([*AUDIT, str(manifest)]))
+    return each_manifest(skills_dir, evals_dir, lambda manifest: harness.call(AUDIT, manifest))
 
 
 def check(skills_dir: Path, evals_dir: Path | None, *, require_manifests: bool) -> int:
@@ -27,13 +27,13 @@ def check(skills_dir: Path, evals_dir: Path | None, *, require_manifests: bool) 
 
 
 def validate_then_audit(manifest: Path) -> int:
-    validated = harness.call([*VALIDATE, str(manifest)])
+    validated = harness.call(VALIDATE, manifest)
     if validated != 0:
         return validated
     if not json.loads(manifest.read_text(encoding="utf-8")).get("cases"):
         print(f"{manifest}: no cases yet, readiness audit skipped")
         return 0
-    return harness.call([*AUDIT, str(manifest)])
+    return harness.call(AUDIT, manifest)
 
 
 def each_manifest(

@@ -48,7 +48,7 @@ class SetupError(Exception):
 
 
 def trigger(options: TriggerOptions) -> int:
-    manifest = str(manifest_path(options.skill, options.evals_dir))
+    manifest = harness.operand(manifest_path(options.skill, options.evals_dir))
     try:
         claude = str(launcher("claude-project-only"))
         codex_cmd = codex_command(options.codex_cmd)
@@ -72,7 +72,7 @@ def trigger(options: TriggerOptions) -> int:
 
 
 def run(options: RunOptions) -> int:
-    manifest = str(manifest_path(options.skill, options.evals_dir))
+    manifest = harness.operand(manifest_path(options.skill, options.evals_dir))
     try:
         claude = str(launcher("claude-project-only"))
         flags = {agent: agent_flags(agent, options, claude) for agent in options.agents}

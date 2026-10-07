@@ -50,13 +50,19 @@ def execute(command: Command, arguments: Sequence[str]) -> int:
     os.execv(sys.executable, argv)
 
 
-def call(arguments: Sequence[str]) -> int:
+def operand(path: Path) -> str:
+    # The harness's argparse reads "-h/a/shared-benchmark.json" as -h, prints help, and exits 0.
+    text = str(path)
+    return os.path.join(os.curdir, text) if text.startswith("-") else text
+
+
+def call(command: Sequence[str], manifest: Path) -> int:
     try:
         import skill_benchmark
 
         handlers = {"validate": skill_benchmark.validate_cli_command, "audit-manifest": skill_benchmark.audit_manifest}
-        namespace = skill_benchmark.build_arg_parser().parse_args(arguments)
-        return handlers[arguments[0]](skill_benchmark.CLIInvocation.from_namespace(namespace).to_legacy_namespace())
+        namespace = skill_benchmark.build_arg_parser().parse_args([*command, operand(manifest)])
+        return handlers[command[0]](skill_benchmark.CLIInvocation.from_namespace(namespace).to_legacy_namespace())
     except SystemExit as error:
         return exit_status(error)
 
