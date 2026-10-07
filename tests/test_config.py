@@ -189,6 +189,19 @@ class ConfigFileTests(unittest.TestCase):
                     config.read(self.write(f'version = "main"\nsource = "{escaped}"\n'))
                 self.assertEqual(problems(caught.exception), [f"source {value!r} contains the control character {character!r}; remove it"])
 
+    def test_a_control_character_in_a_path_setting_is_rejected(self) -> None:
+        keys = ("skills_dir", "evals_dir", "trigger_cases", "content_ignore_file", "content_link_exceptions_file", "content_conventions_file", "out")
+        for key in keys:
+            for escaped, value, character in (
+                (r"skills\u0000", "skills\x00", "\x00"),
+                (r"skills\n", "skills\n", "\n"),
+                (r"~/skills\u007f", "~/skills\x7f", "\x7f"),
+            ):
+                with self.subTest(key=key, value=value):
+                    with self.assertRaises(ConfigError) as caught:
+                        config.read(self.write(f'version = "main"\n{key} = "{escaped}"\n'))
+                    self.assertEqual(problems(caught.exception), [f"{key} {value!r} contains the control character {character!r}; remove it"])
+
     def test_a_relative_source_resolves_from_the_file_not_the_working_directory(self) -> None:
         nested = self.root / "skills" / "example"
         nested.mkdir(parents=True)
@@ -276,7 +289,7 @@ class FlagPrecedenceTests(unittest.TestCase):
                 self.assertEqual(runs, [["run-agent", "--agent", agent]])
 
     def test_a_bad_file_stops_every_command_with_each_problem(self) -> None:
-        write(self.checkout / ".skill-ci.toml", 'version = "v1"\nskils_dir = "skills"\n')
+        write(self.checkout / ".skill-ci.toml", 'version = "v1"\nskils_dir = "skills"\nevals_dir = "evals\\u0000"\n')
         result = skill_ci("check", cwd=self.checkout, env={key: value for key, value in self.environment.items() if key != "SKILL_CI_PINNED"})
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertEqual(result.stdout, "")
@@ -284,6 +297,7 @@ class FlagPrecedenceTests(unittest.TestCase):
             result.stderr.splitlines(),
             [
                 "skill-ci: .skill-ci.toml: version is 'v1'; set it to latest, main, or a tag such as v1.0.0",
+                "skill-ci: .skill-ci.toml: evals_dir 'evals\\x00' contains the control character '\\x00'; remove it",
                 "skill-ci: .skill-ci.toml: unknown key 'skils_dir'; did you mean 'skills_dir'?",
             ],
         )

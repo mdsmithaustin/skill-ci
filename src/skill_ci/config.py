@@ -181,8 +181,7 @@ def parse_version(value: object) -> Version:
 def parse_source(value: object, directory: Path) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"source {value!r} is not a git URL or a path")
-    if control := next((character for character in value if unicodedata.category(character) == "Cc"), None):
-        raise ValueError(f"source {value!r} contains the control character {control!r}; remove it")
+    reject_control_characters("source", value)
     scheme, separator, _ = value.partition("://")
     if not separator:
         if ":" in value.partition("/")[0]:
@@ -226,8 +225,14 @@ def parse_value(key: str, spec: Mapping[str, Any], value: object, base: Path) ->
     if "choices" in spec and value not in spec["choices"]:
         raise ValueError(f"{key} is {value!r}; set it to one of {', '.join(spec['choices'])}")
     if kind is Path:
+        reject_control_characters(key, value)
         return base / Path(value).expanduser()
     return kind(value)
+
+
+def reject_control_characters(key: str, value: str) -> None:
+    if control := next((character for character in value if unicodedata.category(character) == "Cc"), None):
+        raise ValueError(f"{key} {value!r} contains the control character {control!r}; remove it")
 
 
 def with_version(text: str, tag: Tag) -> str:
