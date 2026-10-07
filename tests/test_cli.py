@@ -127,6 +127,7 @@ class ManifestTests(ConsumerTestCase):
                 result = self.skill_ci("check", "--evals-dir", "evals")
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertEqual(result.stderr.count(error), 1, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
                 self.assertNotIn('"manifest": "evals/a/shared-benchmark.json"', result.stdout)
                 self.assertIn("OK: b — 1 cases, 0 ablations", lines(result))
                 self.assertIn('"manifest": "evals/b/shared-benchmark.json"', result.stdout)
@@ -188,6 +189,32 @@ class ManifestTests(ConsumerTestCase):
                 self.assertIn("skill-ci: cannot search evals/locked for manifests: Permission denied", result.stderr.splitlines())
                 self.assertEqual(lines(result)[-1:], stdout)
                 self.assertNotIn("manifests checked", result.stdout)
+
+    def test_an_unreadable_manifest_is_one_failure_line_and_the_other_manifests_still_run(self) -> None:
+        write_skill(self.root / "skills" / "a")
+        write(self.root / "evals/a/shared-benchmark.json", manifest("a", ["skills/a/SKILL.md"], [case()]))
+        locked = write(self.root / "evals/locked/shared-benchmark.json", manifest("a", ["skills/a/SKILL.md"], [case()]))
+        git("add", "-A", cwd=self.root)
+        failure = "skill-ci: evals/locked/shared-benchmark.json: PermissionError: [Errno 13] Permission denied: 'evals/locked/shared-benchmark.json'"
+        readable = {
+            "validate": "OK: a — 1 cases, 0 ablations",
+            "audit": '"manifest": "evals/a/shared-benchmark.json"',
+            "check": "checks run: 4; failed: 1 (manifests)",
+        }
+        for unreadable, mode, restore in ((locked, 0o000, 0o644), (locked.parent, 0o444, 0o755)):
+            with self.subTest(unreadable=unreadable.name, mode=oct(mode)):
+                unreadable.chmod(mode)
+                self.addCleanup(unreadable.chmod, restore)
+                if os.access(locked, os.R_OK):
+                    self.skipTest("this user can read a manifest without read permission")
+                for command, evidence in readable.items():
+                    result = skill_ci(command, "--evals-dir", "evals", cwd=self.root)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertEqual([line for line in result.stderr.splitlines() if "evals/locked" in line], [failure])
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertIn("manifests checked: 2", lines(result))
+                    self.assertIn(evidence, result.stdout)
+                unreadable.chmod(restore)
 
     def test_a_manifest_whose_judge_is_a_model_under_test_fails_the_audit(self) -> None:
         write_skill(self.root / "skills" / "a")
