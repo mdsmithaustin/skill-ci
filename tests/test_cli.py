@@ -593,6 +593,12 @@ class PaidRunTests(unittest.TestCase):
         self.assertEqual(result.returncode, 7, result.stderr)
         self.assertEqual([stage[0] for stage in self.fake.arguments()], ["audit-manifest", "prepare", "run-agent", "grade"])
 
+    def test_a_failed_readiness_audit_leaves_an_explicit_output_uncreated(self) -> None:
+        result = self.paid("run", "skills/example", "--out", "o/nested", FAKE_HARNESS_EXIT="2", FAKE_HARNESS_FAIL_STAGE="audit-manifest")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual([stage[0] for stage in self.fake.arguments()], ["audit-manifest"])
+        self.assertFalse((self.checkout / "o").exists())
+
     def test_one_agent_runs_only_its_stages(self) -> None:
         result = self.paid("run", "skills/example", "--out", "o", "--agent", "claude")
         self.assertEqual(result.returncode, 0, result.stderr)
