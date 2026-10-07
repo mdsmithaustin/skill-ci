@@ -166,7 +166,7 @@ class ManifestTests(ConsumerTestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(lines(result), ["OK: b — 0 cases, 0 ablations", "manifests checked: 1"])
 
-    def test_a_manifest_directly_inside_a_skills_root_named_evals_is_checked_however_the_root_is_spelled(self) -> None:
+    def test_a_manifest_directly_inside_a_skills_root_named_evals_is_checked(self) -> None:
         write_skill(self.root / "sub/evals/a")
         write(self.root / "sub/evals/shared-benchmark.json", manifest("a", ["evals/a/SKILL.md"]))
         git("add", "-A", cwd=self.root)
