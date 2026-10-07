@@ -216,6 +216,21 @@ class ManifestTests(ConsumerTestCase):
                     self.assertIn(evidence, result.stdout)
                 unreadable.chmod(restore)
 
+    def test_a_manifest_path_that_starts_with_a_dash_is_checked_not_read_as_an_option(self) -> None:
+        write_skill(self.root / "skills" / "a")
+        write(self.root / "-h/a/shared-benchmark.json", json.dumps({"version": 2}))
+        for command, last in (
+            ("validate", "manifests checked: 1"),
+            ("audit", "manifests checked: 1"),
+            ("check", "checks run: 4; failed: 1 (manifests)"),
+        ):
+            with self.subTest(command=command):
+                result = self.skill_ci(command, "--evals-dir=-h")
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("FAIL: manifest.skill_name is required", result.stderr.splitlines())
+                self.assertNotIn("usage:", result.stdout + result.stderr)
+                self.assertEqual(lines(result)[-1], last)
+
     def test_a_manifest_whose_judge_is_a_model_under_test_fails_the_audit(self) -> None:
         write_skill(self.root / "skills" / "a")
         self_judging = {**json.loads(manifest("a", ["skills/a/SKILL.md"], [case()])), "judge": {"model": "m"}, "jetty": {"model": "m"}}
@@ -730,6 +745,28 @@ class PaidRunTests(unittest.TestCase):
                     self.assertEqual(stage[stage.index("--out") + 1], f"{out}/{product}")
                     self.assertTrue((self.checkout / out).is_dir())
                     self.fake.log.unlink()
+
+    def test_a_manifest_path_that_starts_with_a_dash_reaches_the_harness_as_a_path(self) -> None:
+        manifest_path = "./-h/example/shared-benchmark.json"
+        trigger = self.paid("trigger", "skills/example", "--evals-dir=-h", "--out", "trigger output")
+        self.assertEqual(trigger.returncode, 0, trigger.stderr)
+        [matrix] = self.fake.arguments()
+        self.assertEqual(matrix[0], manifest_path)
+        self.fake.log.unlink()
+        run = self.paid("run", "skills/example", "--evals-dir=-h", "--out", "run output", "--agent", "claude")
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(
+            [stage[:2] for stage in self.fake.arguments()],
+            [
+                ["audit-manifest", manifest_path],
+                ["prepare", manifest_path],
+                ["run-agent", "--agent"],
+                ["grade", manifest_path],
+                ["judge", manifest_path],
+                ["benchmark", manifest_path],
+                ["report", "--benchmark"],
+            ],
+        )
 
     def test_an_explicit_output_still_needs_a_selected_package(self) -> None:
         missing = rf"\[Errno 2\] No such file or directory: '(?:{re.escape(str(self.checkout))}/)?example'"
