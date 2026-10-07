@@ -13,7 +13,6 @@ from pathlib import Path
 from support import INSTALLED_COMMAND, REPOSITORY, FakeHarness, fake_git_install, write
 from test_pin import PinTestCase, still_running
 
-# The tests keep their own list, so a signal dropped from children.STOPPING fails its row.
 STOPS = tuple(
     getattr(signal, name)
     for name in (
@@ -23,9 +22,7 @@ STOPS = tuple(
     if hasattr(signal, name)
 )
 SENT_BY_A_TERMINAL = tuple(getattr(signal, name) for name in ("SIGWINCH", "SIGINFO") if hasattr(signal, name))
-# Seconds skill-ci gives a child to exit after its SIGINT, before it kills the child's group.
 GRACE = 3.0
-# Runs skill-ci, and sends DRIVER_SIGNAL to itself just before it starts the child named DRIVER_BEFORE.
 SIGNALLED_FIRST = """\
 import os, subprocess, sys
 number, name, pids = int(os.environ.pop("DRIVER_SIGNAL")), os.environ.pop("DRIVER_BEFORE"), os.environ.pop("DRIVER_PIDS")
@@ -46,7 +43,6 @@ from skill_ci import cli
 raise SystemExit(cli.main(sys.argv[1:]))
 """
 
-# A pinned commit that logs every signal it gets in the half second after the first, then exits.
 FAKE_PINNED = """\
 import os, signal, time
 log = os.environ["FAKE_PINNED_SIGNALS"]

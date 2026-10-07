@@ -9,10 +9,6 @@ import time
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 
-# Every signal that stops skill-ci while a child runs. The child's leader gets SIGINT in its place, because the harness
-# stops the agents it started only on KeyboardInterrupt, uv 0.12.7 passes a SIGINT sent to its pid on to the pinned
-# skill-ci and waits for it, and Python and uv ignore SIGPIPE. Several of these make uv exit at once when they reach its
-# whole group. SIGWINCH and SIGINFO keep their default action, which ends no process.
 STOPPING = frozenset(
     getattr(signal, name)
     for name in (
@@ -21,16 +17,12 @@ STOPPING = frozenset(
     )
     if hasattr(signal, name)
 )
-# Seconds a child gets to exit after its SIGINT before its process group is killed.
 GRACE = 3.0
-# A pinned skill-ci behind uv spends up to GRACE stopping its own child, so the hand-off waits longer.
 HAND_OFF_GRACE = GRACE + 2.0
 TICK = 0.05
 
 
 class Stopped(BaseException):
-    """A stopping signal ended the run. Neither an Exception nor a SystemExit, so no check turns it into its own status."""
-
     def __init__(self, number: int) -> None:
         super().__init__(signal.Signals(number).name)
         self.status = 128 + number
@@ -45,12 +37,6 @@ def run(
     timeout: float | None = None,
     grace: float = GRACE,
 ) -> subprocess.CompletedProcess[bytes]:
-    """Run argv in a session of its own, so that a stopping signal to skill-ci stops it and everything it started.
-
-    capture=False shares skill-ci's stdin, stdout and stderr; capture=True gives the child /dev/null for stdin and
-    returns its output. Raises Stopped once the child and its group are gone when a stopping signal arrived at any point
-    in the call, even before the child existed, and subprocess.TimeoutExpired after `timeout` seconds.
-    """
     if not capture:
         sys.stdout.flush()
         sys.stderr.flush()
@@ -88,12 +74,11 @@ def stopping_signals() -> Iterator[list[int]]:
     try:
         yield received
     finally:
-        # Blocking runs every handler that has already fired, so no signal lands between this check and the restore.
+        # Blocking runs every handler that has already fired.
         mask = signal.pthread_sigmask(signal.SIG_BLOCK, STOPPING)
         for number, handler in previous.items():
-            # After a stop, the rest of a burst is ignored until skill-ci has exited. Python resets its own handlers
-            # while it shuts down, but not SIG_IGN. signal.signal reports a handler installed outside Python, such as
-            # faulthandler's, as None.
+            # Python resets its own handlers while it shuts down, but not SIG_IGN. signal.signal reports a handler
+            # installed outside Python, such as faulthandler's, as None.
             signal.signal(number, signal.SIG_IGN if received else signal.SIG_DFL if handler is None else handler)
         signal.pthread_sigmask(signal.SIG_SETMASK, mask)
         if received:
@@ -108,6 +93,9 @@ def wait(
     while True:
         now = time.monotonic()
         if interrupted is None and (received or (timeout is not None and now - started >= timeout)):
+            # The harness stops the agents it started only on KeyboardInterrupt, uv 0.12.7 passes a SIGINT sent to its
+            # pid on to the pinned skill-ci and waits for it, Python and uv ignore SIGPIPE, and several STOPPING signals
+            # make uv exit at once when they reach its whole group.
             child.send_signal(signal.SIGINT)
             interrupted = now
         if interrupted is not None and now - interrupted >= grace:
@@ -120,7 +108,7 @@ def wait(
             continue
         if interrupted is None:
             return None, None
-        # The leader is gone, but what it started in its group, such as git's ssh transport, may still run.
+        # git dies of a signal at once and leaves its ssh transport running.
         kill_group(child)
         return None
 

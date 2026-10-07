@@ -111,7 +111,6 @@ class Track(StrEnum):
 
 
 Version = Tag | Track
-# A git URL or a file:// URI that holds no credentials, so messages show it and the version cache keys on it as written.
 Source = NewType("Source", str)
 
 
@@ -187,7 +186,6 @@ def parse_version(value: object) -> Version:
 
 
 def parse_source(value: object, directory: Path) -> Source:
-    # A rejected source may hold a credential, so no message here repeats the value.
     if not isinstance(value, str) or not value.strip():
         raise ValueError("source is not a git URL or a path")
     reject_control_characters("source", value)
@@ -218,8 +216,7 @@ def parse_source(value: object, directory: Path) -> Source:
 
 def holds_credentials(scheme: str, rest: str) -> bool:
     # git splits userinfo at the first '@' and RFC 3986 at the last, a '/', '#' or '?' in a password moves its '@' out
-    # of the authority, and git percent-decodes an ssh URL before ssh reads user@host. One '@' after a plain ssh user
-    # name is the only form that means the same thing to all of them.
+    # of the authority, and git percent-decodes an ssh URL before ssh reads user@host.
     if scheme == "ssh":
         user, at, after = unquote(rest).partition("@")
         return bool(at) and ("@" in after or any(character in user for character in ":/"))
