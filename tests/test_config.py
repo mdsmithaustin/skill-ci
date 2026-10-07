@@ -228,6 +228,9 @@ class ConfigFileTests(unittest.TestCase):
             r"file:///srv/skill-ci.git\u007f",
             r"mirror\u0000.git",
             r"mirror\t.git",
+            r"https://127.0.0.1:9/x\u202eSECRET",
+            r"ssh://git@example.com/skill\u200b-ci.git",
+            r"mirror\u2028.git",
         ):
             with self.subTest(value=escaped):
                 with self.assertRaises(ConfigError) as caught:
@@ -237,7 +240,14 @@ class ConfigFileTests(unittest.TestCase):
     def test_a_control_character_in_a_path_setting_is_rejected(self) -> None:
         keys = ("skills_dir", "evals_dir", "trigger_cases", "content_ignore_file", "content_link_exceptions_file", "content_conventions_file", "out")
         for key in keys:
-            for escaped, value in ((r"skills\u0000", "skills\x00"), (r"skills\n", "skills\n"), (r"~/skills\u007f", "~/skills\x7f")):
+            for escaped, value in (
+                (r"skills\u0000", "skills\x00"),
+                (r"skills\n", "skills\n"),
+                (r"~/skills\u007f", "~/skills\x7f"),
+                (r"skills\u202e", "skills\u202e"),
+                (r"skills\u200b", "skills\u200b"),
+                (r"skills\u2028", "skills\u2028"),
+            ):
                 with self.subTest(key=key, value=value):
                     with self.assertRaises(ConfigError) as caught:
                         config.read(self.write(f'version = "main"\n{key} = "{escaped}"\n'))

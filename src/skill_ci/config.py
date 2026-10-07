@@ -22,6 +22,7 @@ DEFAULT_SOURCE = "https://github.com/mdsmithaustin/skill-ci.git"
 SOURCE_SCHEMES = ("https", "ssh", "file")
 CREDENTIALS = "source may hold a user name, password or token; keep credentials in a git credential helper, and name at most an ssh user, as in ssh://git@host/path"
 TAG = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
+CONTROL_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
 VERSION_LINE = re.compile(r"""^[ \t]*version[ \t]*=[ \t]*(?P<quote>["'])(?P<value>[^"'\n]*)(?P=quote)""", re.MULTILINE)
 
 OPTIONS: dict[str, tuple[str, dict[str, Any]]] = {
@@ -274,7 +275,8 @@ def expand_user(named: str, value: str) -> Path:
 
 
 def reject_control_characters(named: str, value: str) -> None:
-    if any(unicodedata.category(character) == "Cc" for character in value):
+    # A format character or a line or paragraph separator, such as U+202E, can hide or reorder text a message prints.
+    if any(unicodedata.category(character) in CONTROL_CATEGORIES for character in value):
         raise ValueError(f"{named} contains a control character; remove it")
 
 

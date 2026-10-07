@@ -333,6 +333,7 @@ class OfflineTests(PinTestCase):
         for line in (
             'source = ["s3cr3t"]',
             'source = "https://example.com/x.git\\u001bs3cr3t"',
+            'source = "https://127.0.0.1:9/x\\u202es3cr3t\\u200b"',
             'source = "s3cr3t@example.com:org/x.git"',
             'source = "~s3cr3t-no-such-user/x.git"',
             'source = "https://alice:s3cr3t@example.com/x.git"',
