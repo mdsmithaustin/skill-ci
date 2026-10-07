@@ -320,6 +320,21 @@ class FlagPrecedenceTests(unittest.TestCase):
         self.assertEqual(followed.returncode, 0, followed.stdout + followed.stderr)
         self.assertEqual(followed.stdout.splitlines(), ["checks run: 2; failed: 0"])
 
+    def test_a_home_directory_that_cannot_be_found_names_its_key(self) -> None:
+        unknown = "~skill-ci-no-such-user"
+        write(self.checkout / ".skill-ci.toml", f'version = "v1.0.0"\nsource = "{unknown}/skill-ci.git"\nskills_dir = "{unknown}/skills"\nruns = "five"\n')
+        result = self.run_cli("lint")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(
+            result.stderr.splitlines(),
+            [
+                f"skill-ci: .skill-ci.toml: source '{unknown}/skill-ci.git' names a home directory that cannot be found; write the full path",
+                f"skill-ci: .skill-ci.toml: skills_dir '{unknown}/skills' names a home directory that cannot be found; write the full path",
+                "skill-ci: .skill-ci.toml: runs is 'five'; set it to a whole number",
+            ],
+        )
+
     def test_a_bad_file_stops_every_command_with_each_problem(self) -> None:
         write(self.checkout / ".skill-ci.toml", 'version = "v1"\nskils_dir = "skills"\nevals_dir = "evals\\u0000"\n')
         result = skill_ci("check", cwd=self.checkout, env={key: value for key, value in self.environment.items() if key != "SKILL_CI_PINNED"})

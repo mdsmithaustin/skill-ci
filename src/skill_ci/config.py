@@ -191,7 +191,7 @@ def parse_source(value: object, directory: Path) -> str:
     if not separator:
         if ":" in value.partition("/")[0]:
             raise ValueError(f"source {value!r} is an scp-style address; write it as ssh://user@host/path")
-        return (directory / Path(value).expanduser()).resolve().as_uri()
+        return (directory / expand_user("source", value)).resolve().as_uri()
     if scheme not in SOURCE_SCHEMES:
         raise ValueError(f"source {value!r} uses {scheme}; use one of {', '.join(SOURCE_SCHEMES)}")
     # uv drops a query or a fragment from a git URL, and with it the @<commit> the hand-off appends.
@@ -231,8 +231,15 @@ def parse_value(key: str, spec: Mapping[str, Any], value: object, base: Path) ->
         raise ValueError(f"{key} is {value!r}; set it to one of {', '.join(spec['choices'])}")
     if kind is Path:
         reject_control_characters(key, value)
-        return base / Path(value).expanduser()
+        return base / expand_user(key, value)
     return kind(value)
+
+
+def expand_user(key: str, value: str) -> Path:
+    try:
+        return Path(value).expanduser()
+    except RuntimeError as error:
+        raise ValueError(f"{key} {value!r} names a home directory that cannot be found; write the full path") from error
 
 
 def reject_control_characters(key: str, value: str) -> None:
