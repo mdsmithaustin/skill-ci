@@ -637,8 +637,9 @@ class RerunGuardTests(PinTestCase):
                 self.assertEqual(lint.returncode, 0, lint.stderr)
                 self.assertEqual(lint.stdout, "checks run: 2; failed: 0\n")
                 self.assertEqual(update.returncode, 2, update.stderr)
+                # With a venv path over 127 characters, uv writes an sh trampoline, and sh adds its own getcwd error.
                 self.assertEqual(
-                    update.stderr.splitlines()[1:],
+                    [line for line in update.stderr.splitlines() if line.startswith("skill-ci")][1:],
                     ["skill-ci: no .skill-ci.toml in the working directory, or in a parent directory inside the same git repository"],
                 )
 
