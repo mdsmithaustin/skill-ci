@@ -31,6 +31,8 @@ stage = arguments[0] if arguments else ""
 if (killed := os.environ.get("FAKE_HARNESS_SIGNAL")) and (not failing or failing == stage):
     os.kill(os.getpid(), int(killed))
 if waiting := os.environ.get("FAKE_HARNESS_WAIT"):
+    with open(os.path.join(waiting, "ignored"), "w") as log:
+        log.write(" ".join(str(int(number)) for number in signal.valid_signals() if signal.getsignal(number) == signal.SIG_IGN))
     def record(number, frame):
         with open(os.path.join(waiting, "received"), "a") as log:
             log.write(f"{number}\\n")
@@ -43,7 +45,11 @@ if waiting := os.environ.get("FAKE_HARNESS_WAIT"):
     with open(os.path.join(waiting, "pids.partial"), "w") as log:
         log.write(f"{os.getpid()} {grandchild.pid}")
     os.rename(os.path.join(waiting, "pids.partial"), os.path.join(waiting, "pids"))
-    time.sleep(60)
+    deadline = time.monotonic() + 60
+    while not os.path.exists(os.path.join(waiting, "release")) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    grandchild.kill()
+    grandchild.wait()
 raise SystemExit(int(os.environ.get("FAKE_HARNESS_EXIT", "0")) if not failing or failing == stage else 0)
 """
 

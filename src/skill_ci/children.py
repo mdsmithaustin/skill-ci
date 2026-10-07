@@ -70,7 +70,13 @@ def stopping_signals() -> Iterator[list[int]]:
         if not received:
             received.append(number)
 
-    previous = {number: signal.signal(number, record) for number in STOPPING}
+    # A signal ignored at startup, as under nohup or in a background job, stays ignored here and in the child. Python
+    # ignores SIGPIPE itself at startup, so its SIG_IGN says nothing about how skill-ci was started.
+    previous = {
+        number: signal.signal(number, record)
+        for number in STOPPING
+        if number == signal.SIGPIPE or signal.getsignal(number) != signal.SIG_IGN
+    }
     try:
         yield received
     finally:

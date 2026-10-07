@@ -91,14 +91,14 @@ class ChildStopTests(PinTestCase):
     def harness_stage(self, waiting: Path, *command: str, **variables: str) -> subprocess.Popen[bytes]:
         return self.start(*command, "trigger", "skills/example", "--out", str(waiting / "out"), FAKE_HARNESS_WAIT=str(waiting), **variables)
 
-    def direct(self, waiting: Path, **variables: str) -> subprocess.Popen[bytes]:
+    def direct(self, waiting: Path, *launcher: str, **variables: str) -> subprocess.Popen[bytes]:
         (self.consumer / ".skill-ci.toml").unlink(missing_ok=True)
-        return self.harness_stage(waiting, str(self.fake.python), "-I", "-m", "skill_ci", **variables)
+        return self.harness_stage(waiting, *launcher, str(self.fake.python), "-I", "-m", "skill_ci", **variables)
 
-    def handed_off(self, waiting: Path, **variables: str) -> subprocess.Popen[bytes]:
+    def handed_off(self, waiting: Path, *launcher: str, **variables: str) -> subprocess.Popen[bytes]:
         self.pin("v0.10.0")
         handing = {"FAKE_UV_CHILD": str(self.installed), "FAKE_UV_COMMAND": str(self.inner), "FAKE_UV_SPAWNS": str(waiting / "uv")}
-        return self.harness_stage(waiting, str(INSTALLED_COMMAND), **handing, **variables)
+        return self.harness_stage(waiting, *launcher, str(INSTALLED_COMMAND), **handing, **variables)
 
     def ready(self, path: Path, process: subprocess.Popen[bytes]) -> list[int]:
         deadline = time.monotonic() + 30
@@ -215,6 +215,22 @@ class ChildStopTests(PinTestCase):
                     os.kill(process.pid, signal.SIGTERM)
                     self.assertEqual(process.wait(timeout=30), 128 + signal.SIGTERM)
                     self.assertEqual(self.survivors(*pids), [])
+
+    def test_a_signal_ignored_at_start_stays_ignored_by_skill_ci_and_its_child(self) -> None:
+        for number, shell in ((signal.SIGHUP, 'echo $$ > "$0"; exec nohup "$@"'), (signal.SIGINT, '"$@" & echo $! > "$0"; wait $!')):
+            for name, start in (("harness stage", self.direct), ("hand-off", self.handed_off)):
+                with self.subTest(signal=number.name, child=name):
+                    waiting = self.waiting()
+                    process = start(waiting, "/bin/sh", "-c", shell, str(waiting / "skill-ci"))
+                    self.ready(waiting / "pids", process)
+                    [skill_ci] = self.ready(waiting / "skill-ci", process)
+                    os.kill(skill_ci, number)
+                    time.sleep(0.5)
+                    self.assertIsNone(process.poll())
+                    self.assertEqual(self.received(waiting), [])
+                    self.assertIn(str(int(number)), (waiting / "ignored").read_text().split())
+                    (waiting / "release").touch()
+                    self.assertEqual(process.wait(timeout=30), 0)
 
     def test_a_child_that_ignores_the_interrupt_is_killed_after_the_grace(self) -> None:
         for name, start in (("harness stage", self.direct), ("hand-off", self.handed_off)):
