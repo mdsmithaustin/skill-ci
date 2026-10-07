@@ -171,6 +171,19 @@ class ConfigFileTests(unittest.TestCase):
                 config.read(self.write(f'version = "main"\nsource = "{value}"\n'))
             self.assertEqual(problems(caught.exception), [f"source {value!r} {problem}"])
 
+    def test_a_control_character_in_source_is_rejected_in_every_form(self) -> None:
+        for escaped, value, character in (
+            (r"https://git.example.com/skill-ci.git\u0000x", "https://git.example.com/skill-ci.git\x00x", "\x00"),
+            (r"ssh://git@example.com/skill-ci\u001b.git", "ssh://git@example.com/skill-ci\x1b.git", "\x1b"),
+            (r"file:///srv/skill-ci.git\u007f", "file:///srv/skill-ci.git\x7f", "\x7f"),
+            (r"mirror\u0000.git", "mirror\x00.git", "\x00"),
+            (r"mirror\t.git", "mirror\t.git", "\t"),
+        ):
+            with self.subTest(value=value):
+                with self.assertRaises(ConfigError) as caught:
+                    config.read(self.write(f'version = "main"\nsource = "{escaped}"\n'))
+                self.assertEqual(problems(caught.exception), [f"source {value!r} contains the control character {character!r}; remove it"])
+
     def test_a_relative_source_resolves_from_the_file_not_the_working_directory(self) -> None:
         nested = self.root / "skills" / "example"
         nested.mkdir(parents=True)

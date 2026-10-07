@@ -5,6 +5,7 @@ import difflib
 import os
 import re
 import tomllib
+import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -180,6 +181,8 @@ def parse_version(value: object) -> Version:
 def parse_source(value: object, directory: Path) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"source {value!r} is not a git URL or a path")
+    if control := next((character for character in value if unicodedata.category(character) == "Cc"), None):
+        raise ValueError(f"source {value!r} contains the control character {control!r}; remove it")
     scheme, separator, _ = value.partition("://")
     if not separator:
         if ":" in value.partition("/")[0]:

@@ -190,6 +190,16 @@ class ResolutionTests(PinTestCase):
         self.assertEqual(result.stderr.splitlines(), [f"skill-ci: {self.source.as_uri()} has no tag v9.9.9"])
         self.assertFalse(self.uv_log.exists())
 
+    def test_a_control_character_in_source_stops_before_git_runs(self) -> None:
+        write(self.consumer / ".skill-ci.toml", 'version = "latest"\nsource = "https://git.example.com/skill-ci.git\\u0000x"\n')
+        result = self.skill_ci("lint", **self.shimmed())
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(
+            result.stderr.splitlines(),
+            ["skill-ci: .skill-ci.toml: source 'https://git.example.com/skill-ci.git\\x00x' contains the control character '\\x00'; remove it"],
+        )
+        self.assertFalse(self.git_log.exists())
+
     def test_an_unknown_key_is_reported_before_a_resolution_error(self) -> None:
         self.pin("v9.9.9", 'skils_dir = "skills"')
         missing = self.skill_ci("lint")
