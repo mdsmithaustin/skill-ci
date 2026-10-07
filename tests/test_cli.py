@@ -816,6 +816,30 @@ class PaidRunTests(unittest.TestCase):
             ],
         )
 
+    def test_an_output_that_starts_with_a_dash_reaches_the_harness_as_a_path(self) -> None:
+        trigger = self.paid("trigger", "skills/example", "--out", "./-results")
+        self.assertEqual(trigger.returncode, 0, trigger.stderr)
+        [matrix] = self.fake.arguments()
+        self.assertEqual([argument for argument in matrix if "-results/" in argument], ["./-results/traces", "./-results/trigger-matrix.json"])
+        self.assertTrue((self.checkout / "-results").is_dir())
+        shutil.rmtree(self.checkout / "-results")
+        self.fake.log.unlink()
+        run = self.paid("run", "skills/example", "--out", "./-results", "--agent", "claude")
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(
+            [[argument for argument in stage if "-results/" in argument] for stage in self.fake.arguments()],
+            [
+                [],
+                ["./-results/tasks.jsonl"],
+                ["./-results/tasks.jsonl", "./-results/claude"],
+                ["./-results/claude"],
+                ["./-results/claude", "./-results/claude-judge.jsonl"],
+                ["./-results/claude", "./-results/claude-judge.jsonl", "./-results/claude-benchmark.json"],
+                ["./-results/claude-benchmark.json"],
+            ],
+        )
+        self.assertTrue((self.checkout / "-results").is_dir())
+
     def test_an_output_that_cannot_be_created_fails_on_one_line(self) -> None:
         write(self.checkout / "afile", "")
         for command, stages in (("trigger", []), ("run", ["audit-manifest"])):
