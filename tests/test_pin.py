@@ -526,12 +526,9 @@ class RerunGuardTests(PinTestCase):
         self.assertEqual(result.stderr.splitlines(), [UNKNOWN_KEY])
         self.assertFalse(self.uv_log.exists())
 
-    def test_a_deleted_or_unreadable_working_directory_counts_as_no_file(self) -> None:
-        getcwd = run_in_a_broken_cwd(self.root / "probe", "chmod 000", sys.executable, "-c", "import os; os.getcwd()")
+    def test_a_deleted_or_unreadable_working_directory_still_runs(self) -> None:
         for breaking_command in ("rmdir", "chmod 000"):
             with self.subTest(cwd=breaking_command):
-                if breaking_command == "chmod 000" and getcwd.returncode == 0:
-                    self.skipTest("getcwd works in a directory with mode 000 on this platform")
                 version, lint, update = (
                     run_in_a_broken_cwd(self.consumer / f"{breaking_command} {arguments[0]}", breaking_command, str(INSTALLED_COMMAND), *arguments)
                     for arguments in (("--version",), ("lint", "--skills-dir", str(self.consumer / "skills")), ("update",))

@@ -220,6 +220,15 @@ class ConfigFileTests(unittest.TestCase):
         inner = write(self.root / "repository" / ".skill-ci.toml", 'version = "main"\n')
         self.assertEqual(config.find(nested), inner)
 
+    def test_a_directory_that_cannot_be_read_counts_as_one_without_a_file(self) -> None:
+        (self.root / ".git").mkdir()
+        locked = self.root / "locked"
+        locked.mkdir()
+        locked.chmod(0)
+        self.addCleanup(locked.chmod, 0o755)
+        self.write('version = "main"\n')
+        self.assertEqual(config.find(locked), self.path)
+
     def test_with_version_rewrites_only_the_version_value(self) -> None:
         text = "# skill-ci pin\nversion = 'v0.9.0'  # bump with skill-ci update\n\nskills_dir = \"skills\"  # version = 'kept'\n"
         self.assertEqual(
