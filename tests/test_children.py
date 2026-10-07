@@ -11,7 +11,7 @@ import types
 import unittest
 from pathlib import Path
 
-from support import INSTALLED_COMMAND, REPOSITORY, FakeHarness, fake_git_install, write
+from support import ENVIRONMENT, INSTALLED_COMMAND, REPOSITORY, FakeHarness, fake_git_install, write
 from test_pin import PinTestCase, still_running
 
 from skill_ci import children
@@ -313,6 +313,11 @@ class RunnerTests(unittest.TestCase):
             sys.setprofile(nest)
             os.kill(os.getpid(), signal.SIGTERM)
         self.assertEqual(stopped.exception.status, 128 + signal.SIGTERM)
+
+    def test_a_signal_after_a_child_exits_takes_its_default_action(self) -> None:
+        script = "import os, signal, sys\nfrom skill_ci import children\nchildren.run([sys.executable, '-c', ''])\nos.kill(os.getpid(), signal.SIGTERM)\n"
+        finished = subprocess.run([sys.executable, "-c", script], env=ENVIRONMENT, timeout=30, check=False)
+        self.assertEqual(finished.returncode, -signal.SIGTERM)
 
     def test_only_the_runner_starts_a_child_process(self) -> None:
         spawning = {
