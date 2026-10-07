@@ -387,6 +387,40 @@ class LintTests(ConsumerTestCase):
         self.assertIn("anchor 'missing anchor' is absent from 'example' description", flagged.stdout)
         self.assertEqual(lines(flagged)[-1], "checks run: 2; failed: 1 (frontmatter)")
 
+    def test_an_unreadable_skill_file_is_one_finding_in_each_check(self) -> None:
+        skill_file = self.skill / "SKILL.md"
+        skill_file.chmod(0)
+        self.addCleanup(skill_file.chmod, 0o644)
+        if os.access(skill_file, os.R_OK):
+            self.skipTest("this user can read a file without read permission")
+        result = skill_ci("lint", cwd=self.root)
+        error = "[Errno 13] Permission denied: 'skills/example/SKILL.md'"
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(
+            lines(result),
+            [
+                f"skills/example/SKILL.md: cannot read file: {error}",
+                f"skills/example/SKILL.md:1: unreadable: cannot read file: {error}",
+                "checks run: 2; failed: 2 (frontmatter, content)",
+            ],
+        )
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_a_skill_file_that_is_a_directory_is_one_finding_in_each_check(self) -> None:
+        (self.root / "skills/other/SKILL.md").mkdir(parents=True)
+        result = self.skill_ci("lint")
+        error = "[Errno 21] Is a directory: 'skills/other/SKILL.md'"
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(
+            lines(result),
+            [
+                f"skills/other/SKILL.md: cannot read file: {error}",
+                f"skills/other/SKILL.md:1: unreadable: cannot read file: {error}",
+                "checks run: 2; failed: 2 (frontmatter, content)",
+            ],
+        )
+        self.assertNotIn("Traceback", result.stderr)
+
 
 class FastCheckTests(ConsumerTestCase):
     def setUp(self) -> None:
@@ -487,6 +521,26 @@ class FullCheckTests(ConsumerTestCase):
         self.assertEqual(repository.returncode, 1, repository.stdout + repository.stderr)
         self.assertIn("docs/notes.md:1: possible email address", lines(repository))
         self.assertIn("skills/example/notes.md:3: possible email address", lines(repository))
+
+    def test_an_unreadable_skill_file_does_not_stop_the_manifest_check(self) -> None:
+        write_skill(self.root / "skills" / "a")
+        write_skill(self.root / "skills" / "b")
+        write(self.root / "evals/b/shared-benchmark.json", '{"version": 2}\n')
+        git("add", "-A", cwd=self.root)
+        skill_file = self.root / "skills/a/SKILL.md"
+        skill_file.chmod(0)
+        self.addCleanup(skill_file.chmod, 0o644)
+        if os.access(skill_file, os.R_OK):
+            self.skipTest("this user can read a file without read permission")
+        result = skill_ci("check", "--evals-dir", "evals", cwd=self.root)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn(
+            "skills/a/SKILL.md:1: unreadable: cannot read file: [Errno 13] Permission denied: 'skills/a/SKILL.md'", lines(result)
+        )
+        self.assertIn("FAIL: manifest.skill_name is required", result.stderr.splitlines())
+        self.assertIn("manifests checked: 1", lines(result))
+        self.assertEqual(lines(result)[-1], "checks run: 4; failed: 4 (pii, frontmatter, content, manifests)")
+        self.assertNotIn("Traceback", result.stderr)
 
 
 class CheckRunnerTests(unittest.TestCase):
