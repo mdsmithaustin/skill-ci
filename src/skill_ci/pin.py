@@ -23,8 +23,8 @@ STARTED = "SKILL_CI_STARTED"
 HANDOFF_FAILED = 126
 # uv's console script starts Python without -I, so these would load other code under the pinned commit's name.
 SHADOWING = frozenset({"PYTHONPATH", "PYTHONHOME"})
-# uv forwards these to the tool it runs, and SIGINT only when stdin is not a terminal, because at a terminal
-# Ctrl-C already reaches every process in the foreground group.
+# uv passes these on to the tool it runs. At a terminal, Ctrl-C already reaches every process in the foreground
+# group, so neither uv nor supervise forwards SIGINT there.
 FORWARDED = (signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT, signal.SIGUSR1, signal.SIGUSR2)
 NEWER_TAG_CHECK_INTERVAL = timedelta(days=1)
 LS_REMOTE_TIMEOUT = 5

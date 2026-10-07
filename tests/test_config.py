@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from support import ENVIRONMENT, FakeHarness, install_record, skill_ci, write, write_skill
+from support import ENVIRONMENT, FakeHarness, fake_git_install, skill_ci, write, write_skill
 
 from skill_ci import config
 from skill_ci.config import ConfigError, Tag, Track
@@ -139,9 +139,9 @@ class ConfigFileTests(unittest.TestCase):
             ("ftp://git.example.com/skill-ci.git", "uses ftp; use one of https, ssh, file"),
             ("http://git.example.com/skill-ci.git", "uses http; use one of https, ssh, file"),
             ("git://git.example.com/skill-ci.git", "uses git; use one of https, ssh, file"),
-            ("https://git.example.com/skill-ci.git#subdirectory=x", "contains '#'; uv would misread it, so percent-encode it or remove it"),
-            ("https://git.example.com/skill-ci.git?ref=main", "contains '?'; uv would misread it, so percent-encode it or remove it"),
-            ("https://git.example.com/a b.git", "contains ' '; uv would misread it, so percent-encode it or remove it"),
+            ("https://git.example.com/skill-ci.git#subdirectory=x", "contains '#'; percent-encode it or remove it"),
+            ("https://git.example.com/skill-ci.git?ref=main", "contains '?'; percent-encode it or remove it"),
+            ("https://git.example.com/a b.git", "contains ' '; percent-encode it or remove it"),
             ("https://", "names no host"),
             ("ssh:///org/skill-ci.git", "names no host"),
             ("file://relative/skill-ci.git", "names no absolute path; write file:///absolute/path, or a plain path"),
@@ -191,7 +191,7 @@ class FlagPrecedenceTests(unittest.TestCase):
         subprocess.run(["git", "add", "-A"], cwd=self.checkout, env=environment, capture_output=True, check=True)
         self.environment = {
             **environment,
-            "PYTHONPATH": str(install_record(self.root / "installed", INSTALLED_COMMIT)),
+            "PYTHONPATH": str(fake_git_install(self.root / "installed", INSTALLED_COMMIT)),
             "SKILL_CI_PINNED": INSTALLED_COMMIT,
         }
 
@@ -228,7 +228,7 @@ class FlagPrecedenceTests(unittest.TestCase):
     def test_a_repeated_flag_replaces_the_file_list(self) -> None:
         self.settings('agents = ["codex"]')
         fake = FakeHarness(self.root)
-        install_record(fake.purelib, INSTALLED_COMMIT)
+        fake_git_install(fake.purelib, INSTALLED_COMMIT)
         for flags, agent in (((), "codex"), (("--agent", "claude"), "claude")):
             with self.subTest(flags=flags):
                 fake.log.unlink(missing_ok=True)

@@ -180,10 +180,10 @@ def parse_source(value: object, directory: Path) -> str:
         return (directory / Path(value).expanduser()).resolve().as_uri()
     if scheme not in SOURCE_SCHEMES:
         raise ValueError(f"source {value!r} uses {scheme}; use one of {', '.join(SOURCE_SCHEMES)}")
-    # The hand-off appends @<commit>, and uv reads # and ? as the start of a fragment or a query.
+    # uv drops a query or a fragment from a git URL, and with it the @<commit> the hand-off appends.
     misread = [character for character in value if character.isspace() or character in "#?"]
     if misread:
-        raise ValueError(f"source {value!r} contains {misread[0]!r}; uv would misread it, so percent-encode it or remove it")
+        raise ValueError(f"source {value!r} contains {misread[0]!r}; percent-encode it or remove it")
     parts = urlsplit(value)
     if scheme == "file" and (parts.netloc or not parts.path.startswith("/")):
         raise ValueError(f"source {value!r} names no absolute path; write file:///absolute/path, or a plain path")

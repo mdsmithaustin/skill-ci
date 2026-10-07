@@ -16,7 +16,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from support import ENVIRONMENT, INSTALLED_COMMAND, REPOSITORY, FakeHarness, install_record, skill_ci, write, write_skill
+from support import ENVIRONMENT, INSTALLED_COMMAND, REPOSITORY, FakeHarness, fake_git_install, skill_ci, write, write_skill
 
 from skill_ci import pin
 from skill_ci.config import Tag
@@ -333,7 +333,7 @@ class CacheWriteTests(unittest.TestCase):
 class RerunGuardTests(PinTestCase):
     def test_the_pinned_child_runs_in_place_and_reports_only_its_installed_commit(self) -> None:
         self.pin("v0.9.1")
-        child = {"PYTHONPATH": str(install_record(self.root / "installed", self.commits["v0.9.0"])), "SKILL_CI_PINNED": self.commits["v0.9.0"]}
+        child = {"PYTHONPATH": str(fake_git_install(self.root / "installed", self.commits["v0.9.0"])), "SKILL_CI_PINNED": self.commits["v0.9.0"]}
         result = self.skill_ci("check", "--fast", **child)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(result.stdout.splitlines()[-1], "checks run: 3; failed: 0")
@@ -344,7 +344,7 @@ class RerunGuardTests(PinTestCase):
 
     def test_a_child_that_is_not_the_pinned_commit_refuses_to_run(self) -> None:
         self.pin("v0.9.0")
-        installed = str(install_record(self.root / "installed", self.commits["v0.9.0"]))
+        installed = str(fake_git_install(self.root / "installed", self.commits["v0.9.0"]))
         other = self.commits["v0.9.1"]
         for variables, problem in (
             ({"SKILL_CI_PINNED": "1"}, "SKILL_CI_PINNED is '1', not a full commit"),
@@ -360,7 +360,7 @@ class RerunGuardTests(PinTestCase):
 
     def test_the_pinned_child_marks_its_start_and_hides_the_hand_off_from_what_it_runs(self) -> None:
         fake = FakeHarness(self.root)
-        install_record(fake.purelib, self.commits["v0.9.0"])
+        fake_git_install(fake.purelib, self.commits["v0.9.0"])
         started = self.root / "started"
         result = fake.run(
             "harness", "skill-benchmark", "--help", cwd=self.consumer, SKILL_CI_PINNED=self.commits["v0.9.0"], SKILL_CI_STARTED=str(started)
@@ -370,7 +370,7 @@ class RerunGuardTests(PinTestCase):
         self.assertEqual([call["skill_ci_variables"] for call in fake.calls()], [[]])
 
     def test_a_run_pinned_to_its_own_commit_stays_one_process(self) -> None:
-        installed = install_record(self.root / "installed", self.commits["v0.9.0"])
+        installed = fake_git_install(self.root / "installed", self.commits["v0.9.0"])
         self.pin("v0.9.0")
 
         def module(*arguments: str) -> subprocess.CompletedProcess[str]:

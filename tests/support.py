@@ -97,8 +97,7 @@ def write(path: Path, text: str) -> Path:
     return path
 
 
-def install_record(directory: Path, commit: str) -> Path:
-    """Write the metadata uv leaves for skill-ci installed from git at commit, so a run from directory reports it."""
+def fake_git_install(directory: Path, commit: str) -> Path:
     dist_info = directory / "skill_ci-1.0.0.dist-info"
     write(dist_info / "METADATA", "Metadata-Version: 2.1\nName: skill-ci\nVersion: 1.0.0\n")
     write(dist_info / "direct_url.json", json.dumps({"url": "https://git.example.com/skill-ci.git", "vcs_info": {"vcs": "git", "commit_id": commit}}))
