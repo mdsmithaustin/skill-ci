@@ -42,6 +42,18 @@ def skill_ci(*arguments: str, cwd: Path, env: dict[str, str] | None = None) -> s
     )
 
 
+def run_in_a_broken_cwd(directory: Path, breaking_command: str, *command: str) -> subprocess.CompletedProcess[str]:
+    directory.mkdir()
+    return subprocess.run(
+        ["/bin/sh", "-c", f'cd "$1" && {breaking_command} "$1" && shift && exec "$@"', "sh", str(directory), *command],
+        env=ENVIRONMENT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+
 def git(*arguments: str, cwd: Path) -> None:
     subprocess.run(["git", *arguments], cwd=cwd, env=ENVIRONMENT, capture_output=True, check=True)
 

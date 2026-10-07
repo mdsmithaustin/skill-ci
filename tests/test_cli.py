@@ -12,9 +12,11 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from skill_ci import suite
-from support import ENVIRONMENT, INSTALLED_COMMAND, PLANTED_EMAIL, REPOSITORY, FakeHarness, case, git, manifest, skill_ci, write, write_skill
+from skill_ci import cli, suite
+from skill_ci.checks import package
+from support import ENVIRONMENT, INSTALLED_COMMAND, PLANTED_EMAIL, REPOSITORY, FakeHarness, case, git, manifest, run_in_a_broken_cwd, skill_ci, write, write_skill
 
 
 def lines(result: subprocess.CompletedProcess[str]) -> list[str]:
@@ -398,6 +400,13 @@ class PackageTests(ConsumerTestCase):
         self.assertEqual(checked.returncode, 1, checked.stdout + checked.stderr)
         self.assertEqual(lines(checked)[-1], "checks run: 5; failed: 1 (package)")
 
+    def test_a_relative_skills_dir_from_a_deleted_working_directory_fails_on_one_line(self) -> None:
+        write_skill(self.root / "skills" / "example")
+        result = run_in_a_broken_cwd(self.root / "gone", "rmdir", str(INSTALLED_COMMAND), "package", "--skills-dir", "../skills")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "skill-ci: FileNotFoundError: [Errno 2] No such file or directory\n")
+
 
 class LintTests(ConsumerTestCase):
     def setUp(self) -> None:
@@ -672,6 +681,28 @@ class CheckRunnerTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(stderr.getvalue(), "skill-ci: first check: PermissionError: [Errno 13] Permission denied: 'skills/a/SKILL.md'\n")
         self.assertEqual(stdout.getvalue(), "checks run: 2; failed: 1 (first)\n")
+
+
+class UnexpectedErrorTests(unittest.TestCase):
+    def package_that_raises(self, **variables: str) -> tuple[int, str]:
+        environment = {key: value for key, value in os.environ.items() if key != "SKILL_CI_DEBUG"} | variables
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(package, "check_packages", side_effect=RuntimeError("the inventory broke")),
+            mock.patch.dict(os.environ, environment, clear=True),
+            contextlib.redirect_stderr(stderr),
+        ):
+            code = cli.main(["package"])
+        return code, stderr.getvalue()
+
+    def test_an_unexpected_error_in_a_command_prints_one_line_and_exits_1(self) -> None:
+        self.assertEqual(self.package_that_raises(), (1, "skill-ci: RuntimeError: the inventory broke\n"))
+
+    def test_skill_ci_debug_prints_the_traceback_instead(self) -> None:
+        code, stderr = self.package_that_raises(SKILL_CI_DEBUG="1")
+        self.assertEqual(code, 1)
+        self.assertTrue(stderr.startswith("Traceback (most recent call last):\n"), stderr)
+        self.assertTrue(stderr.endswith("\nRuntimeError: the inventory broke\n"), stderr)
 
 
 class PaidRunTests(unittest.TestCase):
