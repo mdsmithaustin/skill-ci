@@ -232,7 +232,7 @@ class ResolutionTests(PinTestCase):
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertEqual(
             result.stderr.splitlines(),
-            ["skill-ci: .skill-ci.toml: source contains the control character '\\x00'; remove it"],
+            ["skill-ci: .skill-ci.toml: source contains a control character; remove it"],
         )
         self.assertFalse(self.git_log.exists())
 
@@ -309,7 +309,7 @@ class OfflineTests(PinTestCase):
             ("https://alice:p#s3cr3t@127.0.0.1:9/x.git", credentials),
             ("https://alice:p?s3cr3t@127.0.0.1:9/x.git", credentials),
             ("https://alice:p/s3cr3t@127.0.0.1:9/x.git", credentials),
-            ("https://127.0.0.1:9/x.git?private_token=s3cr3t", "skill-ci: .skill-ci.toml: source contains '?'; percent-encode it or remove it"),
+            ("https://127.0.0.1:9/x.git?private_token=s3cr3t", "skill-ci: .skill-ci.toml: source has a query or a fragment, which is not allowed; keep a token in a git credential helper"),
             ("https://alice:s3cr3t%40x@127.0.0.1:9/x.git", credentials),
             ("https://alice%3As3cr3t@127.0.0.1:9/x.git", credentials),
             ("https://127.0.0.1:9/org/s3cr3t@x.git", credentials),
@@ -329,17 +329,51 @@ class OfflineTests(PinTestCase):
                 self.assertFalse(self.git_log.exists(), "git never ran")
                 self.assertFalse(self.uv_log.exists(), "uv never ran")
 
-    def test_an_ssh_user_name_reaches_git_and_uv_and_keys_the_cache_as_written(self) -> None:
+    def test_no_rejected_source_reaches_the_output_or_the_cache(self) -> None:
+        for line in (
+            'source = ["s3cr3t"]',
+            'source = "https://example.com/x.git\\u001bs3cr3t"',
+            'source = "s3cr3t@example.com:org/x.git"',
+            'source = "~s3cr3t-no-such-user/x.git"',
+            'source = "https://alice:s3cr3t@example.com/x.git"',
+            'source = "https://ghp_s3cr3t\uff20example.com/x.git"',
+            'source = "ssh://git\uff1as3cr3t@example.com/x.git"',
+            'source = "s3cr3t://example.com/x.git"',
+            'source = "https://example.com/s3cr3t x.git"',
+            'source = "https://example.com/x.git?private_token=s3cr3t"',
+            'source = "https://example.com/x.git#s3cr3t"',
+            'source = "https://[alice:s3cr3t]/x.git"',
+            'source = "ssh://git@[s3cr3t:tok]/x.git"',
+            'source = "file://s3cr3t/x.git"',
+            'source = "https:///s3cr3t"',
+            'source = "https://example.com:s3cr3t/x.git"',
+            'source = "ssh://git@example.com:s3cr3t/x.git"',
+        ):
+            with self.subTest(line=line):
+                write(self.consumer / ".skill-ci.toml", f'version = "latest"\n{line}\n')
+                result = self.skill_ci("lint", **self.shimmed())
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertRegex(result.stderr, r"^skill-ci: \.skill-ci\.toml: source [^\n]+\n$")
+                self.assertNotIn("s3cr3t", result.stderr)
+                self.assertFalse(self.cache.exists(), "nothing was cached")
+                self.assertFalse(self.git_log.exists(), "git never ran")
+
+    def test_an_ssh_source_reaches_git_and_uv_with_its_user_and_a_lowercase_scheme(self) -> None:
         serving = write(self.root / "serving-ssh", '#!/bin/sh\nshift\neval "exec $1"\n')
         serving.chmod(0o755)
         source = f"ssh://git@localhost{self.source}"
-        write(self.consumer / ".skill-ci.toml", f'version = "latest"\nsource = "{source}"\n')
-        result = self.skill_ci("lint", GIT_SSH_VARIANT="simple", GIT_SSH_COMMAND=str(serving))
-        self.assertEqual(result.returncode, 3, result.stderr)
-        [handed] = [json.loads(line) for line in self.uv_log.read_text().splitlines()]
-        self.assertEqual(handed["arguments"][4], f"git+{source}@{self.commits['v0.10.0']}")
-        cached, record = self.cache_record()
-        self.assertEqual((cached, record["source"]), (pin.cache_file(self.cache / "skill-ci", source), source))
+        for scheme in ("ssh", "SSH"):
+            with self.subTest(scheme=scheme):
+                self.uv_log.unlink(missing_ok=True)
+                shutil.rmtree(self.cache, ignore_errors=True)
+                write(self.consumer / ".skill-ci.toml", f'version = "latest"\nsource = "{scheme}{source.removeprefix("ssh")}"\n')
+                result = self.skill_ci("lint", GIT_SSH_VARIANT="simple", GIT_SSH_COMMAND=str(serving))
+                self.assertEqual(result.returncode, 3, result.stderr)
+                [handed] = [json.loads(line) for line in self.uv_log.read_text().splitlines()]
+                self.assertEqual(handed["arguments"][4], f"git+{source}@{self.commits['v0.10.0']}")
+                cached, record = self.cache_record()
+                self.assertEqual((cached, record["source"]), (pin.cache_file(self.cache / "skill-ci", source), source))
 
     def test_an_exact_tag_reads_a_fresh_cache_without_the_network(self) -> None:
         self.pin("v0.9.0")

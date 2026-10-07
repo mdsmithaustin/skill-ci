@@ -198,20 +198,33 @@ def parse_source(value: object, directory: Path) -> Source:
         # Path.resolve raises RuntimeError on a symlink loop before Python 3.13.
         except (OSError, RuntimeError) as error:
             raise ValueError("source names a path that cannot be resolved, such as one in a symlink loop") from error
+    # git reads only a lowercase scheme.
+    scheme = scheme.lower()
     if holds_credentials(scheme, rest):
         raise ValueError(CREDENTIALS)
+    if not (scheme + rest.partition("/")[0]).isascii():
+        raise ValueError("source has a character outside ASCII before its path; write the host in ASCII, as punycode for an international domain")
     if scheme not in SOURCE_SCHEMES:
         raise ValueError(f"source uses a scheme other than {', '.join(SOURCE_SCHEMES)}")
+    if any(character.isspace() for character in rest):
+        raise ValueError("source contains white space; percent-encode it or remove it")
     # uv drops a query or a fragment from a git URL, and with it the @<commit> the hand-off appends.
-    misread = [character for character in value if character.isspace() or character in "#?"]
-    if misread:
-        raise ValueError(f"source contains {misread[0]!r}; percent-encode it or remove it")
-    parts = urlsplit(value)
+    if "?" in rest or "#" in rest:
+        raise ValueError("source has a query or a fragment, which is not allowed; keep a token in a git credential helper")
+    # urlsplit's errors quote the value.
+    try:
+        parts = urlsplit(f"{scheme}://{rest}")
+    except ValueError as error:
+        raise ValueError("source is not a well-formed URL") from error
+    try:
+        parts.port
+    except ValueError as error:
+        raise ValueError("source has a port that is not a number") from error
     if scheme == "file" and (parts.netloc or not parts.path.startswith("/")):
         raise ValueError("source names no absolute path; write file:///absolute/path, or a plain path")
     if scheme != "file" and not parts.hostname:
         raise ValueError("source names no host")
-    return Source(value)
+    return Source(f"{scheme}://{rest}")
 
 
 def holds_credentials(scheme: str, rest: str) -> bool:
@@ -261,8 +274,8 @@ def expand_user(named: str, value: str) -> Path:
 
 
 def reject_control_characters(named: str, value: str) -> None:
-    if control := next((character for character in value if unicodedata.category(character) == "Cc"), None):
-        raise ValueError(f"{named} contains the control character {control!r}; remove it")
+    if any(unicodedata.category(character) == "Cc" for character in value):
+        raise ValueError(f"{named} contains a control character; remove it")
 
 
 def with_version(text: str, tag: Tag) -> str:

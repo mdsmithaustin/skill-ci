@@ -17,6 +17,8 @@ from skill_ci.runs import Agent
 from skill_ci.suite import PiiScope
 
 INSTALLED_COMMIT = "0" * 40
+QUERY = "source has a query or a fragment, which is not allowed; keep a token in a git credential helper"
+NOT_ASCII = "source has a character outside ASCII before its path; write the host in ASCII, as punycode for an international domain"
 
 
 def problems(error: ConfigError) -> list[str]:
@@ -153,6 +155,10 @@ class ConfigFileTests(unittest.TestCase):
         for value, source in (
             ("https://git.example.com/skill-ci.git", "https://git.example.com/skill-ci.git"),
             ("ssh://git@example.com/org/skill-ci.git", "ssh://git@example.com/org/skill-ci.git"),
+            ("SSH://git@example.com/org/skill-ci.git", "ssh://git@example.com/org/skill-ci.git"),
+            ("HTTPS://git.example.com/skill-ci.git", "https://git.example.com/skill-ci.git"),
+            ("https://git.example.com:8443/skill-ci.git", "https://git.example.com:8443/skill-ci.git"),
+            ("ssh://git@[::1]:2222/skill-ci.git", "ssh://git@[::1]:2222/skill-ci.git"),
             ("https://git.example.com/a%20b.git", "https://git.example.com/a%20b.git"),
             ("file:///srv/skill-ci.git", "file:///srv/skill-ci.git"),
             ("mirror.git", mirror.as_uri()),
@@ -167,9 +173,15 @@ class ConfigFileTests(unittest.TestCase):
             ("ftp://git.example.com/skill-ci.git", "source uses a scheme other than https, ssh, file"),
             ("http://git.example.com/skill-ci.git", "source uses a scheme other than https, ssh, file"),
             ("git://git.example.com/skill-ci.git", "source uses a scheme other than https, ssh, file"),
-            ("https://git.example.com/skill-ci.git#subdirectory=x", "source contains '#'; percent-encode it or remove it"),
-            ("https://git.example.com/skill-ci.git?ref=main", "source contains '?'; percent-encode it or remove it"),
-            ("https://git.example.com/a b.git", "source contains ' '; percent-encode it or remove it"),
+            ("https://git.example.com/skill-ci.git#subdirectory=x", QUERY),
+            ("https://git.example.com/skill-ci.git?ref=main", QUERY),
+            ("https://git.example.com/a b.git", "source contains white space; percent-encode it or remove it"),
+            ("https://git.exämple.com/skill-ci.git", NOT_ASCII),
+            ("ssh://git：x@example.com/skill-ci.git", NOT_ASCII),
+            ("https://example.com:x/skill-ci.git", "source has a port that is not a number"),
+            ("ssh://git@example.com:x/skill-ci.git", "source has a port that is not a number"),
+            ("https://example.com:99999/skill-ci.git", "source has a port that is not a number"),
+            ("https://[x]/skill-ci.git", "source is not a well-formed URL"),
             ("https://", "source names no host"),
             ("ssh:///org/skill-ci.git", "source names no host"),
             ("file://relative/skill-ci.git", "source names no absolute path; write file:///absolute/path, or a plain path"),
@@ -209,49 +221,27 @@ class ConfigFileTests(unittest.TestCase):
                 "and name at most an ssh user, as in ssh://git@host/path",
             )
 
-    def test_no_rejected_source_is_shown(self) -> None:
-        for line in (
-            'source = "s3cr3t@example.com:org/skill-ci.git"',
-            'source = "s3cr3t://example.com/skill-ci.git"',
-            'source = "https://example.com/skill-ci.git?private_token=s3cr3t"',
-            'source = "https://example.com/skill-ci.git#s3cr3t"',
-            'source = "https://example.com/s3cr3t skill-ci.git"',
-            'source = "https://example.com/skill-ci.git\\u001bs3cr3t"',
-            'source = "file://s3cr3t/skill-ci.git"',
-            'source = "https:///s3cr3t"',
-            'source = "~s3cr3t-no-such-user/skill-ci.git"',
-            'source = ["s3cr3t"]',
-        ):
-            with self.subTest(line=line), self.assertRaises(ConfigError) as caught:
-                config.read(self.write(f'version = "main"\n{line}\n'))
-            self.assertNotIn("s3cr3t", str(caught.exception))
-            self.assertRegex(str(caught.exception), r"^\.skill-ci\.toml: source [^\n]+$")
-
     def test_a_control_character_in_source_is_rejected_in_every_form(self) -> None:
-        for escaped, character in (
-            (r"https://git.example.com/skill-ci.git\u0000x", "\x00"),
-            (r"ssh://git@example.com/skill-ci\u001b.git", "\x1b"),
-            (r"file:///srv/skill-ci.git\u007f", "\x7f"),
-            (r"mirror\u0000.git", "\x00"),
-            (r"mirror\t.git", "\t"),
+        for escaped in (
+            r"https://git.example.com/skill-ci.git\u0000x",
+            r"ssh://git@example.com/skill-ci\u001b.git",
+            r"file:///srv/skill-ci.git\u007f",
+            r"mirror\u0000.git",
+            r"mirror\t.git",
         ):
             with self.subTest(value=escaped):
                 with self.assertRaises(ConfigError) as caught:
                     config.read(self.write(f'version = "main"\nsource = "{escaped}"\n'))
-                self.assertEqual(problems(caught.exception), [f"source contains the control character {character!r}; remove it"])
+                self.assertEqual(problems(caught.exception), ["source contains a control character; remove it"])
 
     def test_a_control_character_in_a_path_setting_is_rejected(self) -> None:
         keys = ("skills_dir", "evals_dir", "trigger_cases", "content_ignore_file", "content_link_exceptions_file", "content_conventions_file", "out")
         for key in keys:
-            for escaped, value, character in (
-                (r"skills\u0000", "skills\x00", "\x00"),
-                (r"skills\n", "skills\n", "\n"),
-                (r"~/skills\u007f", "~/skills\x7f", "\x7f"),
-            ):
+            for escaped, value in ((r"skills\u0000", "skills\x00"), (r"skills\n", "skills\n"), (r"~/skills\u007f", "~/skills\x7f")):
                 with self.subTest(key=key, value=value):
                     with self.assertRaises(ConfigError) as caught:
                         config.read(self.write(f'version = "main"\n{key} = "{escaped}"\n'))
-                    self.assertEqual(problems(caught.exception), [f"{key} {value!r} contains the control character {character!r}; remove it"])
+                    self.assertEqual(problems(caught.exception), [f"{key} {value!r} contains a control character; remove it"])
 
     def test_a_relative_source_resolves_from_the_file_not_the_working_directory(self) -> None:
         nested = self.root / "skills" / "example"
@@ -416,7 +406,7 @@ class FlagPrecedenceTests(unittest.TestCase):
             result.stderr.splitlines(),
             [
                 "skill-ci: .skill-ci.toml: version is 'v1'; set it to latest, main, or a tag such as v1.0.0",
-                "skill-ci: .skill-ci.toml: evals_dir 'evals\\x00' contains the control character '\\x00'; remove it",
+                "skill-ci: .skill-ci.toml: evals_dir 'evals\\x00' contains a control character; remove it",
                 "skill-ci: .skill-ci.toml: unknown key 'skils_dir'; did you mean 'skills_dir'?",
             ],
         )
