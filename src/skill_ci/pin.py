@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -179,8 +180,12 @@ def write_cache(cache: Path, refs: Refs) -> None:
 
 
 def read_cache(cache: Path, source: Source) -> Refs | None:
+    path = cache_file(cache, source)
     try:
-        record = json.loads(cache_file(cache, source).read_text(encoding="utf-8"))
+        # Reading a FIFO would wait for a writer.
+        if not stat.S_ISREG(path.stat().st_mode):
+            return None
+        record = json.loads(path.read_text(encoding="utf-8"))
         if record["source"] != source:
             return None
         tags = {tag: as_commit(commit) for name, commit in record["tags"].items() if (tag := Tag.parse(name)) is not None}

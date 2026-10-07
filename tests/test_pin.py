@@ -507,6 +507,31 @@ class CacheWriteTests(unittest.TestCase):
         self.assertEqual([path.name for path in (cache / "refs").iterdir()], [pin.cache_file(cache, source).name])
 
 
+class CacheReadTests(unittest.TestCase):
+    def test_a_cache_path_that_is_not_a_regular_file_counts_as_no_cache(self) -> None:
+        temporary = tempfile.TemporaryDirectory(prefix="skill-ci-cache-")
+        self.addCleanup(temporary.cleanup)
+        cache = Path(temporary.name)
+        source = "https://git.example.com/skill-ci.git"
+        fifo = pin.cache_file(cache, source)
+        fifo.parent.mkdir(parents=True)
+        os.mkfifo(fifo)
+        found: list[pin.Refs | None] = []
+        reader = threading.Thread(target=lambda: found.append(pin.read_cache(cache, source)), daemon=True)
+        reader.start()
+        reader.join(timeout=1)
+
+        def release() -> None:
+            # A writer that opens and closes the FIFO ends a read that is waiting on it.
+            with contextlib.suppress(OSError):
+                os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))
+            reader.join()
+
+        self.addCleanup(release)
+        self.assertFalse(reader.is_alive(), "read_cache still waits on the FIFO after 1 s")
+        self.assertEqual(found, [None])
+
+
 class RerunGuardTests(PinTestCase):
     def test_the_pinned_child_runs_in_place_and_reports_only_its_installed_commit(self) -> None:
         self.pin("v0.9.1")
