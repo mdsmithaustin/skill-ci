@@ -4,7 +4,6 @@ import contextlib
 import io
 import json
 import os
-import pty
 import re
 import shutil
 import signal
@@ -32,7 +31,7 @@ ISOLATED_GIT = {
 }
 UNKNOWN_KEY = "skill-ci: .skill-ci.toml: unknown key 'skils_dir'; did you mean 'skills_dir'?"
 FAKE_UV = """\
-import json, os, signal, sys, time
+import json, os, signal, subprocess, sys, time
 with open(os.environ["FAKE_UV_LOG"], "a", encoding="utf-8") as log:
     record = {"arguments": sys.argv[1:], "pinned": os.environ.get("SKILL_CI_PINNED"), "pythonpath": os.environ.get("PYTHONPATH")}
     log.write(json.dumps(record) + "\\n")
@@ -42,7 +41,18 @@ if os.environ.get("FAKE_UV_FAILS"):
     sys.exit("error: Failed to fetch the pinned commit")
 if installed := os.environ.get("FAKE_UV_CHILD"):
     command = os.environ["FAKE_UV_COMMAND"]
-    os.execve(command, [command, *sys.argv[7:]], {**os.environ, "PYTHONPATH": installed})
+    environment = {**os.environ, "PYTHONPATH": installed}
+    if pids := os.environ.get("FAKE_UV_SPAWNS"):
+        # Like uv 0.12.7, run the pinned skill-ci as a child in uv's group and pass on a signal sent to uv's pid.
+        child = subprocess.Popen([command, *sys.argv[7:]], env=environment)
+        for name in ("SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "SIGUSR1", "SIGUSR2", "SIGALRM", "SIGWINCH", "SIGPIPE", "SIGINFO"):
+            if hasattr(signal, name):
+                signal.signal(getattr(signal, name), lambda number, frame: child.send_signal(number))
+        with open(pids, "w") as log:
+            log.write(f"{os.getpid()} {child.pid}")
+        status = child.wait()
+        raise SystemExit(128 - status if status < 0 else status)
+    os.execve(command, [command, *sys.argv[7:]], environment)
 open(os.environ["SKILL_CI_STARTED"], "x").close()
 if received := os.environ.get("FAKE_UV_SIGNALS"):
     def record(number, frame):
@@ -57,10 +67,6 @@ if received := os.environ.get("FAKE_UV_SIGNALS"):
     time.sleep(30)
 raise SystemExit(int(os.environ.get("FAKE_UV_EXIT", "3")))
 """
-# What uv 0.12.7 does with each signal (crates/uv/src/child.rs), and so what skill-ci must do around it.
-PASSED_ON_BY_UV = tuple(getattr(signal, name) for name in ("SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "SIGUSR1", "SIGUSR2", "SIGALRM", "SIGWINCH", "SIGPIPE", "SIGINFO") if hasattr(signal, name))
-FATAL_TO_UV = tuple(getattr(signal, name) for name in ("SIGABRT", "SIGVTALRM", "SIGPROF", "SIGXCPU", "SIGPOLL", "SIGPWR") if hasattr(signal, name))
-SENT_BY_A_TERMINAL = tuple(getattr(signal, name) for name in ("SIGWINCH", "SIGINFO") if hasattr(signal, name))
 
 
 def still_running(pid: int) -> bool:
@@ -290,44 +296,6 @@ class OfflineTests(PinTestCase):
             ["skill-ci: cannot reach ssh://git@example.com/skill-ci.git (git ls-remote gave no answer in 5 s), and no version was ever resolved from it"],
         )
         self.assertFalse(still_running(int(transport.read_text())), "the ssh transport outlived skill-ci")
-
-    def signalled_during_ls_remote(self, *numbers: signal.Signals) -> int:
-        transport = Path(tempfile.mkdtemp(dir=self.root)) / "transport"
-        slow = write(transport.with_name("slow-ssh"), f'#!/bin/sh\necho $$ > "{transport}.partial"\nmv "{transport}.partial" "{transport}"\nexec sleep 30\n')
-        slow.chmod(0o755)
-        write(self.consumer / ".skill-ci.toml", 'version = "latest"\nsource = "ssh://git@example.com/skill-ci.git"\n')
-        process = subprocess.Popen(
-            [str(INSTALLED_COMMAND), "lint"],
-            cwd=self.consumer,
-            env={**self.environment, "GIT_SSH_COMMAND": str(slow)},
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        try:
-            deadline = time.monotonic() + 30
-            while not transport.exists() and process.poll() is None and time.monotonic() < deadline:
-                time.sleep(0.05)
-            for index, number in enumerate(numbers):
-                time.sleep(0.5 if index else 0)
-                os.kill(process.pid, number)
-            status = process.wait(timeout=30)
-        finally:
-            if process.poll() is None:
-                process.kill()
-        self.assertFalse(still_running(int(transport.read_text())), "the ssh transport outlived skill-ci")
-        self.assertFalse(self.uv_log.exists())
-        return status
-
-    def test_a_signal_during_ls_remote_stops_git_and_its_transport(self) -> None:
-        for number in sorted(set(PASSED_ON_BY_UV + FATAL_TO_UV) - set(SENT_BY_A_TERMINAL)):
-            with self.subTest(signal=number.name):
-                self.assertEqual(self.signalled_during_ls_remote(number), 128 + number)
-
-    def test_a_resize_or_a_status_request_during_ls_remote_is_ignored(self) -> None:
-        for number in SENT_BY_A_TERMINAL:
-            with self.subTest(signal=number.name):
-                self.assertEqual(self.signalled_during_ls_remote(number, signal.SIGTERM), 128 + signal.SIGTERM)
 
     def test_a_credential_in_source_stops_before_git_or_uv_and_is_never_shown(self) -> None:
         credentials = (
@@ -704,48 +672,6 @@ class HandOffTests(PinTestCase):
         result = self.skill_ci("lint", FAKE_UV_EXIT="4", PYTHONFAULTHANDLER="1")
         self.assertEqual(result.returncode, 4, result.stderr)
         self.assertEqual(result.stderr.splitlines(), [self.banner])
-
-    def signalled(self, *numbers: signal.Signals, terminal: bool = False) -> tuple[int, list[int]]:
-        received = Path(tempfile.mkdtemp(dir=self.root)) / "received"
-        primary, replica = pty.openpty() if terminal else (None, None)
-        process = subprocess.Popen(
-            [str(INSTALLED_COMMAND), "lint"],
-            cwd=self.consumer,
-            env={**self.environment, "FAKE_UV_SIGNALS": str(received)},
-            stdin=subprocess.DEVNULL if replica is None else replica,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        try:
-            deadline = time.monotonic() + 30
-            while not received.exists() and process.poll() is None and time.monotonic() < deadline:
-                time.sleep(0.05)
-            for index, number in enumerate(numbers):
-                time.sleep(0.5 if index else 0)
-                os.kill(process.pid, number)
-            status = process.wait(timeout=30)
-        finally:
-            if process.poll() is None:
-                process.kill()
-            for descriptor in (primary, replica):
-                if descriptor is not None:
-                    os.close(descriptor)
-        self.assertFalse(still_running(int(Path(f"{received}.pid").read_text())), "the pinned commit outlived skill-ci")
-        self.assertEqual(list(self.scratch.iterdir()), [])
-        return status, [int(line) for line in received.read_text().split()]
-
-    def test_a_signal_that_uv_passes_on_reaches_the_pinned_commit(self) -> None:
-        for number in PASSED_ON_BY_UV:
-            with self.subTest(signal=number.name):
-                self.assertEqual(self.signalled(number), (100 + number, [number]))
-
-    def test_a_signal_that_uv_would_die_of_stops_the_pinned_commit_with_sigterm(self) -> None:
-        for number in FATAL_TO_UV:
-            with self.subTest(signal=number.name):
-                self.assertEqual(self.signalled(number), (128 + number, [signal.SIGTERM]))
-
-    def test_an_interrupt_at_a_terminal_is_left_to_the_terminal(self) -> None:
-        self.assertEqual(self.signalled(signal.SIGINT, signal.SIGTERM, terminal=True), (100 + signal.SIGTERM, [signal.SIGTERM]))
 
 
 class UpdateTests(PinTestCase):

@@ -3,13 +3,14 @@ from __future__ import annotations
 import os
 import re
 import shutil
-import subprocess
 import sys
 import sysconfig
 import tomllib
 from collections.abc import Callable, Sequence
 from enum import StrEnum
 from pathlib import Path
+
+from skill_ci import children
 
 HARNESS_DISTRIBUTIONS = frozenset({"skill-eval-harness", "skill-eval-harness-ext"})
 REQUIREMENT_NAME = re.compile(r"\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)")
@@ -36,9 +37,7 @@ def run(command: Command, arguments: Sequence[str]) -> int:
     argv = isolated_argv(command, arguments)
     if argv is None:
         return 127
-    sys.stdout.flush()
-    sys.stderr.flush()
-    return shell_status(subprocess.run(argv, check=False).returncode)
+    return shell_status(children.run(argv).returncode)
 
 
 def shell_status(returncode: int) -> int:

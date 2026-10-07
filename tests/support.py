@@ -15,7 +15,7 @@ INSTALLED_COMMAND = Path(sysconfig.get_path("scripts")) / "skill-ci"
 ENVIRONMENT = {key: value for key, value in os.environ.items() if not key.startswith(("GIT_", "SKILL_CI_"))}
 PLANTED_EMAIL = "@".join(("jane.doe", "corp-mail.net"))
 FAKE_HARNESS = """\
-import json, os, signal, sys
+import json, os, signal, subprocess, sys, time
 arguments = sys.argv[1:]
 record = {
     "command": os.path.basename(sys.argv[0]),
@@ -30,6 +30,20 @@ failing = os.environ.get("FAKE_HARNESS_FAIL_STAGE")
 stage = arguments[0] if arguments else ""
 if (killed := os.environ.get("FAKE_HARNESS_SIGNAL")) and (not failing or failing == stage):
     os.kill(os.getpid(), int(killed))
+if waiting := os.environ.get("FAKE_HARNESS_WAIT"):
+    def record(number, frame):
+        with open(os.path.join(waiting, "received"), "a") as log:
+            log.write(f"{number}\\n")
+        raise SystemExit(100 + number)
+    for number in signal.valid_signals() - {signal.SIGKILL, signal.SIGSTOP, signal.SIGCHLD}:
+        signal.signal(number, record)
+    if os.environ.get("FAKE_HARNESS_DEAF"):
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+    grandchild = subprocess.Popen(["sleep", "60"])
+    with open(os.path.join(waiting, "pids.partial"), "w") as log:
+        log.write(f"{os.getpid()} {grandchild.pid}")
+    os.rename(os.path.join(waiting, "pids.partial"), os.path.join(waiting, "pids"))
+    time.sleep(60)
 raise SystemExit(int(os.environ.get("FAKE_HARNESS_EXIT", "0")) if not failing or failing == stage else 0)
 """
 

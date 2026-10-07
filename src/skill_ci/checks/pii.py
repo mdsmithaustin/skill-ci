@@ -10,6 +10,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from skill_ci import children
 
 EXAMPLE_EMAIL_DOMAINS = {"example.com", "example.net", "example.org"}
 ALLOWED_EMAILS = {"git@github.com"}
@@ -70,9 +71,9 @@ class Source:
 
 
 def git_output(*args: str) -> bytes:
-    return subprocess.run(
-        ["git", *args], check=True, capture_output=True
-    ).stdout
+    listed = children.run(["git", *args], capture=True)
+    listed.check_returncode()
+    return listed.stdout
 
 
 def source_name(raw_name: bytes) -> str:
@@ -195,7 +196,7 @@ def check_pii(
         )
     except subprocess.CalledProcessError as error:
         # Outside a repository, git diff --cached falls back to --no-index and prints only a usage dump.
-        probe = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], capture_output=True)
+        probe = children.run(["git", "rev-parse", "--is-inside-work-tree"], capture=True)
         reason = (probe.stderr if probe.returncode else error.stderr).decode(errors="replace").strip().splitlines()
         print(
             f"skill-ci: pii: the PII scan lists files with git, which failed: {reason[0] if reason else error}",
@@ -214,7 +215,10 @@ def check_pii(
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
-    return check_pii(paths=args.paths, staged=args.staged)
+    try:
+        return check_pii(paths=args.paths, staged=args.staged)
+    except children.Stopped as stopped:
+        return stopped.status
 
 
 if __name__ == "__main__":

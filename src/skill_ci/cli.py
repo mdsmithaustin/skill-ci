@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from importlib import metadata
 from pathlib import Path
 
-from skill_ci import config, harness, pin, runs, suite
+from skill_ci import children, config, harness, pin, runs, suite
 from skill_ci.checks import coverage, manifests, package
 from skill_ci.config import OPTIONS, Track
 from skill_ci.harness import Command
@@ -57,6 +57,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except pin.HandoffError as error:
         print(f"skill-ci: {error}", file=sys.stderr)
         return error.status
+    except children.Stopped as stopped:
+        return stopped.status
     except KeyboardInterrupt:
         return 130
     except Exception as error:
