@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -121,23 +122,33 @@ def newest_tag(source: str, cache: Path, now: datetime) -> Tag:
 
 def fetch(source: str, cache: Path, now: datetime) -> Refs:
     try:
-        listing = subprocess.run(
+        # In a session of its own, a timeout can stop git and the transport it starts together, and a transport that
+        # prompts fails at once instead of stopping on a terminal it cannot read.
+        git = subprocess.Popen(
             ["git", "ls-remote", source, "refs/heads/main", "refs/tags/v*"],
             env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
             stdin=subprocess.DEVNULL,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=LS_REMOTE_TIMEOUT,
-            check=False,
+            start_new_session=True,
         )
-    except subprocess.TimeoutExpired as error:
-        raise Unreachable(f"git ls-remote gave no answer in {LS_REMOTE_TIMEOUT} s") from error
     except OSError as error:
         raise Unreachable(f"cannot run git: {error}") from error
-    if listing.returncode != 0:
-        reason = next((line for line in listing.stderr.splitlines() if line.strip()), f"git ls-remote exited {listing.returncode}")
+    with git:
+        try:
+            listing, errors = git.communicate(timeout=LS_REMOTE_TIMEOUT)
+        except subprocess.TimeoutExpired as error:
+            raise Unreachable(f"git ls-remote gave no answer in {LS_REMOTE_TIMEOUT} s") from error
+        finally:
+            if git.returncode is None:
+                # The group is gone, or on macOS holds only git as an unreaped zombie, when git exits as the timeout fires.
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.killpg(git.pid, signal.SIGKILL)
+    if git.returncode != 0:
+        reason = next((line for line in errors.splitlines() if line.strip()), f"git ls-remote exited {git.returncode}")
         raise Unreachable(reason.removeprefix("fatal: "))
-    refs = parse_listing(source, now, listing.stdout)
+    refs = parse_listing(source, now, listing)
     write_cache(cache, refs)
     return refs
 

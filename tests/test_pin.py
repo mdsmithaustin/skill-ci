@@ -264,6 +264,19 @@ class OfflineTests(PinTestCase):
         )
         self.assertFalse(self.uv_log.exists())
 
+    def test_a_source_that_never_answers_leaves_no_transport_running(self) -> None:
+        transport = self.root / "transport"
+        slow = write(self.root / "slow-ssh", f'#!/bin/sh\necho $$ > "{transport}"\nexec sleep 30\n')
+        slow.chmod(0o755)
+        write(self.consumer / ".skill-ci.toml", 'version = "latest"\nsource = "ssh://git@example.com/skill-ci.git"\n')
+        result = self.skill_ci("lint", GIT_SSH_COMMAND=str(slow))
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(
+            result.stderr.splitlines(),
+            ["skill-ci: cannot reach ssh://git@example.com/skill-ci.git (git ls-remote gave no answer in 5 s), and no version was ever resolved from it"],
+        )
+        self.assertFalse(still_running(int(transport.read_text())), "the ssh transport outlived skill-ci")
+
     def test_an_exact_tag_reads_a_fresh_cache_without_the_network(self) -> None:
         self.pin("v0.9.0")
         shimmed = self.shimmed()
