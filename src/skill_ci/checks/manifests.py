@@ -4,6 +4,7 @@ import json
 import os
 import sys
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 
 from skill_ci import harness
@@ -54,7 +55,7 @@ def each_manifest(
             print(f"skill-ci: cannot search {error.filename} for manifests: {error.strerror}", file=sys.stderr)
         return 1
     manifests = found if evals_dir is not None else [path for path in found if path.parent.name == "evals" and path.parent != root]
-    codes = [step(manifest) for manifest in manifests]
+    codes = [harness.exit_code(str(manifest), partial(step, manifest)) for manifest in manifests]
     print(f"manifests checked: {len(manifests)}")
     if require_manifests and not manifests:
         print("skill-ci: require-manifests is enabled, but no manifest files were checked", file=sys.stderr)

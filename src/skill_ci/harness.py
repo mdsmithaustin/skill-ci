@@ -7,7 +7,6 @@ import subprocess
 import sys
 import sysconfig
 import tomllib
-import traceback
 from collections.abc import Callable, Sequence
 from enum import StrEnum
 from pathlib import Path
@@ -60,9 +59,6 @@ def call(arguments: Sequence[str]) -> int:
         return handlers[arguments[0]](skill_benchmark.CLIInvocation.from_namespace(namespace).to_legacy_namespace())
     except SystemExit as error:
         return exit_status(error)
-    except Exception:
-        traceback.print_exc()
-        return 1
 
 
 def exit_code(unit: str, run: Callable[[], int]) -> int:
