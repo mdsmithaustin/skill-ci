@@ -132,7 +132,9 @@ def fetch(pin: Pin, cache: Path, now: datetime) -> Refs:
         reason = next((line for line in errors.splitlines() if line.strip()), f"git ls-remote exited {listed.returncode}")
         raise Unreachable(reason.removeprefix("fatal: "))
     refs = parse_listing(pin.source, now, listed.stdout.decode(errors="replace"))
-    write_cache(cache, refs)
+    # A stop between creating the temporary file and renaming it would leave the temporary file behind.
+    with children.stopping_signals():
+        write_cache(cache, refs)
     return refs
 
 
@@ -234,7 +236,8 @@ def rerun(pin: Pin, commit: Commit, arguments: Sequence[str]) -> NoReturn:
     if uv is None:
         raise HandoffError(f"running the pinned commit {commit} needs uv on PATH", status=127)
     try:
-        with tempfile.TemporaryDirectory(prefix="skill-ci-") as scratch:
+        # The pinned run's own window would open after the scratch directory exists and close before it is removed.
+        with children.stopping_signals(), tempfile.TemporaryDirectory(prefix="skill-ci-") as scratch:
             started = Path(scratch) / "started"
             status = children.run(
                 [uv, "tool", "run", "--isolated", "--from", f"git+{pin.source}@{commit}", "skill-ci", *arguments],

@@ -208,6 +208,8 @@ class ChildStopTests(PinTestCase):
     def test_a_stop_while_a_temporary_file_exists_leaves_none_behind(self) -> None:
         driver = write(self.root / "stopped near.py", STOPPED_NEAR)
         for name, version, command, stop, directory in (
+            ("hand-off scratch directory", "v0.10.0", "lint", "after tempfile.mkdtemp", self.scratch),
+            ("cache write", "latest", "lint", "before os.replace", self.cache / "skill-ci" / "refs"),
             ("update", "v0.9.0", "update", "after os.fsync", self.consumer),
         ):
             with self.subTest(file=name):
@@ -352,6 +354,17 @@ class RunnerTests(unittest.TestCase):
         script = "import os, signal, sys\nfrom skill_ci import children\nchildren.run([sys.executable, '-c', ''])\nos.kill(os.getpid(), signal.SIGTERM)\n"
         finished = subprocess.run([sys.executable, "-c", script], env=ENVIRONMENT, timeout=30, check=False)
         self.assertEqual(finished.returncode, -signal.SIGTERM)
+
+    def test_a_stop_before_an_inner_window_opens_starts_no_child(self) -> None:
+        marker = Path(self.enterContext(tempfile.TemporaryDirectory())) / "started"
+        script = (
+            "import os, signal, sys\nfrom skill_ci import children\ntry:\n"
+            "    with children.stopping_signals():\n        os.kill(os.getpid(), signal.SIGTERM)\n"
+            "        children.run(['touch', sys.argv[1]])\nexcept children.Stopped as stopped:\n    raise SystemExit(stopped.status)\n"
+        )
+        finished = subprocess.run([sys.executable, "-c", script, str(marker)], env=ENVIRONMENT, timeout=30, check=False)
+        self.assertEqual(finished.returncode, 128 + signal.SIGTERM)
+        self.assertFalse(marker.exists())
 
     def test_only_the_runner_starts_a_child_process(self) -> None:
         spawning = {

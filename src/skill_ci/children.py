@@ -21,6 +21,7 @@ STOPPING = frozenset(
 GRACE = 3.0
 HAND_OFF_GRACE = GRACE + 2.0
 TICK = 0.05
+OPEN_WINDOWS: list[list[int]] = []
 
 
 class Stopped(BaseException):
@@ -65,6 +66,17 @@ def run(
 
 @contextlib.contextmanager
 def stopping_signals() -> Iterator[list[int]]:
+    if OPEN_WINDOWS:
+        # A window inside another shares its handlers and its signals. A stop that came first ends it before it starts.
+        received = OPEN_WINDOWS[-1]
+        if received:
+            raise Stopped(received[0])
+        try:
+            yield received
+        finally:
+            if received:
+                raise Stopped(received[0])
+        return
     received: list[int] = []
 
     def record(number: int, frame: FrameType | None) -> None:
@@ -85,9 +97,11 @@ def stopping_signals() -> Iterator[list[int]]:
         number: signal.signal(number, ignore if number in ignored else record)
         for number in STOPPING - ignored | {signal.SIGINT}
     }
+    OPEN_WINDOWS.append(received)
     try:
         yield received
     finally:
+        OPEN_WINDOWS.pop()
         # Blocking runs every handler that has already fired.
         mask = signal.pthread_sigmask(signal.SIG_BLOCK, STOPPING)
         for number, handler in previous.items():
