@@ -531,7 +531,9 @@ class LintTests(ConsumerTestCase):
         decode = "UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe9 in position 32: invalid continuation byte"
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual(lines(result), ["checks run: 2; failed: 2 (frontmatter, content)"])
-        self.assertEqual(result.stderr.splitlines(), [f"skill-ci: frontmatter check: {decode}", f"skill-ci: content check: {decode}"])
+        banner, *reasons = result.stderr.splitlines()
+        self.assertRegex(banner, r"^skill-ci \S+ \(commit unknown\)$")
+        self.assertEqual(reasons, [f"skill-ci: frontmatter check: {decode}", f"skill-ci: content check: {decode}"])
 
 
 class FastCheckTests(ConsumerTestCase):
