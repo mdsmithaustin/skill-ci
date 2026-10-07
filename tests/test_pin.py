@@ -49,12 +49,25 @@ if received := os.environ.get("FAKE_UV_SIGNALS"):
         with open(received, "a") as log:
             log.write(f"{number}\\n")
         raise SystemExit(100 + number)
-    signal.signal(signal.SIGINT, record)
-    signal.signal(signal.SIGTERM, record)
+    for number in (signal.SIGINT, signal.SIGTERM, signal.SIGALRM, signal.SIGXCPU):
+        signal.signal(number, record)
+    with open(received + ".pid", "w") as log:
+        log.write(str(os.getpid()))
     open(received, "w").close()
     time.sleep(30)
 raise SystemExit(int(os.environ.get("FAKE_UV_EXIT", "3")))
 """
+
+
+def still_running(pid: int) -> bool:
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        time.sleep(0.05)
+    return True
 
 
 class PinTestCase(unittest.TestCase):
@@ -68,12 +81,15 @@ class PinTestCase(unittest.TestCase):
         self.git_log = self.root / "git.log"
         write(self.root / "git shim" / "git", f'#!/bin/sh\necho "$*" >> "{self.git_log}"\nexec "{shutil.which("git")}" "$@"\n').chmod(0o755)
         self.cache = self.root / "cache"
+        self.scratch = self.root / "tmp"
+        self.scratch.mkdir()
         self.environment = {
             **{key: value for key, value in ENVIRONMENT.items() if key != "SKILL_CI_PINNED"},
             **ISOLATED_GIT,
             "GIT_CEILING_DIRECTORIES": str(self.root),
             "HOME": str(self.root / "home"),
             "XDG_CACHE_HOME": str(self.cache),
+            "TMPDIR": str(self.scratch),
             "FAKE_UV_LOG": str(self.uv_log),
             "PATH": f"{bin_directory}{os.pathsep}{os.environ['PATH']}",
         }
@@ -444,6 +460,7 @@ class RerunGuardTests(PinTestCase):
         broken = self.skill_ci("lint", PATH=str(git_only))
         self.assertEqual(broken.returncode, 126, broken.stderr)
         self.assertIn(f"skill-ci: cannot run {git_only / 'uv'} for the pinned commit {self.commits['v0.9.0']}: ", broken.stderr)
+        self.assertEqual(list(self.scratch.iterdir()), [])
 
     def test_an_empty_guard_still_resolves(self) -> None:
         self.pin("v0.9.0")
@@ -542,6 +559,7 @@ class HandOffTests(PinTestCase):
         killed = self.skill_ci("lint", FAKE_UV_DIES="1")
         self.assertEqual(killed.returncode, 128 + signal.SIGTERM, killed.stderr)
         self.assertEqual(killed.stderr.splitlines(), [self.banner])
+        self.assertEqual(list(self.scratch.iterdir()), [])
 
     def test_a_pin_on_another_commit_hands_off_once_and_the_child_reports_an_unknown_key(self) -> None:
         self.pin("v0.10.0", 'skils_dir = "skills"')
@@ -558,8 +576,8 @@ class HandOffTests(PinTestCase):
                 self.assertEqual(result.returncode, code, result.stderr)
                 self.assertEqual(result.stderr.splitlines(), [self.banner])
 
-    def signalled(self, *numbers: signal.Signals, terminal: bool = False) -> tuple[int, str]:
-        received = self.root / "received"
+    def signalled(self, *numbers: signal.Signals, terminal: bool = False) -> tuple[int, list[int]]:
+        received = Path(tempfile.mkdtemp(dir=self.root)) / "received"
         primary, replica = pty.openpty() if terminal else (None, None)
         process = subprocess.Popen(
             [str(INSTALLED_COMMAND), "lint"],
@@ -576,22 +594,27 @@ class HandOffTests(PinTestCase):
             for number in numbers:
                 os.kill(process.pid, number)
                 time.sleep(0.5)
-            return process.wait(timeout=30), received.read_text()
+            status = process.wait(timeout=30)
         finally:
             if process.poll() is None:
                 process.kill()
             for descriptor in (primary, replica):
                 if descriptor is not None:
                     os.close(descriptor)
+        self.assertFalse(still_running(int(Path(f"{received}.pid").read_text())), "the pinned commit outlived skill-ci")
+        self.assertEqual(list(self.scratch.iterdir()), [])
+        return status, [int(line) for line in received.read_text().split()]
 
-    def test_a_signal_to_skill_ci_reaches_the_pinned_commit(self) -> None:
-        for number in (signal.SIGTERM, signal.SIGINT):
+    def test_a_signal_that_uv_passes_on_reaches_the_pinned_commit(self) -> None:
+        for number in (signal.SIGTERM, signal.SIGINT, signal.SIGALRM):
             with self.subTest(signal=number.name):
-                self.assertEqual(self.signalled(number), (100 + number, f"{int(number)}\n"))
-                (self.root / "received").unlink()
+                self.assertEqual(self.signalled(number), (100 + number, [number]))
+
+    def test_a_signal_that_uv_would_die_of_stops_the_pinned_commit_with_sigterm(self) -> None:
+        self.assertEqual(self.signalled(signal.SIGXCPU), (128 + signal.SIGXCPU, [signal.SIGTERM]))
 
     def test_an_interrupt_at_a_terminal_is_left_to_the_terminal(self) -> None:
-        self.assertEqual(self.signalled(signal.SIGINT, signal.SIGTERM, terminal=True), (100 + signal.SIGTERM, f"{int(signal.SIGTERM)}\n"))
+        self.assertEqual(self.signalled(signal.SIGINT, signal.SIGTERM, terminal=True), (100 + signal.SIGTERM, [signal.SIGTERM]))
 
 
 class UpdateTests(PinTestCase):
