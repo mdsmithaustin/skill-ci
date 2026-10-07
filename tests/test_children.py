@@ -26,6 +26,7 @@ STOPS = tuple(
 )
 SENT_BY_A_TERMINAL = tuple(getattr(signal, name) for name in ("SIGWINCH", "SIGINFO") if hasattr(signal, name))
 GRACE = 3.0
+BACKGROUND_JOB = '"$@" & echo $! > "$0"; wait $!'
 SIGNALLED_FIRST = """\
 import os, subprocess, sys
 number, name, pids = int(os.environ.pop("DRIVER_SIGNAL")), os.environ.pop("DRIVER_BEFORE"), os.environ.pop("DRIVER_PIDS")
@@ -225,8 +226,12 @@ class ChildStopTests(PinTestCase):
                     self.assertEqual(process.wait(timeout=30), 128 + signal.SIGTERM)
                     self.assertEqual(self.survivors(*pids), [])
 
-    def test_a_signal_ignored_at_start_stays_ignored_by_skill_ci_and_its_child(self) -> None:
-        for number, shell in ((signal.SIGHUP, 'echo $$ > "$0"; exec nohup "$@"'), (signal.SIGINT, '"$@" & echo $! > "$0"; wait $!')):
+    def test_a_signal_ignored_at_start_stays_ignored_by_skill_ci(self) -> None:
+        # A child runs in its own group, which a terminal's interrupt never reaches, so SIGINT starts at its default there.
+        for number, shell, ignored_by_the_child in (
+            (signal.SIGHUP, 'echo $$ > "$0"; exec nohup "$@"', True),
+            (signal.SIGINT, BACKGROUND_JOB, False),
+        ):
             for name, start in (("harness stage", self.direct), ("hand-off", self.handed_off)):
                 with self.subTest(signal=number.name, child=name):
                     waiting = self.waiting()
@@ -237,9 +242,24 @@ class ChildStopTests(PinTestCase):
                     time.sleep(0.5)
                     self.assertIsNone(process.poll())
                     self.assertEqual(self.received(waiting), [])
-                    self.assertIn(str(int(number)), (waiting / "ignored").read_text().split())
+                    self.assertEqual(str(int(number)) in (waiting / "ignored").read_text().split(), ignored_by_the_child)
                     (waiting / "release").touch()
                     self.assertEqual(process.wait(timeout=30), 0)
+
+    def test_a_stop_in_a_background_job_interrupts_every_child_of_the_run(self) -> None:
+        for name, start in (("harness stage", self.direct), ("hand-off", self.handed_off)):
+            with self.subTest(child=name):
+                waiting = self.waiting()
+                process = start(waiting, "/bin/sh", "-c", BACKGROUND_JOB, str(waiting / "skill-ci"))
+                pids = self.ready(waiting / "pids", process)
+                [skill_ci] = self.ready(waiting / "skill-ci", process)
+                handing = self.ready(waiting / "uv", process) if name == "hand-off" else []
+                started = time.monotonic()
+                os.kill(skill_ci, signal.SIGTERM)
+                self.assertEqual(process.wait(timeout=30), 128 + signal.SIGTERM)
+                self.assertLess(time.monotonic() - started, GRACE + 1)
+                self.assertEqual(self.received(waiting), [signal.SIGINT])
+                self.assertEqual(self.survivors(*pids, *handing), [])
 
     def test_a_child_that_ignores_the_interrupt_is_killed_after_the_grace(self) -> None:
         for name, start in (("harness stage", self.direct), ("hand-off", self.handed_off)):

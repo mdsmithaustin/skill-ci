@@ -73,12 +73,17 @@ def stopping_signals() -> Iterator[list[int]]:
         if not received and (frame is None or frame.f_code is not record.__code__):
             received.append(number)
 
-    # A signal ignored at startup, as under nohup or in a background job, stays ignored here and in the child. Python
-    # ignores SIGPIPE itself at startup, so its SIG_IGN says nothing about how skill-ci was started.
+    def ignore(number: int, frame: FrameType | None) -> None:
+        pass
+
+    # A signal ignored at startup, as under nohup or in a background job, stays ignored here and in the child, except
+    # SIGINT, the stop this runner sends. A signal caught here starts at its default action in the child, and the
+    # child's own group keeps a terminal's interrupt away from it. Python ignores SIGPIPE itself at startup, so its
+    # SIG_IGN says nothing about how skill-ci was started.
+    ignored = {number for number in STOPPING - {signal.SIGPIPE} if signal.getsignal(number) == signal.SIG_IGN}
     previous = {
-        number: signal.signal(number, record)
-        for number in STOPPING
-        if number == signal.SIGPIPE or signal.getsignal(number) != signal.SIG_IGN
+        number: signal.signal(number, ignore if number in ignored else record)
+        for number in STOPPING - ignored | {signal.SIGINT}
     }
     try:
         yield received
