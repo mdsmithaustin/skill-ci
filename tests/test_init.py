@@ -15,18 +15,10 @@ from pathlib import Path
 from unittest import mock
 
 import yaml
-from support import ENVIRONMENT, REPOSITORY, fake_git_install, skill_ci, write, write_skill
+from support import ENVIRONMENT, ISOLATED_GIT, REPOSITORY, fake_git_install, git, skill_ci, write, write_skill
 
 from skill_ci import children, config, init
 
-ISOLATED_GIT = {
-    "GIT_CONFIG_GLOBAL": os.devnull,
-    "GIT_CONFIG_NOSYSTEM": "1",
-    "GIT_AUTHOR_NAME": "skill-ci tests",
-    "GIT_AUTHOR_EMAIL": "tests@example.com",
-    "GIT_COMMITTER_NAME": "skill-ci tests",
-    "GIT_COMMITTER_EMAIL": "tests@example.com",
-}
 FAKE_LEFTHOOK = """\
 #!/bin/sh
 echo "$@" >> "$FAKE_LEFTHOOK_LOG"
@@ -122,8 +114,7 @@ class InitTestCase(unittest.TestCase):
         self.git("init", "-q", cwd=self.repository)
 
     def git(self, *arguments: str, cwd: Path | None = None) -> str:
-        done = subprocess.run(["git", *arguments], cwd=cwd or self.repository, env=self.environment, capture_output=True, text=True, check=True)
-        return done.stdout.strip()
+        return git(*arguments, cwd=cwd or self.repository, env=self.environment)
 
     def commit(self, message: str) -> str:
         self.git("commit", "-q", "--allow-empty", "-m", message, cwd=self.work)
