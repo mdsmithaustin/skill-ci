@@ -18,7 +18,7 @@ The file is version-1 JSON. Both keys after `version` are optional.
 }
 ```
 
-`retired_text` maps retired text to the message the checker prints. The checker reports a `retired-text` finding on every line that contains the text, including lines inside code blocks, because a template in a code block gets copied too. Keys and messages must be nonempty strings.
+`retired_text` maps retired text to the message the content check prints. The content check reports a `retired-text` finding on every line that contains the text, including lines inside code blocks, because a template in a code block gets copied too. Keys and messages must be nonempty strings.
 
 `skill_prefixes` lists name prefixes. Each prefix is lowercase kebab case and ends with a hyphen. A prefix has two effects:
 

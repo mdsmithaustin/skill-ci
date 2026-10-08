@@ -5,4 +5,4 @@ description: Use when asked for an example.
 
 # Example
 
-This fixture checks the reusable workflow.
+This fixture is the minimal skill for the `skill-ci check` contract job.

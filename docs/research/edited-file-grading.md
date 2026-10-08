@@ -1,6 +1,6 @@
 # Edited-file grading proof
 
-On 2026-10-04, the standard `skill-run` mise task, which `skill-ci run` has replaced, completed one with-skill and one without-skill run on each provider. All four products passed the script oracle. This proves file-edit capture, patch reconstruction, and deterministic grading through the existing runner. It does not prove skill benefit. Both provider reports flagged the case as saturated and reported zero objective lift.
+On 2026-10-04, the standard `skill-run` task, whose work `skill-ci run` now does, completed one with-skill and one without-skill run on each provider. All four products passed the script oracle. This proves file-edit capture, patch reconstruction, and deterministic grading through the existing runner. It does not prove skill benefit. Both provider reports flagged the case as saturated and reported zero objective lift.
 
 The runner pin was `80e49afd5ac6502d3bb2a877846a6f49003e588d`. The host was macOS with Claude Code 2.1.289 and Codex CLI 0.160.0. Claude used the `sonnet` alias, whose native trace identified `claude-sonnet-5-5`. Codex used `gpt-6.1-sol`. Each subject call had a 240-second timeout. No tuning or retry occurred. The manifest contains no judge assertions, both judge result files were empty, and no paid judge call occurred.
 

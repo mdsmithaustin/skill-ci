@@ -5,7 +5,7 @@ skill-ci tests Agent Skills. A skill is a directory with a `SKILL.md` file that 
 - **Free checks.** `skill-ci check` lints each `SKILL.md`, finds broken links, rejects personal data, and validates the test-case files. No model is called. Run it from a terminal, a git hook, no-mistakes, or any CI service. `skill-ci init` writes a GitHub Actions workflow that runs it on every push and pull request.
 - **Paid checks on your machine.** `skill-ci trigger` and `skill-ci run` run Claude and Codex on test prompts. One checks whether the skill loads when it should. The other runs each prompt with and without the skill and grades whether the skill helped. They use your own logins and spend model budget. They never run in CI.
 
-skill-ci is a command that uv installs from a git tag. A repository names its skill-ci version once, in `.skill-ci.toml`, and every place that runs skill-ci runs that version. skill-ci does not have its own test runner. It installs [`skill-eval-harness-ext`](https://github.com/mdsmithaustin/skill-eval-harness), a fork of skill-eval-harness, at the commit that its own `pyproject.toml` pins, and runs that. `DECISIONS.md` explains why, and when to stop using the fork.
+skill-ci is a command that uv installs from git. A repository names its skill-ci version once, in `.skill-ci.toml`, and every place that runs skill-ci runs that version. skill-ci does not have its own test runner. It installs [`skill-eval-harness-ext`](https://github.com/mdsmithaustin/skill-eval-harness), a fork of skill-eval-harness, at the commit that its own `pyproject.toml` pins, and runs that. `DECISIONS.md` explains why, and when to stop using the fork.
 
 skill-ci is also a skill itself. In a repository that holds skills, tell your agent "activate skill-ci" and it sets the repository up by following `SKILL.md`.
 
@@ -143,37 +143,52 @@ no-mistakes runs `commands.lint` from `.no-mistakes.yaml`. `init` handles the tw
             - skill-ci check
   ```
 
-  Add that entry to `~/.no-mistakes/config.yaml` on each machine that gates the repository. It applies on that machine at once and is not committed. `init` keys the entry by the `origin` remote URL. When that URL holds an `@`, which marks a user name or a token, `init` prints `<remote URL>` in its place and a note, so a user name or token before the `@` never reaches the output. Write the URL there without them. With no `origin`, the entry names `<remote URL>` and no note follows.
+  Add that entry to `~/.no-mistakes/config.yaml` on each machine that gates the repository. It applies on that machine at once and is not committed. `init` keys the entry by the `origin` remote URL. When that URL holds an `@`, which marks a user name or a token, `init` prints `<remote URL>` in its place and adds a note, so the user name or token never reaches the output. In `config.yaml`, write the URL without the user name or token. With no `origin`, the entry names `<remote URL>` and no note follows.
 
 no-mistakes reads `commands` from the default branch, not from the branch you push. A change to `commands.lint` applies after it merges there.
 
 ### GitHub Enterprise Server
 
-GitHub Enterprise Server (GHES) cannot call a reusable workflow from github.com, so skill-ci no longer ships one. The version lives in `.skill-ci.toml`, which GHES reads like any other file. The `source` key tells skill-ci where to fetch itself. It defaults to github.com. On a network that blocks github.com, point it at a mirror on your instance.
+GitHub Enterprise Server (GHES) cannot call a reusable workflow from github.com, so skill-ci no longer ships one. The version lives in `.skill-ci.toml`, a plain file in your repository. The `source` key tells skill-ci where to fetch itself. It defaults to github.com. On a network that blocks github.com, point it at a mirror on your instance.
 
-1. Mirror skill-ci with all its tags:
+1. Copy skill-ci and its tags into your instance. Use `--bare`, which leaves out the `refs/pull/*` refs that GitHub refuses to receive:
 
    ```sh
-   git clone --mirror https://github.com/mdsmithaustin/skill-ci.git
+   git clone --bare https://github.com/mdsmithaustin/skill-ci.git
    git -C skill-ci.git push --mirror https://ghes.example.com/acme/skill-ci.git
    ```
 
-2. Mirror the harness the same way, from `https://github.com/mdsmithaustin/skill-eval-harness.git`. skill-ci installs `skill-eval-harness-ext` from the git URL on one line of its `pyproject.toml`, so a mirror of skill-ci alone still reaches github.com. In your mirror of skill-ci, change that line to name your copy of the harness at the same commit. Commit the change and tag it with a new release tag, such as `v1.0.1`, that upstream has not used. skill-ci has no tooling for this step.
+2. Copy the harness the same way, from `https://github.com/mdsmithaustin/skill-eval-harness.git`. skill-ci installs `skill-eval-harness-ext` from the git URL on one line of its `pyproject.toml`, so a copy of skill-ci alone still reaches github.com. Clone your copy of skill-ci, change that line to name your copy of the harness at the same commit, and commit the change on the default branch. The bootstrap install and the workflow both install the default branch, and the pinned run installs the tagged commit, so both need the change. Tag the commit with a new release tag, such as `v1.0.1`, that upstream has not used, and push the branch and the tag. skill-ci has no tooling for this step. To take a later upstream release, push its tag alone. Do not repeat `push --mirror`, which resets the default branch and deletes your tag.
 
-3. Write `.skill-ci.toml` with the mirror as `source` and your tag as `version`:
+   ```sh
+   git clone https://ghes.example.com/acme/skill-ci.git skill-ci-edit
+   cd skill-ci-edit
+   $EDITOR pyproject.toml   # replace the URL on the skill-eval-harness-ext line
+   git commit -am "chore: use the internal harness copy"
+   git tag v1.0.1
+   git push origin HEAD v1.0.1
+   ```
+
+3. In your repository, install skill-ci from the copy and write `.skill-ci.toml` with that copy as `source` and your tag as `version`:
+
+   ```sh
+   uv tool install "git+https://ghes.example.com/acme/skill-ci.git"
+   ```
 
    ```toml
    version = "v1.0.1"
    source = "https://ghes.example.com/acme/skill-ci.git"
+   skills_dir = "skills"
+   evals_dir = "evals"
    ```
 
-4. Run `skill-ci init`. It writes the workflow with that `source`. The workflow uses the `actions/checkout` action. If your instance does not offer it, replace that step with your own checkout step. The workflow installs uv with `pip install uv==0.12.7`, so point pip at your package mirror on the runner, or change that line.
+4. Run `skill-ci init`, which writes the workflow with that `source`, and commit what it wrote. The workflow uses the `actions/checkout` action. If your instance does not offer it, replace that step with your own checkout step. The workflow installs uv with `pip install uv==0.12.7`. pip and uv read different settings, so point both at your package mirror on the runner, with `PIP_INDEX_URL` and `UV_DEFAULT_INDEX`, or change that line.
 
 `source` may not carry credentials. A private mirror authenticates through a git credential helper on the runner.
 
 ### Any other CI
 
-A CI service that runs shell commands can run the same check. The job needs `git`, `pip`, and network access to the `source` and to the harness's git URL. Three commands do it:
+A CI service that runs shell commands can run the same check. The job needs `git`, `pip`, and network access to the `source`, to the harness's git URL, and to a Python package index. uv also downloads Python 3.12 or later when the runner has none. Three commands do it:
 
 ```sh
 pip install uv==0.12.7
@@ -181,7 +196,7 @@ SKILL_CI_SOURCE="https://github.com/mdsmithaustin/skill-ci.git"
 uv tool run --from "git+$SKILL_CI_SOURCE" skill-ci check
 ```
 
-Use the `source` from your `.skill-ci.toml`. The first command installs uv. The second sets a shell variable that holds the source. skill-ci does not read that variable, but the workflow that `init` writes uses the same name. The third command installs skill-ci from that source. It then reads `.skill-ci.toml` and runs the pinned version. `skill-ci check` exits 0 when every check passes and nonzero when one fails, so the service fails the job without more setup. The job prints `skill-ci <version> (<commit>)` first, so its log shows the commit it ran.
+Use the `source` from your `.skill-ci.toml`. The first command installs uv. The second sets a shell variable that holds the source. skill-ci does not read that variable, but the workflow that `init` writes uses the same name. The third command installs skill-ci from that source. That skill-ci then reads `.skill-ci.toml` and runs the pinned version. `skill-ci check` exits 0 when every check passes and nonzero when one fails, so the service fails the job without more setup. If pip stops with `externally-managed-environment`, create a virtual environment first, or install uv another way. The job prints `skill-ci <version> (<commit>)` first, so its log shows the commit it ran.
 
 ## The `.skill-ci.toml` file
 
@@ -436,7 +451,7 @@ src/skill_ci/files.py               atomic writes and regular-file reads
 tests/                              unit tests
 .github/workflows/test.yml          unit tests on Linux and macOS, plus two fixture contracts that run skill-ci check
 .github/fixtures/                   empty scaffold and populated edited-file contracts
-.github/dependabot.yml              weekly updates for actions and pip
+.github/dependabot.yml              weekly updates for actions and uv
 docs/authoring-cases.md             how to write test cases
 docs/link-exceptions.md             the link-exceptions policy
 docs/content-conventions.md         the content conventions file

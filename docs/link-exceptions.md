@@ -1,6 +1,6 @@
 # Allow links to files a template creates
 
-The content check fails on any relative Markdown link whose target does not exist. That is wrong for one case. A skill can ship a template that the agent copies into a user's project, and the template can link to a file that exists only after the copy, such as a report the agent writes. A link-exceptions file lists those links so the checker accepts them.
+The content check fails on any relative Markdown link whose target does not exist. That is wrong for one case. A skill can ship a template that the agent copies into a user's project, and the template can link to a file that exists only after the copy, such as a report the agent writes. A link-exceptions file lists those links so the content check accepts them.
 
 Use a link-exceptions file only for that case. Every other content check stays on. The file cannot exempt images, reference-style link definitions, paths in inline code, sibling skill names, fences, or retired text from a conventions file.
 
