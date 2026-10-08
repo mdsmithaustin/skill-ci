@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import difflib
 import os
 import re
 import tomllib
@@ -169,6 +168,8 @@ def read(path: Path, *, ignore_unknown: bool = False) -> Config:
 
 
 def unknown_key_problem(key: str) -> str:
+    import difflib
+
     close = difflib.get_close_matches(key, [*OPTIONS, "version", "source"], n=1)
     return f"unknown key {key!r}" + (f"; did you mean {close[0]!r}?" if close else "")
 

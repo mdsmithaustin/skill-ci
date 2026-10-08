@@ -54,16 +54,11 @@ class Refs:
 
 
 @dataclass(frozen=True)
-class Offline:
-    reason: str
-    fetched_at: datetime
-
-
-@dataclass(frozen=True)
 class Resolved:
     name: str
     commit: Commit
-    offline: Offline | None = None
+    fetched_at: datetime
+    unreachable: str | None = None
     newer: Tag | None = None
 
 
@@ -75,43 +70,44 @@ def resolve(pin: Pin, cache: Path, now: datetime) -> Resolved:
         and pin.version in cached.tags
         and timedelta(0) <= now - cached.fetched_at < NEWER_TAG_CHECK_INTERVAL
     ):
-        return answer(pin.version, cached, None)
+        return answer(pin.version, cached)
     try:
-        return answer(pin.version, fetch(pin, cache, now), None)
+        return answer(pin.version, fetch(pin, cache, now))
     except Unreachable as error:
         if cached is None:
             raise PinError(f"cannot reach {pin.source} ({error}), and no version was ever resolved from it") from error
-        return answer(pin.version, cached, Offline(str(error), cached.fetched_at))
+        return answer(pin.version, cached, str(error))
 
 
-def answer(version: Version, refs: Refs, offline: Offline | None) -> Resolved:
+def answer(version: Version, refs: Refs, unreachable: str | None = None) -> Resolved:
     match version:
         case Tag():
-            if version not in refs.tags and offline is not None:
-                raise PinError(f"cannot reach {refs.source} ({offline.reason}), and the versions cached on {offline.fetched_at:%Y-%m-%d} have no tag {version}")
             if version not in refs.tags:
-                raise PinError(f"{refs.source} has no tag {version}")
-            newest = max(refs.tags)
-            return Resolved(str(version), refs.tags[version], newer=newest if newest > version else None)
+                if unreachable is None:
+                    raise PinError(f"{refs.source} has no tag {version}")
+                raise PinError(f"cannot reach {refs.source} ({unreachable}), and the versions cached on {refs.fetched_at:%Y-%m-%d} have no tag {version}")
+            latest = newest(refs)
+            return Resolved(str(version), refs.tags[version], refs.fetched_at, newer=latest if latest > version else None)
         case Track.LATEST:
-            if not refs.tags:
-                raise PinError(f"{refs.source} has no tag such as v1.0.0")
-            newest = max(refs.tags)
-            return Resolved(str(newest), refs.tags[newest], offline)
+            latest = newest(refs)
+            return Resolved(str(latest), refs.tags[latest], refs.fetched_at, unreachable)
         case Track.MAIN:
             if refs.main is None:
                 raise PinError(f"{refs.source} has no main branch")
-            return Resolved(str(Track.MAIN), refs.main, offline)
+            return Resolved(str(Track.MAIN), refs.main, refs.fetched_at, unreachable)
+
+
+def newest(refs: Refs) -> Tag:
+    if not refs.tags:
+        raise PinError(f"{refs.source} has no tag such as v1.0.0")
+    return max(refs.tags)
 
 
 def newest_tag(pin: Pin, cache: Path, now: datetime) -> Tag:
     try:
-        refs = fetch(pin, cache, now)
+        return newest(fetch(pin, cache, now))
     except Unreachable as error:
         raise PinError(f"cannot reach {pin.source} ({error})") from error
-    if not refs.tags:
-        raise PinError(f"{refs.source} has no tag such as v1.0.0")
-    return max(refs.tags)
 
 
 def fetch(pin: Pin, cache: Path, now: datetime) -> Refs:
@@ -202,11 +198,11 @@ def as_commit(value: object) -> Commit:
     return Commit(value)
 
 
-def running_commit() -> Commit | None:
+def running_commit(distribution: metadata.Distribution) -> Commit | None:
     try:
-        record = json.loads(metadata.distribution("skill-ci").read_text("direct_url.json") or "{}")
+        record = json.loads(distribution.read_text("direct_url.json") or "{}")
         return as_commit(record["vcs_info"]["commit_id"])
-    except (metadata.PackageNotFoundError, ValueError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError):
         return None
 
 
@@ -237,23 +233,20 @@ def rerun(pin: Pin, commit: Commit, arguments: Sequence[str]) -> NoReturn:
         # The pinned run's own window would open after the scratch directory exists and close before it is removed.
         with children.stopping_signals(), tempfile.TemporaryDirectory(prefix="skill-ci-") as scratch:
             started = Path(scratch) / "started"
-
-            def attempt(*network: str) -> tuple[int, bool]:
+            # Online, uv revalidates package index pages cached more than 10 minutes ago even when the pinned commit is
+            # built, which is slower and fails without a network. Offline fails only when uv lacks something it needs.
+            for network in (("--offline",), ()):
+                if not network:
+                    print(f"skill-ci: uv could not start the pinned commit {commit} offline; trying again with network access", file=sys.stderr)
                 status = children.run(
                     [uv, "tool", "run", *network, "--isolated", "--from", f"git+{pin.source}@{commit}", "skill-ci", *arguments],
                     env={**{key: value for key, value in os.environ.items() if key not in SHADOWING}, PINNED: commit, STARTED: str(started)},
                     grace=children.HAND_OFF_GRACE,
                 ).returncode
-                return status, started.exists()
-
-            # Online, uv revalidates package index pages cached more than 10 minutes ago even when the pinned commit is
-            # built, which is slower and fails without a network. Offline fails only when uv lacks something it needs.
-            status, began = attempt("--offline")
-            if status > 0 and not began:
-                print(f"skill-ci: uv could not start the pinned commit {commit} offline; trying again with network access", file=sys.stderr)
-                status, began = attempt()
+                if status <= 0 or started.exists():
+                    break
+            else:
+                raise HandoffError(f"uv could not start the pinned commit {commit}; see the uv error above")
     except OSError as error:
         raise HandoffError(f"cannot run {uv} for the pinned commit {commit}: {error}") from error
-    if status > 0 and not began:
-        raise HandoffError(f"uv could not start the pinned commit {commit}; see the uv error above")
     raise SystemExit(shell_status(status))

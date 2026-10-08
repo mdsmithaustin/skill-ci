@@ -26,8 +26,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     sys.stdout.reconfigure(line_buffering=True)
     arguments = list(sys.argv[1:] if argv is None else argv)
     try:
-        running = pin.running_commit()
-        identity = f"skill-ci {metadata.version('skill-ci')} ({running or 'commit unknown'})"
+        distribution = metadata.distribution("skill-ci")
+        running = pin.running_commit(distribution)
         child = pin.claim(os.environ, running)
         directory = working_directory()
         found = None if directory is None else config.find(directory)
@@ -46,6 +46,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 pin.rerun(loaded.pin, resolved.commit, arguments)
         if loaded is not None and loaded.unknown_keys:
             raise config.ConfigError(loaded.path, loaded.unknown_keys)
+        identity = f"skill-ci {distribution.version} ({running or 'commit unknown'})"
         namespace = build_parser(identity).parse_args(arguments)
         if not child and not announced:
             print(identity, file=sys.stderr)
@@ -83,10 +84,10 @@ def working_directory() -> Path | None:
 
 def announce(selected: config.Pin, resolved: pin.Resolved) -> None:
     print(f"skill-ci {resolved.name} ({resolved.commit})", file=sys.stderr)
-    if resolved.offline is not None:
+    if resolved.unreachable is not None:
         print(
-            f"skill-ci: warning: cannot reach {selected.source} ({resolved.offline.reason}); "
-            f"running {resolved.commit}, which {selected.version} named on {resolved.offline.fetched_at:%Y-%m-%d %H:%M} UTC",
+            f"skill-ci: warning: cannot reach {selected.source} ({resolved.unreachable}); "
+            f"running {resolved.commit}, which {selected.version} named on {resolved.fetched_at:%Y-%m-%d %H:%M} UTC",
             file=sys.stderr,
         )
     if resolved.newer is not None:
@@ -146,9 +147,8 @@ def options[T](options_type: type[T], namespace: argparse.Namespace) -> T:
 
 
 def warn_about_shadowing() -> None:
-    try:
-        project = Path.cwd()
-    except OSError:
+    project = working_directory()
+    if project is None:
         return
     for warning in harness.shadowing_warnings(project):
         print(f"skill-ci: warning: {warning}", file=sys.stderr)
