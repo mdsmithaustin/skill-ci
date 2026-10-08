@@ -14,13 +14,13 @@ The source review covered [skill-optimizer at `914629f`](https://github.com/mdsm
 
 ## Changes to the donor's package design
 
-The new checker is read-only and accepts explicit single-package or collection selection. Copy comparison always takes the installed skills parent directory. Each selected source maps to its own basename below that parent.
+The new checker is read-only and accepts explicit single-package or collection selection. `skill-ci package` exposes the collection form. Copy comparison always takes the installed skills parent directory. Each selected source maps to its own basename below that parent.
 
 The inventory includes empty directories and exact executable permission bits as well as file paths and bytes. The donor's digest omitted directories and permissions. Symlink roots are checked before path resolution. All file content is opaque, so native metadata extensions do not acquire a new validation policy.
 
 The command owns one in-memory inventory and derives both its digest and path-level differences from it. A separate serialized-inventory format would add storage, freshness, and schema coordination without a current consumer. Automatic selection based on whether `SKILL.md` exists was rejected because a missing marker would change which directories the command inspected.
 
-Both new reusable workflow inputs default to false. Consumers can adopt package inspection or require manifests independently. The existing copied checker files and their drift checks retain their current contracts.
+The `package` and `require_manifests` settings both default to false. Consumers can adopt package inspection or a manifest requirement independently.
 
 ## Left with their existing owners
 

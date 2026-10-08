@@ -6,7 +6,7 @@ Why this repository is shaped the way it is. `README.md` covers how to use it. T
 
 Two skill repositories were testing skills separately and duplicating the work. One had a frontmatter checker, a reference checker, and a trigger file that only asserted a description contained a phrase. The other had a stricter frontmatter validator, no reference checker, ninety-two behavioral trigger rows in an incompatible schema, and a bespoke runner that could not move. The duplication was two validators and two trigger formats.
 
-One shared home fixes that. A skill repository gets its lints, its runner pin, and its task definitions from here, and owns only its cases.
+One shared home fixes that. A skill repository gets its lints, its runner version, and its commands from here, and owns only its cases.
 
 ## Why an external runner instead of our own
 
@@ -16,7 +16,7 @@ Building our own would have reproduced about twenty thousand lines to add two th
 
 ## Why a fork, and when to leave it
 
-`runner.lock` pins a fork rather than the upstream release. At the `80e49af` pin, the fork carried the twenty patches listed below. Patches 1 to 8 were classified on 2026-09-27. Patches 9 to 20 arrived with that pin and name the fork pull request each came from. Fork #11 and #13 changed only tests and docs, so they are not patches. The `6634de1` pin also includes fork #20, classified below on 2026-10-04.
+`pyproject.toml` pins a fork, as the distribution `skill-eval-harness-ext`, rather than the upstream release `skill-eval-harness`. The pin is one git commit, because the fork has no release tags of its own. `git ls-remote --tags` on the fork lists only `sync-upstream-2026-10-05`, and its local `v0.x` tags are upstream's. The pin is now `15cc612`, the commit that renamed the distribution. At the `80e49af` pin, the fork carried the twenty patches listed below. Patches 1 to 8 were classified on 2026-09-27. Patches 9 to 20 arrived with that pin and name the fork pull request each came from. Fork #11 and #13 changed only tests and docs, so they are not patches. The `6634de1` pin also includes fork #20, classified below on 2026-10-04.
 
 1. The judge prompt no longer reveals which arm it is grading.
 2. Codex skill loads are read from the session rollout, because an explicit mention injects the skill with no tool event.
@@ -75,21 +75,85 @@ Fork [#20](https://github.com/mdsmithaustin/skill-eval-harness/pull/20) was clas
 
 These changes fit the existing opt-in and adapter categories. They do not add another accepted difference in evaluation or reopen the exit decision.
 
-Leaving stays cheap to assess. The upstream `adewale/skill-eval-harness` revision assessed on 2026-10-01, `2297000`, remains an ancestor of the `6634de1` pin. Verified on 2026-10-04 with `git merge-base --is-ancestor`. The fork remains a superset of that assessed revision.
+The `15cc612` pin is later than the last classification above. It adds the upstream merge `40f2927`, fork #21, #22, and #23, and the upstream commits that merge brought in. They are not yet classified under the exit test. That classification is the operator's open decision.
 
-## Why execution derives from the lock
+Leaving stays cheap to assess. The upstream `adewale/skill-eval-harness` revision assessed on 2026-10-01, `2297000`, remains an ancestor of the `15cc612` pin. Verified on 2026-10-08 with `git merge-base --is-ancestor`. The fork remains a superset of that assessed revision.
 
-`runner.lock` records the runner commit once. `tools/run_runner.py` validates that one specification each time a local task or reusable workflow runs. It starts Python in uv's isolated tool environment and executes the runner from that environment's scripts directory. uv can otherwise fall back to a same-named command on `PATH` when a source does not provide an entrypoint.
+## How skill-ci is distributed
 
-The reusable workflow checks out the revision that GitHub selected for that workflow through `job.workflow_repository` and `job.workflow_sha`. A caller therefore records one full SHA in its `uses` line. The deprecated `skill-ci-ref` input remains accepted for callers that have not removed it, but it cannot change the checkout. Dependabot can update the remote reusable-workflow reference through its `github-actions` ecosystem without a cross-repository credential.
+A repository names its skill-ci version once, in `.skill-ci.toml`. Every place that runs skill-ci runs that version, whether it starts in a terminal, lefthook, no-mistakes, or a CI service. skill-ci is a `skill-ci` command that uv installs from git, and skill-ci is not published to a package registry. The operator settled the design on 2026-10-06 in a design review. Two later review rounds changed the credentials rule and the hand-off, and their sections give those dates. Each decision below gives its reason.
 
-GitHub documents the [called workflow identity](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#job-context) and [automatic reusable-workflow updates](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/auto-update-actions).
+The earlier setup had a consumer include `skill-tasks.toml` from a sibling checkout of skill-ci and call a reusable workflow pinned by SHA. It had three faults. Local runs and CI could run different code, and nothing showed it. The `SKILL_CI` variable moved the tools, but not the hardcoded include of the task definitions. An `sbx --clone` sandbox or a Dev Container has no sibling checkout at all.
+
+### Why no-mistakes was compared
+
+no-mistakes is a pipeline that validates a change before it is pushed, and it reaches a repository with nothing but a settings file. The operator asked whether that was a better pattern than a sibling checkout. Its [README](https://github.com/kunchenguid/no-mistakes) and [installer](https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh) show how it ships. It builds a Go binary for each platform. `install.sh` installs the latest release into `~/.no-mistakes/bin`, and `no-mistakes update` replaces it in place. A repository holds only `.no-mistakes.yaml`, which does not say where the tool lives, and `init` installs a skill whose text is built into the binary.
+
+One version per machine suits no-mistakes because its CI checks a record that a local run happened and never repeats the checks. skill-ci's CI does repeat lint, validate, and audit, so local runs and CI have to run the same code. A latest-only install would bring back the drift that started this work. A release binary also needs a release pipeline, which skill-ci does not have.
+
+Three ideas carried over. A settings file in the repository says which version the repository uses and how it is configured, and never where the tool sits on disk. The version is pinned in that one place, and every tool calls `skill-ci`, which reads it. And `init` does the setup, with `SKILL.md` calling it, so an adopter without an agent gets the same result.
+
+### Why one file and one command
+
+`.skill-ci.toml` holds the version, the `source`, and the options. `skill-ci check` runs the checks. Lefthook, no-mistakes, GitHub Actions, and any other CI call that one command, and none of them records a version of its own. Two CI paths would mean two pins to keep equal and two things to keep working, so the reusable workflow is retired. `skill-ci init` writes a short workflow that installs skill-ci and runs `skill-ci check`, the same on github.com and GitHub Enterprise Server.
+
+The bash tasks in `skill-tasks.toml` became subcommands, because an outside adopter may have neither mise nor bash. The mise tasks that `init` adds are one-line calls to those subcommands. Hooks run in addition to CI and never instead of it. Anyone can skip a hook with `--no-verify`, so CI stays the gate. The split follows measured cost on a repository of 56 skills. Lint took 0.2 to 0.4 seconds and the personal-data scan of staged files 0.07 seconds, so `skill-ci check --fast` runs before each commit. Validate took 1.1 to 1.4 seconds and audit 1.1 seconds, so the full `skill-ci check` runs before each push.
+
+no-mistakes runs skill-ci second. When `commands.lint` is set, `init` appends ` && skill-ci check`, so the repository's own lint still runs first. When it is empty, no-mistakes has an agent do the linting, and setting the field would switch that off without notice. `init` therefore leaves the file alone and prints a `commands.lint.additional` entry for the user's own no-mistakes settings. no-mistakes reads commands from the default branch, so the `.no-mistakes.yaml` change applies after it merges. The `repository_overrides` entry lives in the user's own settings and applies at once.
+
+The cost is losing Dependabot's automatic bump pull requests. Dependabot bumped the `uses:` line by itself and cannot read `.skill-ci.toml`. `skill-ci update` moves an exact-tag pin, and every run of an exact-tag pin prints a notice when a newer tag exists. Both work on GHES with no extra service. An adopter who already runs Renovate can add a custom rule later.
+
+`version` is an exact tag, `latest`, or `main`. no-mistakes tells adopters never to pin its [CI action](https://github.com/kunchenguid/no-mistakes/tree/main/.github/actions/require-no-mistakes) to `@main`. The risk that rule covers is a pull request editing the `main` that checks it. A consumer's pull request cannot edit skill-ci's `main`, so that risk does not apply here. The cost of `latest` and `main` is narrower. A CI run and a local run look the version up separately, so a release between them can make them differ. Every run prints its exact commit on its first line to make that visible. `init` writes the newest tag as an exact tag, so a new adopter gets results they can reproduce.
+
+Five alternatives lost to this design.
+
+- **A sibling checkout with a commit check.** It fixes drift but keeps the fixed path, which fails in `sbx` and Dev Containers.
+- **A mise git include at a commit.** It worked on mise 2026.9.15 with the experimental setting off. Outside adopters may not use mise, so it stays only as a fallback for mise-only consumers.
+- **The reusable workflow for github.com and a settings file for GHES.** That is two CI paths and two pins.
+- **A `pre-commit` framework hook.** Its `rev:` would be a second pin.
+- **Copying the harness into skill-ci.** It would bury the patch list and the exit test above inside a second repository.
+
+### Why GHES rules out a pin in a `uses:` line
+
+The GHES 3.12 documentation says "You cannot directly use reusable workflows defined on GitHub.com." The old workflow also found its own revision through job fields that GHES does not provide. A GHES repository therefore has no `uses:` line for the local command to read, and a pin kept on that line could not serve both hosts. The pin moved to `.skill-ci.toml`, which every host can read.
+
+Some enterprise networks block github.com, so `.skill-ci.toml` has a `source` key that points at an internal mirror and defaults to github.com. A mirrored skill-ci installs `skill-eval-harness-ext` from github.com unless the mirror's `pyproject.toml` says otherwise. The mirror therefore has to carry the harness too, and the dependency line has to change. That stays a documented step and not tooling, until an adopter needs it. The workflow that `init` writes installs uv with `pip install uv==0.12.7`, because a runner on a restricted network is more likely to reach a package mirror than github.com. `astral-sh/setup-uv` works on GHES only when an administrator lets the instance use actions from github.com. The operator deferred the choice of install method, so that command is one template line that can change on its own.
+
+### Why skill-ci is not on PyPI
+
+PyPI rejects an upload whose own metadata declares a dependency as a direct URL (`warehouse/forklift/legacy.py`, line 464, read on 2026-10-06). skill-ci depends on the harness fork through a git URL, so publishing it would mean publishing the fork under its own name first. Publishing is not planned. A git tag already lets anyone run `uv tool install git+https://github.com/mdsmithaustin/skill-ci.git@<tag>`.
+
+Checking PyPI for the fork's name exposed a worse problem. PyPI already holds `skill-eval-harness` 0.6.0, published by the upstream author. The fork's `pyproject.toml` used the same name and the same version with different code. An adopter who ran `pip install skill-eval-harness` got upstream, without the blinding patches that the exit test above counts as an accepted difference. Their results would not be comparable with skill-ci's, and the version numbers would not show it. The fork's distribution is now `skill-eval-harness-ext`. Its modules and console scripts keep their names.
+
+skill-ci owns the harness version in any repository that uses it. `pyproject.toml` pins one commit, and `skill-ci harness` is the way into that copy. skill-ci warns when it finds a different `skill-benchmark` on `PATH` or a harness named in the project's own dependencies. A harness bump stays manual. A person classifies each one against the exit test above, and an automatic bump pull request would skip that step.
+
+### Why a tag resolves to a commit
+
+The prototype on 2026-10-06, with uv 0.12.7, compared the two ways to run a pinned version. `uv tool run --from git+<source>@<commit>` took 0.23 to 0.34 seconds warm and worked with `--offline`. The same command with a tag took 1.31 to 1.81 seconds warm, and `--offline` failed with exit code 1. skill-ci therefore resolves a tag to its commit with `git ls-remote` and always passes the commit to uv.
+
+Resolution has its own cost. skill-ci caches an exact tag for a day per source, so a tag moved on the source can keep its old commit for up to a day. `latest` and `main` ask the source on every run, because following the head is their purpose.
+
+Offline, `latest` and `main` run the last answer skill-ci looked up and print a warning that names its commit. A lookup needs the network. The warning lets a local run keep working offline without hiding that its commit may be stale. When nothing was ever looked up, skill-ci exits with a message that says so. An exact tag in the cache needs no lookup.
+
+The package version reads `1.0.0` in the commit that gets tagged `v1.0.0`. A pin to `v1.0.0` fails until that tag exists. Pins start there because earlier revisions cannot report that the pinned run started, and a run that cannot report it can happen twice and repeat a paid `run`.
+
+### Why the hand-off runs offline first
+
+A pinned run starts `uv tool run --isolated` at the pinned commit. uv revalidates its cached package index over the network once those responses are 10 minutes old. With the network down, that hand-off exited with code 126 after about 6 seconds, even though the commit's environment was already built. The message also blamed the source, which was never the failing part.
+
+The hand-off now tries `--offline` first and retries online once only when uv exits before the pinned child starts, which skill-ci knows from a start marker. A child that started and failed is never retried, because a retry could repeat a paid call. A review chose this on 2026-10-08, after a performance run measured the fault. After a stale index, a first run with the network down used to exit with code 126 after 4.2 to 7.4 seconds. It now exits with code 0 after 0.8 seconds. A first run online went from 1.0 to 0.8 seconds. A first build of a commit runs uv twice, once offline and once online.
+
+### Why `source` rejects credentials
+
+A review set the credentials rule on 2026-10-07. The operator can still decide to allow tokens in `source`, and that would bring redaction back. `source` is a URL that skill-ci prints, caches, and hands to git. Redacting a token from it failed three times, because each fix missed a new shape of URL. The deeper fault is that a token in a committed `.skill-ci.toml` has already reached everyone who can read the repository. Redaction protected a log line while the file itself leaked.
+
+skill-ci now rejects a `source` that carries credentials. Only an ssh user name is allowed. The error names the key, points at a git credential helper, and never echoes the value. A private mirror authenticates through that helper. The redaction code is deleted, and the cache key is the source as written.
 
 ## Where manifests live
 
 A manifest belongs outside the skills tree, at `evals/<skill>/shared-benchmark.json`, with `skill_paths` relative to the repository root. The reason is what a skill installer does. `npx skills` copies a skill directory verbatim to every consumer, in both copy and symlink mode, and it has no ignore or exclude mechanism. A manifest at `<skills-dir>/<skill>/evals/shared-benchmark.json` therefore hands every consumer of that skill its trigger queries, its expected answers, and its oracle scripts. Measured on 2026-09-13 by installing a fixture skill with an `evals/` tree and reading a planted transcript back from the installed path.
 
-The old layout still resolves, because the runner's rule for the repository root runs the existing case first. The reusable workflow's `evals-dir` input and the `EVALS_DIR` variable the mise tasks read select the tree to search, and both default to the skills tree. The choice is one or the other for a whole repository, because each search reads a single tree. A repository that starts moving manifests moves all of them in the same change; the ones left behind stop being checked. The runner also resolves `evals/shared-benchmark.json` with no skill segment, which suits a repository holding one skill, but the scaffold does not write that shape.
+The old layout still resolves, because the runner's rule for the repository root runs the existing case first. The `evals_dir` key in `.skill-ci.toml`, or the `--evals-dir` flag, selects the tree to search, and it defaults to the skills tree. The choice is one or the other for a whole repository, because each search reads a single tree. A repository that starts moving manifests moves all of them in the same change; the ones left behind stop being checked. The runner also resolves `evals/shared-benchmark.json` with no skill segment, which suits a repository holding one skill, but the scaffold does not write that shape.
 
 The cost is that a manifest and its skill no longer share a directory, so nothing keeps them in step automatically. Case files, `prompt_ref`, and script-oracle paths resolve against the manifest's own directory in both layouts, which is the trap worth knowing when a manifest moves.
 
@@ -97,7 +161,7 @@ The cost is that a manifest and its skill no longer share a directory, so nothin
 
 Everything model-free runs in continuous integration on every pull request. That is the lints, manifest validation, the leakage check, and the readiness audit including judge independence.
 
-Behavioral runs are operator-local and never a pull request gate. They drive the installed `claude` and `codex` binaries on the operator's own logins. Since the runner pin to `80e49af`, the runner keeps the operator's own setup out of answer and trigger runs itself. For Claude that is host skills, agents, `CLAUDE.md`, MCP servers, and auto memory. For Codex it is every skill under `~/.agents/skills`, Codex's bundled skills, and apps. The launchers in `tools/` predate that. `tools/claude-project-only` is still needed, because the runner grants a print-mode run no tool permissions and the launcher grants `acceptEdits`. In answer and trigger runs its `--setting-sources project` repeats the runner's flag and is harmless. Judge runs are sealed instead: the runner passes `--safe-mode --disable-slash-commands`, which hides workspace skills too. Whether the launcher's flag adds anything on a judge run has not been tested. `tools/codex-project-only` only moves HOME, which the runner has made redundant.
+Behavioral runs are operator-local and never a pull request gate. They drive the installed `claude` and `codex` binaries on the operator's own logins. Since the runner pin to `80e49af`, the runner keeps the operator's own setup out of answer and trigger runs itself. For Claude that is host skills, agents, `CLAUDE.md`, MCP servers, and auto memory. For Codex it is every skill under `~/.agents/skills`, Codex's bundled skills, and apps. The launchers in `src/skill_ci/launchers/` predate that. `claude-project-only` is still needed, because the runner grants a print-mode run no tool permissions and the launcher grants `acceptEdits`. In answer and trigger runs its `--setting-sources project` repeats the runner's flag and is harmless. Judge runs are sealed instead: the runner passes `--safe-mode --disable-slash-commands`, which hides workspace skills too. Whether the launcher's flag adds anything on a judge run has not been tested. `codex-project-only` only moves HOME, which the runner has made redundant.
 
 Cost is the reason this is not a gate. Fifty-two skills at twenty queries, three runs, and two harnesses is over six thousand command line invocations.
 
@@ -127,6 +191,6 @@ Two things no tool measures directly, and we do not claim otherwise. Whether a h
 
 ## Run artifacts and populated coverage
 
-Paid task outputs default to a unique directory beside the consuming checkout. A working-tree installer copies ignored files too, so gitignore cannot keep raw transcripts out of a skill package. Canonical containment checks reject a default destination inside the selected skill before any model call. An explicit nonempty `OUT` keeps its existing meaning.
+Paid task outputs default to a unique directory beside the consuming checkout. A working-tree installer copies ignored files too, so gitignore cannot keep raw transcripts out of a skill package. Canonical containment checks reject a default destination inside the selected skill before any model call. An explicit `out` setting, or `--out`, is checked the same way and must sit outside the skill package.
 
-The reusable workflow offers `require-populated-manifests` as an opt-in policy. It requires each discovered skill directory to have a manifest with cases and a binding to that skill. Empty scaffolds remain valid by default so activation can stop before case authoring. The pinned runner continues to own schema validation, leakage checks, and readiness audit.
+`skill-ci check` offers `--require-populated-manifests`, or the `require_populated_manifests` key, as an opt-in policy. It requires each discovered skill directory to have a manifest with cases and a binding to that skill. Empty scaffolds remain valid by default so activation can stop before case authoring. The pinned runner continues to own schema validation, leakage checks, and readiness audit.

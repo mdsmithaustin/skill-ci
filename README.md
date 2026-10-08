@@ -2,10 +2,10 @@
 
 skill-ci tests Agent Skills. A skill is a directory with a `SKILL.md` file that tells an AI coding agent, such as Claude Code or Codex, how to do a task. If a repository holds skills, skill-ci gives it two kinds of checks:
 
-- **Free checks in CI.** A GitHub Actions workflow runs on every push and pull request. It lints each `SKILL.md`, finds broken links, rejects personal data, and validates the test-case files. No model is called.
-- **Paid checks on your machine.** Two mise tasks run Claude and Codex on test prompts. One checks whether the skill loads when it should. The other runs each prompt with and without the skill and grades whether the skill helped. They use your own logins and spend model budget. They never run in CI.
+- **Free checks.** `skill-ci check` lints each `SKILL.md`, finds broken links, rejects personal data, and validates the test-case files. No model is called. Run it from a terminal, a git hook, no-mistakes, or any CI service. `skill-ci init` writes a GitHub Actions workflow that runs it on every push and pull request.
+- **Paid checks on your machine.** `skill-ci trigger` and `skill-ci run` run Claude and Codex on test prompts. One checks whether the skill loads when it should. The other runs each prompt with and without the skill and grades whether the skill helped. They use your own logins and spend model budget. They never run in CI.
 
-skill-ci does not have its own test runner. It pins a fork of [skill-eval-harness](https://github.com/mdsmithaustin/skill-eval-harness) in `runner.lock` and runs that. `DECISIONS.md` explains why, and when to stop using the fork.
+skill-ci is a command that uv installs from git. A repository names its skill-ci version once, in `.skill-ci.toml`, and every place that runs skill-ci runs that version. skill-ci does not have its own test runner. It installs [`skill-eval-harness-ext`](https://github.com/mdsmithaustin/skill-eval-harness), a fork of skill-eval-harness, at the commit that its own `pyproject.toml` pins, and runs that. `DECISIONS.md` explains why, and when to stop using the fork.
 
 skill-ci is also a skill itself. In a repository that holds skills, tell your agent "activate skill-ci" and it sets the repository up by following `SKILL.md`.
 
@@ -13,7 +13,7 @@ skill-ci is also a skill itself. In a repository that holds skills, tell your ag
 
 | Term | Meaning |
 | --- | --- |
-| Skills directory | The directory whose children each hold a `SKILL.md`. Set by `SKILLS_DIR` locally and `skills-dir` in CI. Default `skills`. |
+| Skills directory | The directory whose children each hold a `SKILL.md`. Set by `skills_dir` in `.skill-ci.toml` or `--skills-dir` on the command line. Default `skills`. |
 | Manifest | The test file for one skill, `shared-benchmark.json`, in skill-eval-harness format version 1 or 2. It names the skill, its files (`skill_paths`), the two variants, and a list of cases. |
 | Case | One test prompt in a manifest, with the assertions that grade it. |
 | Trigger case | A case that checks whether the agent loads the skill for a prompt. `should_trigger` says whether it should. |
@@ -21,7 +21,9 @@ skill-ci is also a skill itself. In a repository that holds skills, tell your ag
 | Variant | One side of a paired run. `with_skill` has the skill installed. `without_skill` does not. |
 | Oracle | A script that grades a run's output. |
 | Judge | A model that grades a run against a rubric. |
-| Readiness audit | `skill-benchmark audit-manifest`. It fails a manifest that is not ready for a paid run, for example one with no near-miss negative cases. |
+| Readiness audit | `skill-ci audit`, which runs `skill-benchmark audit-manifest`. It fails a manifest that is not ready for a paid run, for example one with no near-miss negative cases. |
+| Pin | The `version` in `.skill-ci.toml`. It is an exact tag, `latest`, or `main`. |
+| Source | The git URL that skill-ci installs itself from. The `source` key sets it, and it defaults to github.com. |
 
 ## Add skill-ci to a repository
 
@@ -60,13 +62,14 @@ You need `uv` and `git`. `mise` and `lefthook` are optional, and `init` wires th
 | --- | --- | --- |
 | Pin | Writes `.skill-ci.toml` with `version` set to the newest release tag as an exact tag, plus `skills_dir` and, for external manifests, `evals_dir`. | The file exists. |
 | Workflow | Writes `.github/workflows/skill-checks.yml`. | The file exists. `init` adds a note when it does not run `skill-ci check`. |
-| lefthook | Adds `skill-ci check --fast` under `pre-commit` and `skill-ci check` under `pre-push`, then runs `lefthook validate`. If lefthook rejects the file, `init` puts the file back and prints a to-do line. Without `lefthook` on `PATH`, it skips the validation. | No `lefthook.yml`, `lefthook.yaml`, `.lefthook.yml` or `.lefthook.yaml` exists. A hook that already runs `skill-ci check` is left alone. |
-| no-mistakes | Appends ` && skill-ci check` to `commands.lint` and shows the change. | No `.no-mistakes.yaml` exists, or `commands.lint` already runs `skill-ci check`. |
+| lefthook | Adds `skill-ci check --fast` under `pre-commit` and `skill-ci check` under `pre-push`, then runs `lefthook validate`. See [lefthook](#lefthook). If lefthook rejects the file, `init` puts the file back and prints a to-do line. Without `lefthook` on `PATH`, it skips the validation. | No `lefthook.yml`, `lefthook.yaml`, `.lefthook.yml` or `.lefthook.yaml` exists. A hook that already runs `skill-ci check` is left alone. |
+| no-mistakes | Appends ` && skill-ci check` to `commands.lint` and shows the change. See [no-mistakes](#no-mistakes). | No `.no-mistakes.yaml` exists, or `commands.lint` already runs `skill-ci check`. |
 | mise | Adds the one-line tasks `skill-check`, `skill-lint`, `skill-package`, `skill-coverage`, `skill-validate`, `skill-audit`, `skill-trigger` and `skill-run`. | No `mise.toml` or `.mise.toml` exists. A task you already define is kept. |
 | Manifests | Writes one empty `shared-benchmark.json` per skill. | A manifest exists. It stays byte for byte as it was. |
 | `.gitignore` | Adds `eval-runs/` and `evals/runs/`, which cover run output kept in those two directories, such as an `out` path under either one. Run output holds raw agent transcripts and must never be committed. | The file already ignores them. |
 
-- **Where it runs.** `init` must run at the repository root. It stops with exit code 2 anywhere else, in a directory outside a git repository, and when the skills directory holds no skill. Pass `--skills-dir DIR` for another skills directory. Pass `--evals-dir evals` to keep manifests in `evals/<skill>/`. `--evals-dir` must name a directory called `evals` whose parent holds the skills directory, such as `evals` at the repository root. Without `--evals-dir` and without a `.skill-ci.toml`, `init` writes manifests to `evals/<skill>/`, or beside their skills when the repository already keeps them there. With a `.skill-ci.toml`, `init` follows its `skills_dir` and `evals_dir`.
+- **Where it runs.** `init` must run at the repository root. It stops with exit code 2 anywhere else, in a directory outside a git repository, and when the skills directory holds no skill. Pass `--skills-dir DIR` for another skills directory. Pass `--evals-dir evals` to keep manifests in `evals/<skill>/`. A directory given to `--evals-dir` must be named `evals`, and every skill must sit inside its parent, because each manifest's `skill_paths` start at that parent. Use `evals` at the repository root. Without `--evals-dir` and without a `.skill-ci.toml`, `init` writes manifests to `evals/<skill>/`, or beside their skills when the repository already keeps them there. With a `.skill-ci.toml`, `init` follows its `skills_dir` and `evals_dir`.
+- **Flags and the file.** A flag overrides the file for that run of `init` only. `init` never edits an existing `.skill-ci.toml`, so a flag that the file does not repeat sends manifests to a place that `skill-ci check` does not search. After `init --evals-dir evals`, add `evals_dir = "evals"` to the file. Otherwise `check` reports `manifests checked: 0`.
 - **The network.** `init` asks the source for its newest release tag, so it needs the network. If the source cannot be reached, `init` writes nothing and exits with code 2.
 - **No release tag yet.** `init` pins an exact tag. If the source has none, `init` writes nothing and exits with code 2. To follow the branch head until the first tag exists, write `.skill-ci.toml` as below and run `init` again. `init` prints this file, with your skills and evals directories. `skill-ci update` does not move a `main` pin, so change it to a tag by hand when one exists.
 
@@ -78,8 +81,8 @@ You need `uv` and `git`. `mise` and `lefthook` are optional, and `init` wires th
 
   A `.skill-ci.toml` without `evals_dir` tells `init` to keep manifests beside their skills.
 - **The workflow names no version.** The job installs whatever `source` serves, and that `skill-ci` reads `.skill-ci.toml` and runs the pinned version. The version lives in one file. The workflow installs uv with one line, `pip install uv==0.12.7`, so a different install method changes that line only.
-- **no-mistakes.** no-mistakes reads `commands` from the default branch, not from the branch you push. A change to `commands.lint` applies after it merges there. When `.no-mistakes.yaml` exists and `commands.lint` is empty, `init` leaves the file alone, because setting `commands.lint` would replace the agent's lint duty. It prints a `repository_overrides` entry with `commands.lint.additional` instead. Add that entry to `~/.no-mistakes/config.yaml` on each machine that gates the repository. It applies on that machine at once and is not committed. `init` keys the entry by the `origin` remote URL. When that URL holds an `@`, which marks a user name or a token, `init` prints `<remote URL>` in its place and a note, so a user name or token before the `@` never reaches the output. Write the URL there without them. With no `origin`, the entry names `<remote URL>` and no note follows.
-- **mise.** From mise 2026.8.9 on, `mise run` trusts the repository's `mise.toml` without asking. An older mise runs no task from a config file it does not trust, so run `mise trust` once in each clone. In paranoid mode, run `mise trust` again after each edit to the file, including the one `init` makes.
+- **no-mistakes.** See [no-mistakes](#no-mistakes).
+- **mise.** See [Commands](#commands) for the tasks. From mise 2026.8.9 on, `mise run` trusts the repository's `mise.toml` without asking. An older mise runs no task from a config file it does not trust, so run `mise trust` once in each clone. In paranoid mode, run `mise trust` again after each edit to the file, including the one `init` makes.
 - **Exit codes.** `init` exits 0 when it finished, 1 when it printed a `to do:` line, and 2 when it refused to start. A `to do:` line names a change that `init` could not make, such as a lefthook hook written as `jobs`. It prints the entry to add by hand when there is one.
 
 If you set the repository up by hand, write `.skill-ci.toml` as described in [The `.skill-ci.toml` file](#the-skill-citoml-file), and this workflow. `init` writes it with the `source` from your `.skill-ci.toml`.
@@ -103,9 +106,111 @@ jobs:
       - run: uv tool run --from "git+$SKILL_CI_SOURCE" skill-ci check
 ```
 
+## Use skill-ci with hooks, no-mistakes, GitHub Enterprise Server, and other CI
+
+Every tool in this section runs the one `skill-ci` command. None of them records a version, because `skill-ci` reads the version from `.skill-ci.toml`. Hooks run in addition to CI and never instead of it, since anyone can skip a hook with `--no-verify`.
+
+### lefthook
+
+`init` adds two entries to your lefthook file and runs `lefthook validate`. To add them by hand:
+
+```yaml
+pre-commit:
+  commands:
+    skill-ci-check-fast:
+      run: skill-ci check --fast
+pre-push:
+  commands:
+    skill-ci-check:
+      run: skill-ci check
+```
+
+Then run `lefthook validate`, and `lefthook install` once in each clone to activate the hooks. `skill-ci check --fast` runs the personal-data scan on staged files and the lint checks. Measured on 2026-10-06 on a repository of 56 skills, lint took 0.2 to 0.4 seconds and the staged scan 0.07 seconds, so `--fast` fits a pre-commit hook. `skill-ci check` also validates and audits every manifest, so it belongs before a push.
+
+### no-mistakes
+
+no-mistakes runs `commands.lint` from `.no-mistakes.yaml`. `init` handles the two cases.
+
+- **`commands.lint` is set.** `init` appends ` && skill-ci check` to the value and shows the change. Your command still runs first.
+- **`commands.lint` is empty.** `init` leaves the file alone, because setting `commands.lint` would replace the agent's lint duty. It prints a `repository_overrides` entry with `commands.lint.additional` instead:
+
+  ```yaml
+  repository_overrides:
+    https://example.com/acme/repo.git:
+      commands:
+        lint:
+          additional:
+            - skill-ci check
+  ```
+
+  Add that entry to `~/.no-mistakes/config.yaml` on each machine that gates the repository. It applies on that machine at once and is not committed. `init` keys the entry by the `origin` remote URL. When that URL holds an `@`, which marks a user name or a token, `init` prints `<remote URL>` in its place and adds a note. The user name or token never reaches the output. In `config.yaml`, write the URL without them. With no `origin`, the entry names `<remote URL>` and no note follows.
+
+no-mistakes reads `commands` from the default branch, not from the branch you push. A change to `commands.lint` applies after it merges there.
+
+### GitHub Enterprise Server
+
+GitHub Enterprise Server (GHES) cannot call a reusable workflow from github.com, so skill-ci no longer ships one. The version lives in `.skill-ci.toml`, a plain file in your repository. The `source` key tells skill-ci where to fetch itself. It defaults to github.com. On a network that blocks github.com, point it at a mirror on your instance.
+
+1. Mirror skill-ci's branches into your instance, and leave its tags behind. Use a bare clone, which leaves out the `refs/pull/*` refs that GitHub refuses to receive:
+
+   ```sh
+   git clone --bare https://github.com/mdsmithaustin/skill-ci.git
+   git -C skill-ci.git push --all --no-follow-tags https://ghes.example.com/acme/skill-ci.git
+   ```
+
+   The commits that upstream tags point to carry the github.com harness line. `latest`, the newer-tag notice, and `skill-ci update` pick the highest `v*` tag on the source. A copied upstream tag could therefore send a pin to a commit that cannot install on your network.
+
+2. Mirror the harness the same way, from `https://github.com/mdsmithaustin/skill-eval-harness.git`. skill-ci installs `skill-eval-harness-ext` from the git URL on one line of its `pyproject.toml`, so a mirror of skill-ci alone still reaches github.com. Clone your mirror of skill-ci and change that line to name your mirror of the harness at the same commit. Commit the change on the default branch, because the install in step 3 and the install in the workflow both take that branch. Then tag the commit with a release tag of your own, such as `v1.0.0`, and push the branch and the tag. The tag names your commit, which can be ahead of upstream's latest release. The pinned run installs the tagged commit, so the tag carries the change too. skill-ci has no tooling for this step.
+
+   ```sh
+   git clone https://ghes.example.com/acme/skill-ci.git skill-ci-edit
+   cd skill-ci-edit
+   $EDITOR pyproject.toml   # replace the URL on the skill-eval-harness-ext line
+   git commit -am "chore: use the internal harness mirror"
+   git tag v1.0.0
+   git push origin HEAD v1.0.0
+   ```
+
+3. In your repository, install skill-ci from the mirror, and write `.skill-ci.toml` with the mirror as `source` and your tag as `version`:
+
+   ```sh
+   uv tool install "git+https://ghes.example.com/acme/skill-ci.git"
+   ```
+
+   ```toml
+   version = "v1.0.0"
+   source = "https://ghes.example.com/acme/skill-ci.git"
+   skills_dir = "skills"
+   evals_dir = "evals"
+   ```
+
+4. Run `skill-ci init`, which writes the workflow with that `source`, and commit what it wrote. The workflow uses the `actions/checkout` action. If your instance does not offer it, replace that step with your own checkout step.
+
+The workflow installs uv with `pip install uv==0.12.7`, and runners on a restricted network need three adjustments.
+
+- Point pip and uv at your package mirror. They read different settings, so set both `PIP_INDEX_URL` and `UV_DEFAULT_INDEX`.
+- Put Python 3.12 or later on the runner. Otherwise uv downloads one from `releases.astral.sh`.
+- If pip stops with `externally-managed-environment` on a self-hosted runner, change the `pip install uv==0.12.7` line in the workflow to install uv in a virtual environment, or by another method.
+
+To take a later upstream release, merge it into a clone of your mirror's default branch with `git pull --no-rebase https://github.com/mdsmithaustin/skill-ci.git v1.1.0`. That merges the release commit and does not copy its tag. If the merge conflicts on the harness line in `pyproject.toml`, keep your mirror's URL and take the release's commit hash. Tag the merge with your next release tag, such as `v1.1.0`. When the release pins a newer harness commit, push the harness to its mirror again from a fresh bare clone first. Then push the branch and the tag.
+
+`source` may not carry credentials. A private mirror authenticates through a git credential helper on the runner.
+
+### Any other CI
+
+A CI service that runs shell commands can run the same check. The job needs `git`, `pip`, and network access to the `source`, to the harness's git URL, and to a Python package index. uv also downloads Python 3.12 or later when the runner has none. Three commands do it:
+
+```sh
+pip install uv==0.12.7
+SKILL_CI_SOURCE="https://github.com/mdsmithaustin/skill-ci.git"
+uv tool run --from "git+$SKILL_CI_SOURCE" skill-ci check
+```
+
+Use the `source` from your `.skill-ci.toml`. The first command installs uv. The second sets a shell variable that holds the source. skill-ci does not read that variable, but the workflow that `init` writes uses the same name. The third command installs skill-ci from that source. That skill-ci then reads `.skill-ci.toml` and runs the pinned version. `skill-ci check` exits 0 when every check passes and nonzero when one fails, so the service fails the job without more setup. If pip stops with `externally-managed-environment`, create a virtual environment first, or install uv another way. The job prints `skill-ci <version> (<commit>)` first, so its log shows the commit it ran.
+
 ## The `.skill-ci.toml` file
 
-A repository names its skill-ci version once, in `.skill-ci.toml` at its root. Every place that runs skill-ci runs that version, whether it starts in your terminal, lefthook, mise, no-mistakes, or CI. An example:
+A repository names its skill-ci version once, in `.skill-ci.toml` at its root. Every place that runs skill-ci runs that version, whether it starts in your terminal, lefthook, mise, no-mistakes, or CI. [How skill-ci is distributed](DECISIONS.md#how-skill-ci-is-distributed) gives the reasons. An example:
 
 ```toml
 version = "v1.0.0"
@@ -122,7 +227,7 @@ evals_dir = "evals"
 | `version` | string | none, required | all | `latest` runs the newest `v*` tag. `main` runs the head of the source's `main` branch. A tag runs that tag's commit. |
 | `source` | string | `https://github.com/mdsmithaustin/skill-ci.git` | all | Where skill-ci fetches itself from. See [`source`](#source). |
 | `skills_dir` | path | `skills` | `init`, `lint`, `package`, `coverage`, `validate`, `audit`, `check` | The directory whose children each hold a `SKILL.md`. |
-| `evals_dir` | path | unset | `init`, `coverage`, `validate`, `audit`, `check`, `trigger`, `run` | Where manifests live. Unset means each manifest sits at `<skill>/evals/`. The directory must be named `evals`. |
+| `evals_dir` | path | unset | `init`, `coverage`, `validate`, `audit`, `check`, `trigger`, `run` | Where manifests live. Unset means each manifest sits at `<skill>/evals/`. The directory must be named `evals`, and every skill must sit inside its parent. |
 | `pii_scope` | `skills` or `repository` | `skills` | `check` | `skills` scans tracked files in the skills directory for personal data. `repository` scans every tracked file. |
 | `trigger_cases` | path | unset | `lint`, `check` | A version-1 trigger declaration file. See [Trigger declaration file](#trigger-declaration-file). |
 | `content_ignore_file` | path | unset | `lint`, `check` | Skill names that live in another repository, separated by commas or newlines, with `#` comment lines allowed. |
@@ -241,61 +346,55 @@ Exit code 126 has these causes, and each prints its reason:
 
 Put each manifest at `evals/<skill>/shared-benchmark.json` at the repository root. Skill installers copy a skill's whole directory to every user. A manifest inside the skill directory would ship your test prompts, expected answers, and oracle scripts to everyone who installs the skill.
 
-The older layout, `<skills-dir>/<skill>/evals/shared-benchmark.json`, still works. In that layout, leave `EVALS_DIR` and `evals-dir` unset, and `skill_paths` are relative to the skill directory instead of the repository root.
+The older layout, `<skills-dir>/<skill>/evals/shared-benchmark.json`, still works. In that layout, leave `evals_dir` and `--evals-dir` unset, and `skill_paths` are relative to the skill directory instead of the repository root.
 
 In both layouts, case files, `prompt_ref`, and oracle script paths are relative to the manifest's own directory. Keep them next to the manifest.
 
 Use relative `skill_paths` for portable manifests. The coverage check also accepts absolute entries that resolve to the inventoried skill marker, matching the runner. Coverage verifies the binding and case presence; it does not certify portability.
 
-## Tasks
+## Commands
 
-`skill-ci init` adds these as mise tasks when the repository has a `mise.toml`. Each task is one line that calls the `skill-ci` subcommand of the same name, so `mise run skill-lint` and `skill-ci lint` do the same thing.
+Each free check is a `skill-ci` subcommand. `skill-ci init` adds the mise tasks below when the repository has a `mise.toml`. Each task is one line that calls the subcommand of the same name, so the `skill-lint` task and `skill-ci lint` do the same thing. mise appends the words after the task name to that line. Put `--` before a flag, as in `mise run skill-package -- --compare-to .agents/skills`.
 
-| Task | Where it runs | Cost | What it does |
-| --- | --- | --- | --- |
-| `skill-check` | CI and local | Free | Runs the model-free checks that CI runs. |
-| `skill-lint` | CI and local | Free | Runs the frontmatter checker and the content checker over the skills directory. |
-| `skill-package` | Local, and CI when `package-check` is on | Free | Lists every file in each skill package. If `INSTALLED_SKILLS_DIR` is set, also compares each package with its installed copy. See [Check package files and installed copies](docs/packages.md). |
-| `skill-coverage` | Local, and CI when `require-populated-manifests` is on | Free | Requires a populated, correctly bound manifest for every skill directory. |
-| `skill-validate` | CI and local | Free | Runs `skill-benchmark validate --strict-leakage` on every manifest. |
-| `skill-audit` | CI and local | Free | Runs the readiness audit on every manifest. |
-| `skill-trigger <skill>` | Local only | Paid | Runs every trigger case on Claude and Codex and records whether the skill loaded. |
-| `skill-run <skill>` | Local only | Paid | Runs the readiness audit, then runs the cases in the manifest's `tune` split with and without the skill on Claude and Codex. It grades the runs, judges them, and writes a report. It stops if the audit finds a blocker. |
+| Command | mise task | Where it runs | Cost | What it does |
+| --- | --- | --- | --- | --- |
+| `skill-ci check` | `skill-check` | CI and local | Free | Runs the model-free checks in a git repository, in this order: the package check (with `package`), the personal-data scan, the frontmatter check, the content check, the coverage check (with `require_populated_manifests`), then validate and audit on every manifest. With `--fast`, it runs only the scan of staged files and the lint checks. |
+| `skill-ci lint` | `skill-lint` | CI and local | Free | Runs the frontmatter check and the content check over the skills directory. |
+| `skill-ci package` | `skill-package` | Local, and CI with `package` on | Free | Lists every file in each skill package. With `--compare-to DIR`, also compares each package with its installed copy in DIR. See [Check package files and installed copies](docs/packages.md). |
+| `skill-ci coverage` | `skill-coverage` | Local, and CI with `require_populated_manifests` on | Free | Requires a populated, correctly bound manifest for every skill directory. |
+| `skill-ci validate` | `skill-validate` | CI and local | Free | Runs `skill-benchmark validate --strict-leakage` on every manifest. |
+| `skill-ci audit` | `skill-audit` | CI and local | Free | Runs the readiness audit on every manifest. |
+| `skill-ci trigger <skill>` | `skill-trigger` | Local only | Paid | Runs every trigger case on Claude and Codex and records whether the skill loaded. |
+| `skill-ci run <skill>` | `skill-run` | Local only | Paid | Runs the readiness audit, then runs the cases in the manifest's `tune` split with and without the skill on Claude and Codex. It grades the runs, judges them, and writes a report. It stops if the audit finds a blocker. |
 
-In CI, the audit skips a manifest that has no cases yet. A scaffolded empty manifest is validated but not audited. Set `require-populated-manifests: true` after authoring cases to require coverage for every skill. This checks inventory and bindings without calling a model.
+`skill-ci init`, `skill-ci update`, and `skill-ci harness` have no mise task.
+
+`check` skips the audit of a manifest that has no cases yet, and prints `no cases yet, readiness audit skipped`. A scaffolded empty manifest is validated but not audited. Set `require_populated_manifests = true` after authoring cases to require a populated, correctly bound manifest for every skill. That check reads the inventory and the bindings and calls no model.
 
 This repository's own `mise.toml` adds a `test` task that runs the unit tests.
 
 ### What the lints check
 
-- `check-skill-frontmatter.py` validates each `SKILL.md` against the agentskills.io metadata rules and the Codex invocation policy. With `trigger-cases` set, it also fails for any skill missing from the trigger declaration file.
-- `check-skill-content.py` fails on relative links whose target does not exist, bold skill names that match no known skill, and unclosed code fences. A bold name counts as a skill name when its line contains the word "skill". A conventions file can add name prefixes and retired text for your repository. See [Add your repository's naming conventions to the content check](docs/content-conventions.md).
-- `check-pii.py` fails on likely personal data and on GitHub Enterprise hosts named `github.<domain>`, which name an employer. A host after `://`, `@`, `--hostname`, `-h`, `GH_HOST=`, an escaped `\n` or `\t`, or a `host:` or `hostname:` key, quoted or not, fails on any top-level domain. Anywhere else it fails only when the last label is a common top-level domain such as `com`, `net`, `org`, or `io`, so Actions expressions such as `github.event.comment.id` and settings such as `github.copilot.enable` pass. Hosts under `example.com`, `example.net`, `example.org`, `.example`, `.test`, `.invalid`, `.localhost`, `githubassets.com`, and `githubusercontent.com` pass. A made-up company host fails too, so write `github.example.com` for a placeholder. This matters because trigger cases are cut from real session transcripts.
+- The frontmatter check validates each `SKILL.md` against the agentskills.io metadata rules and the Codex invocation policy. With `trigger_cases` set, it also fails for any skill missing from the trigger declaration file.
+- The content check fails on relative links whose target does not exist, bold skill names that match no known skill, and unclosed code fences. A bold name counts as a skill name when its line contains the word "skill". A conventions file can add name prefixes and retired text for your repository. See [Add your repository's naming conventions to the content check](docs/content-conventions.md).
+- The personal-data scan fails on likely personal data and on GitHub Enterprise hosts named `github.<domain>`, which name an employer. A host after `://`, `@`, `--hostname`, `-h`, `GH_HOST=`, an escaped `\n` or `\t`, or a `host:` or `hostname:` key, quoted or not, fails on any top-level domain. Anywhere else it fails only when the last label is a common top-level domain such as `com`, `net`, `org`, or `io`, so Actions expressions such as `github.event.comment.id` and settings such as `github.copilot.enable` pass. Hosts under `example.com`, `example.net`, `example.org`, `.example`, `.test`, `.invalid`, `.localhost`, `githubassets.com`, and `githubusercontent.com` pass. A made-up company host fails too, so write `github.example.com` for a placeholder. This matters because trigger cases are cut from real session transcripts.
 
-## Configuration
+## Run the pinned harness directly
 
-### Workflow inputs
+skill-ci installs `skill-eval-harness-ext` at the commit in its own `pyproject.toml`. `skill-ci harness` runs one of the harness's two commands from that environment:
 
-Set these under `with:` in your caller workflow.
+```sh
+skill-ci harness skill-benchmark --help
+skill-ci harness skill-trigger-matrix --help
+```
 
-| Input | Default | Effect |
-| --- | --- | --- |
-| `skills-dir` | `skills` | The skills directory. |
-| `evals-dir` | empty | Where manifests live. Empty means search inside the skills directory. The job fails if this names a directory that does not exist. |
-| `require-manifests` | `false` | Fail when no manifest files are found. An empty scaffolded manifest counts as a file. |
-| `require-populated-manifests` | `false` | Require a populated manifest for every skill directory and a `skill_paths` binding to that skill. Validation and readiness audit still apply. |
-| `package-check` | `false` | Run the package check. Rejects symlinks and special files in skill packages. |
-| `pii-scope` | `skills` | `skills` scans tracked files in the skills directory for personal data. `repository` scans every tracked file. |
-| `trigger-cases` | empty | Path to a version-1 trigger declaration file. Leave it empty to skip the coverage check. When set, the frontmatter check also fails for any skill that the file does not declare. See [Trigger declaration file](#trigger-declaration-file). |
-| `content-ignore-file` | empty | Path to a list of skill names that live in another repository, one per line, with `#` comments allowed. The content checker does not report mentions of them as broken. |
-| `content-link-exceptions-file` | empty | Path to a link-exceptions policy. See [Allow links to files a template creates](docs/link-exceptions.md). |
-| `content-conventions-file` | empty | Path to a content conventions file. See [Add your repository's naming conventions to the content check](docs/content-conventions.md). |
-| `strict-frontmatter` | `false` | Not implemented. Setting it fails the job. See `TODO.md`. |
-| `skill-ci-ref` | empty | Deprecated and ignored. Remove it from your caller. |
+Any other first argument exits with code 2. skill-ci starts Python with `-I`, so a `skill_benchmark.py` in your working directory cannot replace the harness. The command replaces the skill-ci process, so the exit code is the harness's own.
 
-### Trigger declaration file
+Use `skill-ci harness` instead of installing the harness yourself. The upstream package on PyPI, `skill-eval-harness`, is a different build that lacks the fork's blinding patches, so its results do not compare with skill-ci's. Commands that run the harness print a warning when `skill-benchmark` on `PATH` is not skill-ci's copy, or when your `pyproject.toml` requires `skill-eval-harness` or `skill-eval-harness-ext`. The warning ends with `skill-ci runs its own pinned copy`, and the run goes on with that copy.
 
-`trigger-cases` is optional. When you set it, the file must use this version-1 format. It has one declaration per skill, and every skill under `skills-dir` needs one.
+## Trigger declaration file
+
+`trigger_cases` is optional. When you set it, the file must use this version-1 format. It has one declaration per skill, and every skill under `skills_dir` needs one.
 
 ```json
 {
@@ -311,33 +410,13 @@ Set these under `with:` in your caller workflow.
 }
 ```
 
-Each `description_contains` entry must appear in that skill's `description`, compared case-insensitively with whitespace collapsed. `implicit_allowed` must match the skill's Codex invocation policy. The check fails for a missing, duplicate, or stale declaration. It does not run a model. `skill-trigger` measures real triggering from the eval manifest instead.
+Each `description_contains` entry must appear in that skill's `description`, compared case-insensitively with whitespace collapsed. `implicit_allowed` must match the skill's Codex invocation policy. The check fails for a missing, duplicate, or stale declaration. It does not run a model. `skill-ci trigger` measures real triggering from the eval manifest instead.
 
-If your repository keeps its own copy of `check-skill-frontmatter.py`, `check-skill-content.py`, `check-pii.py`, or `requirements.txt` under `tools/`, for example for a pre-commit hook, the workflow fails when that copy differs from the skill-ci copy.
+## Run output and host isolation
 
-### Environment variables for local tasks
+The default run directory sits beside the consuming checkout, outside installed skill packages. Each invocation allocates a unique directory. The output directory may be the default or one you name with `out`. When it overlaps the skill package, the command stops before calling a model and asks you to pass `--out` with a directory outside the package.
 
-| Variable | Default | Used by | Effect |
-| --- | --- | --- | --- |
-| `SKILL_CI` | required | all | Path to your skill-ci checkout. |
-| `SKILLS_DIR` | `skills` | `skill-lint`, `skill-package`, `skill-coverage`, `skill-validate`, `skill-audit` | The skills directory. `skill-trigger` and `skill-run` take the skill directory as an argument instead. |
-| `EVALS_DIR` | unset | tasks that read manifests | Where manifests live. Unset means search inside the skills directory. The directory must be named `evals`, because the runner finds the repository root from that name. A task fails if this names a directory that does not exist. |
-| `CONTENT_LINK_EXCEPTIONS_FILE` | unset | `skill-lint` | Path to a link-exceptions policy. |
-| `CONTENT_CONVENTIONS_FILE` | unset | `skill-lint` | Path to a content conventions file. |
-| `INSTALLED_SKILLS_DIR` | unset | `skill-package` | Installed skills to compare against. |
-| `AGENTS` | `claude codex` | `skill-run` | Which agents to run. |
-| `RUNS` | `3` | `skill-trigger`, `skill-run` | Repetitions per case. |
-| `MODEL` | `sonnet` for `skill-run`, the runner's default for `skill-trigger` | `skill-trigger`, `skill-run` | Model that answers the prompts. In `skill-run` it applies to Claude only. |
-| `CODEX_MODEL` | `gpt-5.6-sol` | `skill-run` | Codex model that answers the prompts. `skill-run` sets it explicitly because the current codex-cli rejects the default model configured on the maintainer's machine. |
-| `JUDGE_MODEL` | `opus` | `skill-run` | Model that judges the runs. |
-| `JUDGE_RUNS` | `3` | `skill-run` | How many times each judge task repeats before the verdicts are merged. |
-| `TIMEOUT` | `240` | `skill-run` | Seconds allowed per run. |
-| `OUT` | `<checkout>.eval-runs/<skill>/trigger-<timestamp>-<unique>` or `run-<timestamp>-<unique>` | `skill-trigger`, `skill-run` | Output directory beside the consuming checkout. A nonempty value uses your explicit path unchanged. |
-| `CODEX_CMD` | `tools/codex-project-only exec ...` | `skill-trigger`, `skill-run` | Command prefix that starts Codex. It does not name a model. `CODEX_MODEL` does. |
-
-The default run directory sits beside the consuming checkout, outside installed skill packages. Each invocation allocates a unique directory. If a skill path contains that default destination, the task stops before calling a model and asks you to set `OUT` outside the skill package. An explicit `OUT` remains your responsibility.
-
-The runner keeps the skills in your home directory out of every answer and trigger run, so a run sees only the skills it mounts. For Claude it also hides your agents, `CLAUDE.md`, MCP servers, and auto memory. Judge runs are sealed further and see no skills at all. The paid tasks still start Claude through `tools/claude-project-only`, which lets a case write files inside the run's temporary workspace. They start Codex through `tools/codex-project-only`, which moves HOME to an empty directory. That move is now redundant.
+The runner keeps the skills in your home directory out of every answer and trigger run, so a run sees only the skills it mounts. For Claude it also hides your agents, `CLAUDE.md`, MCP servers, and auto memory. Judge runs are sealed further and see no skills at all. The paid commands still start Claude through the bundled `claude-project-only` launcher, which lets a case write files inside the run's temporary workspace. They start Codex through the bundled `codex-project-only` launcher, which moves HOME to an empty directory. That move is now redundant.
 
 An answer run refuses to start when a folder above its workspace holds `.claude`, `.agents`, `CLAUDE.md`, or `AGENTS.md`, because Claude and Codex would read them. The default macOS `TMPDIR` passes. If yours sits inside a repository or under a home directory with `~/.claude`, point `TMPDIR` somewhere else.
 
@@ -361,32 +440,34 @@ A green CI run means the lints passed and the manifests are well formed. It does
 SKILL.md                            instructions an agent follows to activate skill-ci
 DECISIONS.md                        why the repository is shaped this way
 TODO.md                             known gaps, each with its reason
-runner.lock                         the one runner pin
-skill-tasks.toml                    mise tasks that a repository includes
+pyproject.toml                      the package, its version, and the harness pin
+uv.lock                             locked dependencies for developing skill-ci
 mise.toml                           this repository's own tools and tasks
-lefthook.yml                        pre-commit hook: rejects personal data, runs the unit tests
-.github/workflows/skill-checks.yml  the reusable workflow that callers pin
-.github/workflows/test.yml          unit tests on Linux and macOS, plus a run of the reusable workflow
+lefthook.yml                        pre-commit hook: runs skill-ci check --fast and the unit tests
+src/skill_ci/cli.py                 the skill-ci command and its subcommands
+src/skill_ci/config.py              the .skill-ci.toml model
+src/skill_ci/pin.py                 version resolution, the cache, and the hand-off
+src/skill_ci/children.py            the one runner for every child process, and signal handling
+src/skill_ci/init.py                skill-ci init
+src/skill_ci/suite.py               the free checks that check runs
+src/skill_ci/runs.py                the paid trigger and run commands
+src/skill_ci/harness.py             skill-ci harness and the harness calls
+src/skill_ci/checks/                frontmatter, content, personal-data, package, coverage, and manifest checks
+src/skill_ci/launchers/             starts Claude with file edits allowed in the run's workspace, and Codex with HOME moved
+src/skill_ci/templates/             the workflow and the lefthook entries that init writes
+src/skill_ci/scaffold_manifest.py   writes one empty manifest per skill
+src/skill_ci/outputs.py             allocates unique run directories outside packages
+src/skill_ci/files.py               atomic writes and regular-file reads
+tests/                              unit tests
+.github/workflows/test.yml          unit tests on Linux and macOS, plus two fixture contracts that run skill-ci check
 .github/fixtures/                   empty scaffold and populated edited-file contracts
-.github/dependabot.yml              weekly updates for actions and pip
+.github/dependabot.yml              weekly updates for actions and uv
 docs/authoring-cases.md             how to write test cases
 docs/link-exceptions.md             the link-exceptions policy
 docs/content-conventions.md         the content conventions file
 docs/packages.md                    package inspection and copy comparison
 docs/evidence.md                    what each kind of check can prove
 docs/harvest-skill-optimizer.md     what was imported from skill-optimizer, and why
-tools/check-skill-frontmatter.py    frontmatter checker
-tools/check-skill-content.py        link, reference, and fence checker
-tools/check-pii.py                  personal-data checker
-tools/check-skill-package.py        package inventory and copy comparison
-tools/check-skill-coverage.py       populated manifest inventory and skill binding check
-tools/allocate-eval-output.py       allocates unique run directories outside packages
-tools/run_runner.py                 runs the runner pinned in runner.lock
-tools/scaffold_manifest.py          writes one empty manifest per skill
-tools/claude-project-only           starts Claude with file edits allowed in the run's workspace
-tools/codex-project-only            starts Codex with HOME moved to an empty directory
-tools/requirements.txt              hashed PyYAML pin for the checkers
-tools/test_*.py                     unit tests
 ```
 
 ## Run this repository's tests
