@@ -25,43 +25,217 @@ skill-ci is also a skill itself. In a repository that holds skills, tell your ag
 
 ## Add skill-ci to a repository
 
-You need `mise` and `uv` on your machine. The CI workflow needs GitHub.com. GitHub Enterprise Server does not provide the job fields the workflow uses to find its own revision.
+You need `uv` and `git`. `mise` and `lefthook` are optional, and `init` wires them when the repository already uses them.
 
-1. Clone skill-ci next to the repository that holds your skills.
+1. Put the `skill-ci` command on your `PATH`:
 
-2. In that repository, ask your agent to "activate skill-ci". The agent follows `SKILL.md`, which is the full procedure. It does the following:
+   ```sh
+   uv tool install git+https://github.com/mdsmithaustin/skill-ci.git
+   ```
 
-   - Writes `.github/workflows/skill-checks.yml`, which calls this repository's reusable workflow at one full commit SHA.
-   - Adds a Dependabot `github-actions` entry if none covers the workflow, so the SHA gets update pull requests.
-   - Adds `SKILL_CI`, `EVALS_DIR`, and the `skill-tasks.toml` include to your `mise.toml`.
-   - Downloads the pinned runner.
-   - Writes one empty manifest per skill at `evals/<skill>/shared-benchmark.json`.
-   - Adds run-output directories to `.gitignore`, because runs save raw agent transcripts.
-   - Runs `mise run skill-lint` and `mise run skill-validate`, and reports the results.
+   This installs the default branch. You install it once per machine. It only has to read the repository's `.skill-ci.toml`, because it then runs the version that file pins.
 
-   Activation never runs a paid task, never writes a case, and never commits or pushes. You can run it again safely. It keeps existing manifests, workflow inputs, includes, and Dependabot entries.
+2. Go to the root of the git repository. Its `skills/` directory holds your skills, one subdirectory each with a `SKILL.md`. Run:
+
+   ```sh
+   skill-ci init
+   ```
+
+   You can instead tell your agent to "activate skill-ci". The agent follows `SKILL.md`, which runs `skill-ci init` and `skill-ci check` and reports their output. A headless agent such as `claude -p` cannot ask before it runs a command. Allow skill-ci first with a permission rule such as `Bash(skill-ci:*)`, or use an interactive session.
 
 3. Write cases in each manifest. See [Write test cases for a skill](docs/authoring-cases.md).
 
 4. Run the paid checks when you choose:
 
    ```sh
-   mise run skill-trigger skills/my-skill
-   mise run skill-run skills/my-skill
+   skill-ci trigger skills/my-skill
+   skill-ci run skills/my-skill
    ```
 
-If you set the repository up by hand, the caller workflow looks like this. Replace the SHA with the full commit SHA of the skill-ci revision you want.
+### What `init` does
+
+`init` lists what it wrote, updated, and kept, then notes and to-do items. Run it again at any time. It keeps what exists and changes nothing a second time. Commit the files it wrote.
+
+| Step | What it does | It skips the step when |
+| --- | --- | --- |
+| Pin | Writes `.skill-ci.toml` with `version` set to the newest release tag as an exact tag, plus `skills_dir` and, for external manifests, `evals_dir`. | The file exists. |
+| Workflow | Writes `.github/workflows/skill-checks.yml`. | The file exists. `init` adds a note when it does not run `skill-ci check`. |
+| lefthook | Adds `skill-ci check --fast` under `pre-commit` and `skill-ci check` under `pre-push`, then runs `lefthook validate`. If lefthook rejects the file, `init` puts the file back and prints a to-do line. Without `lefthook` on `PATH`, it skips the validation. | No `lefthook.yml`, `lefthook.yaml`, `.lefthook.yml` or `.lefthook.yaml` exists. A hook that already runs `skill-ci check` is left alone. |
+| no-mistakes | Appends ` && skill-ci check` to `commands.lint` and shows the change. | No `.no-mistakes.yaml` exists, or `commands.lint` already runs `skill-ci check`. |
+| mise | Adds the one-line tasks `skill-check`, `skill-lint`, `skill-package`, `skill-coverage`, `skill-validate`, `skill-audit`, `skill-trigger` and `skill-run`. | No `mise.toml` or `.mise.toml` exists. A task you already define is kept. |
+| Manifests | Writes one empty `shared-benchmark.json` per skill. | A manifest exists. It stays byte for byte as it was. |
+| `.gitignore` | Adds `eval-runs/` and `evals/runs/`, which cover run output kept in those two directories, such as an `out` path under either one. Run output holds raw agent transcripts and must never be committed. | The file already ignores them. |
+
+- **Where it runs.** `init` must run at the repository root. It stops with exit code 2 anywhere else, in a directory outside a git repository, and when the skills directory holds no skill. Pass `--skills-dir DIR` for another skills directory. Pass `--evals-dir evals` to keep manifests in `evals/<skill>/`. `--evals-dir` must name a directory called `evals` whose parent holds the skills directory, such as `evals` at the repository root. Without `--evals-dir` and without a `.skill-ci.toml`, `init` writes manifests to `evals/<skill>/`, or beside their skills when the repository already keeps them there. With a `.skill-ci.toml`, `init` follows its `skills_dir` and `evals_dir`.
+- **The network.** `init` asks the source for its newest release tag, so it needs the network. If the source cannot be reached, `init` writes nothing and exits with code 2.
+- **No release tag yet.** `init` pins an exact tag. If the source has none, `init` writes nothing and exits with code 2. To follow the branch head until the first tag exists, write `.skill-ci.toml` as below and run `init` again. `init` prints this file, with your skills and evals directories. `skill-ci update` does not move a `main` pin, so change it to a tag by hand when one exists.
+
+  ```toml
+  version = "main"
+  skills_dir = "skills"
+  evals_dir = "evals"
+  ```
+
+  A `.skill-ci.toml` without `evals_dir` tells `init` to keep manifests beside their skills.
+- **The workflow names no version.** The job installs whatever `source` serves, and that `skill-ci` reads `.skill-ci.toml` and runs the pinned version. The version lives in one file. The workflow installs uv with one line, `pip install uv==0.12.7`, so a different install method changes that line only.
+- **no-mistakes.** no-mistakes reads `commands` from the default branch, not from the branch you push. A change to `commands.lint` applies after it merges there. When `.no-mistakes.yaml` exists and `commands.lint` is empty, `init` leaves the file alone, because setting `commands.lint` would replace the agent's lint duty. It prints a `repository_overrides` entry with `commands.lint.additional` instead. Add that entry to `~/.no-mistakes/config.yaml` on each machine that gates the repository. It applies on that machine at once and is not committed. `init` keys the entry by the `origin` remote URL. When that URL holds an `@`, which marks a user name or a token, `init` prints `<remote URL>` in its place and a note, so a user name or token before the `@` never reaches the output. Write the URL there without them. With no `origin`, the entry names `<remote URL>` and no note follows.
+- **mise.** From mise 2026.8.9 on, `mise run` trusts the repository's `mise.toml` without asking. An older mise runs no task from a config file it does not trust, so run `mise trust` once in each clone. In paranoid mode, run `mise trust` again after each edit to the file, including the one `init` makes.
+- **Exit codes.** `init` exits 0 when it finished, 1 when it printed a `to do:` line, and 2 when it refused to start. A `to do:` line names a change that `init` could not make, such as a lefthook hook written as `jobs`. It prints the entry to add by hand when there is one.
+
+If you set the repository up by hand, write `.skill-ci.toml` as described in [The `.skill-ci.toml` file](#the-skill-citoml-file), and this workflow. `init` writes it with the `source` from your `.skill-ci.toml`.
 
 ```yaml
 name: skill-checks
 on: [push, pull_request]
+permissions:
+  contents: read
 jobs:
   skills:
-    uses: mdsmithaustin/skill-ci/.github/workflows/skill-checks.yml@<full-commit-sha>
-    with:
-      skills-dir: skills
-      evals-dir: evals
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SKILL_CI_SOURCE: "https://github.com/mdsmithaustin/skill-ci.git"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: pip install uv==0.12.7
+      - run: uv tool run --from "git+$SKILL_CI_SOURCE" skill-ci check
 ```
+
+## The `.skill-ci.toml` file
+
+A repository names its skill-ci version once, in `.skill-ci.toml` at its root. Every place that runs skill-ci runs that version, whether it starts in your terminal, lefthook, mise, no-mistakes, or CI. An example:
+
+```toml
+version = "v1.0.0"
+skills_dir = "skills"
+evals_dir = "evals"
+```
+
+### Keys
+
+`version` is required. It is `latest`, `main`, or an exact tag. A tag is `v` and three whole numbers, such as `v1.0.0`, and `latest` ignores tags of any other shape. Any other value is an error, and so is a missing `version`. The other keys are optional. A key applies to every command that takes the matching flag, and a flag on the command line overrides the file. A repeated `--agent` replaces the whole `agents` list. A switch such as `--require-manifests` has a `--no-require-manifests` form that overrides a `true` in the file.
+
+| Key | Type | Default | Used by | Effect |
+| --- | --- | --- | --- | --- |
+| `version` | string | none, required | all | `latest` runs the newest `v*` tag. `main` runs the head of the source's `main` branch. A tag runs that tag's commit. |
+| `source` | string | `https://github.com/mdsmithaustin/skill-ci.git` | all | Where skill-ci fetches itself from. See [`source`](#source). |
+| `skills_dir` | path | `skills` | `init`, `lint`, `package`, `coverage`, `validate`, `audit`, `check` | The directory whose children each hold a `SKILL.md`. |
+| `evals_dir` | path | unset | `init`, `coverage`, `validate`, `audit`, `check`, `trigger`, `run` | Where manifests live. Unset means each manifest sits at `<skill>/evals/`. The directory must be named `evals`. |
+| `pii_scope` | `skills` or `repository` | `skills` | `check` | `skills` scans tracked files in the skills directory for personal data. `repository` scans every tracked file. |
+| `trigger_cases` | path | unset | `lint`, `check` | A version-1 trigger declaration file. See [Trigger declaration file](#trigger-declaration-file). |
+| `content_ignore_file` | path | unset | `lint`, `check` | Skill names that live in another repository, separated by commas or newlines, with `#` comment lines allowed. |
+| `content_link_exceptions_file` | path | unset | `lint`, `check` | A link-exceptions policy. See [Allow links to files a template creates](docs/link-exceptions.md). |
+| `content_conventions_file` | path | unset | `lint`, `check` | A content conventions file. See [Add your repository's naming conventions to the content check](docs/content-conventions.md). |
+| `require_manifests` | boolean | `false` | `check` | Fail when no manifest is found. |
+| `require_populated_manifests` | boolean | `false` | `check` | Require a manifest with cases bound to every skill. |
+| `package` | boolean | `false` | `check` | Inspect every package entry and reject symlinks and special files. |
+| `out` | path | a new directory under `<checkout>.eval-runs/<skill>/` | `trigger`, `run` | The output directory, which must sit outside the skill package. |
+| `runs` | whole number | `3` | `trigger`, `run` | Runs per query or variant. |
+| `agents` | list of `claude` and `codex` | both | `run` | The agents the paired benchmark runs. `trigger` always runs both. |
+| `model` | string | `sonnet` | `run` | The Claude model that answers the prompts. |
+| `matrix_model` | string | unset | `trigger` | One model for every agent. Unset, each agent uses its own model list. |
+| `codex_model` | string | `gpt-5.6-sol` | `run` | The Codex model that answers the prompts. |
+| `codex_cmd` | string | the bundled Codex launcher with a read-only sandbox | `trigger`, `run` | The command line that starts Codex. It does not name a model. |
+| `timeout` | whole number | `240` | `run` | Seconds allowed per run. |
+| `judge_model` | string | `opus` | `run` | The Claude model that judges the runs. |
+| `judge_runs` | whole number | `3` | `run` | How many times each judge task repeats before the verdicts are merged. |
+
+An unknown key is an error that names the key and, when one is close, suggests the right spelling. The version that runs decides what is unknown, so a key from a newer release is not an error to an older command that only hands the run on. The key is an error when the pin is the commit already running, when the version cannot be resolved, and in every command under the pinned run itself. Otherwise the pinned run judges it. Skill-ci checks every known key for the right type before it resolves a version or hands off. `update` ignores unknown keys.
+
+An invalid `.skill-ci.toml` makes every command exit with code 2, `--help` and `--version` included, because the file decides which version runs.
+
+### Where the file is found, and what its paths mean
+
+- **Search.** skill-ci looks for `.skill-ci.toml` in the working directory, then in each parent directory up to the repository root. The search stops at the repository root, the first directory that holds a `.git` entry. Outside a repository it looks in the working directory only. If the working directory has been deleted, the lookup is skipped and the run is unpinned.
+- **Paths in the file** are relative to the directory that holds the file. `~` expands to your home directory, and an absolute path stays as written. In a symlinked `.skill-ci.toml`, relative paths resolve from the directory of the link. Path flags on the command line resolve from the working directory.
+- **Control characters.** A path setting is rejected when it contains a control character, a format character, or a line or paragraph separator, such as U+202E. Other invisible characters, such as variation selectors, Hangul fillers, U+034F, unassigned code points and private-use code points, are accepted and print as written.
+
+### `source`
+
+`source` names where skill-ci installs itself from, and `latest` and `main` read their tags and branch from it. It runs on your machine and in CI with your permissions, so name a repository you trust. It may be:
+
+- an `https://`, `ssh://` or `file:///absolute/path` URL. skill-ci lowercases the scheme, and it rejects `http://`, `git://` and every other scheme.
+- a plain path, which is relative to the file, may start with `~`, and becomes a `file://` URL.
+
+skill-ci rejects a `source` that:
+
+- holds a control character, a format character, or a line or paragraph separator.
+- is an scp-style address such as `git@host:path`. Write `ssh://git@host/path`.
+- carries credentials. Only an ssh user name is allowed, as in `ssh://git@host/path`. Any other `@` in an `https://` URL, or a second `@` in an `ssh://` URL, draws the credentials message. In an `https://` URL, write `%40` for a literal `@`. An `@` in the path of a `file://` or `ssh://` URL draws the message too, as in `file:///abs/repo@2` or `ssh://host/p@th`. Name a local repository whose path holds an `@` as a plain path, such as `/abs/repo@2`. Keep a token for a private mirror in a git credential helper.
+- has a query, a fragment, white space, a port that is not a number, no host, or a character outside ASCII in its scheme or host. Write an international host as punycode.
+
+A `source` that needs a passphrase or a host-key answer does not wait for you. The version lookup runs git without a terminal and gives up after 5 seconds. Load your key into `ssh-agent` and accept the host key first.
+
+### Prerequisites
+
+skill-ci needs `git` to read the source's tags, and `uv` to run a pinned version. Without `uv` on `PATH`, a run that has to hand off exits with code 127.
+
+## Run the pinned version
+
+When `.skill-ci.toml` names a version, skill-ci resolves it to a commit and runs that commit.
+
+1. **Resolve.** An exact tag resolves to the commit that tag names. `latest` resolves to the newest `v*` tag. `main` resolves to the head of the `main` branch. skill-ci asks the source with `git ls-remote`, which gives up after 5 seconds.
+2. **Hand off.** If the commit differs from the running one, skill-ci runs `uv tool run --isolated --from git+<source>@<commit> skill-ci <arguments>`. It always passes the commit, never the tag. It first tries with uv offline, and tries once more with network access when uv could not start. It removes `PYTHONPATH` and `PYTHONHOME` from the pinned run's environment.
+3. **Run.** The pinned command runs your arguments, and its exit status becomes skill-ci's.
+
+Every command that runs prints one line to standard error first, so a local log and a CI log show the commit they used. With a pin, skill-ci resolves it before it reads the arguments, so `--help`, `--version` and a usage error print that line too, with any offline warning or newer-tag notice. Without a pin, and for `update`, those three print no version line on standard error. `--version` also prints `skill-ci <package version> (<commit>)` on standard output. A pinned run prints `skill-ci v1.0.0 (<commit>)`, where the name is the tag, `main`, or the tag that `latest` chose. An unpinned run prints `skill-ci <package version> (<commit>)`, and `commit unknown` when skill-ci was not installed from a git commit. The line goes to standard error so that standard output stays clean for piping.
+
+**`SKILL_CI_PINNED`.** skill-ci sets `SKILL_CI_PINNED=<commit>` for the pinned run, so that run never hands off again. The pinned run removes it, and `SKILL_CI_STARTED`, from the environment before any check runs. Do not set either yourself. A `SKILL_CI_PINNED` that is not a full commit, or that names a commit other than the one installed, fails with exit code 126.
+
+**`SKILL_CI_DEBUG=1`** prints a full traceback for an unexpected error in place of its one-line message. It does not change the per-check lines that `check` prints.
+
+### The cache and offline runs
+
+skill-ci keeps the answers it gets from each source in `$XDG_CACHE_HOME/skill-ci/refs/`, or in `~/.cache/skill-ci/refs/` when `XDG_CACHE_HOME` is unset or relative. There is one file per source.
+
+- **An exact tag** is served from the cache for a day without asking the source. After that, or when the cache lacks the tag, skill-ci asks the source again. Each answer from a source replaces that source's whole cache file. A tag that you move on the source can keep its old commit for up to a day, and less when a `latest` pin, a `main` pin, `update`, or an `init` with no `.skill-ci.toml` asks the same source first. A tag that you publish is found at once by a pin that names it, but the newer-tag notice can take up to a day to see it.
+- **`latest` and `main`** ask the source on every run.
+- **Offline**, skill-ci uses the cached answer. For `latest` and `main` it prints `skill-ci: warning: cannot reach <source> (<reason>); running <commit>, which <version> named on <date> UTC`. An exact tag that is in the cache runs from it with no warning.
+- **No cache**, or an exact tag that the cache lacks, exits with code 2. The message says no version was ever resolved from the source, or that the cached versions have no such tag.
+- **`update` needs the network.** It never reads the cache.
+
+### Update the pin
+
+`skill-ci update` rewrites `version` in `.skill-ci.toml` to the newest release tag and leaves every other key and comment alone. It keeps the line endings and the file mode, and it follows a symlink to the file it names.
+
+- It moves only an exact tag. On a `latest` or `main` pin it prints that the version floats and leaves the file unchanged, with exit code 0.
+- It never moves a pin backwards. If the pin is newer than the newest tag, it exits with code 2 and leaves the file unchanged.
+- It refuses a file whose `version` key is quoted, or that holds a second line shaped like a version line, such as one inside a multi-line string. It exits with code 2 and leaves the file unchanged.
+- It replaces the file with a renamed copy. It fails in a directory you cannot write to. It breaks hard links and drops extended attributes.
+
+On an exact-tag pin, every run prints a notice on standard error when a newer tag exists: `skill-ci: v1.2.0 is newer than the pinned v1.0.0; run skill-ci update to move the pin`. The notice comes from the cached tag list, so it can lag by a day.
+
+Pins start at v1.0.0, the first release that understands the pin. Do not tag an earlier commit yourself and pin it. That revision cannot tell skill-ci that the pinned run started, so a run can happen twice and then exit with code 126, which would repeat a paid `run`.
+
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| 0 | The command finished and every check passed. |
+| 1 | A check failed, a command could not finish its work, or an unexpected error stopped it. `init` also exits 1 when it printed a `to do:` line. |
+| 2 | A usage error, an invalid `.skill-ci.toml`, a version that cannot be resolved, a failed `update`, or a command that refused to start, such as `init` outside the repository root. |
+| 126 | skill-ci could not hand the run to the pinned commit. The causes are listed below. |
+| 127 | `uv` is not on `PATH` when a hand-off is needed, or the harness is missing from skill-ci's environment. |
+| 128 plus a signal number | A signal stopped skill-ci, or the pinned command or a harness command died of that signal. Ctrl-C gives 130. |
+
+Exit code 126 has these causes, and each prints its reason:
+
+- uv could not start the pinned commit, offline or with network access, and so no pinned run began. The message says to see the uv error above it.
+- skill-ci could not run `uv` at all.
+- skill-ci could not record that the pinned run started.
+- `SKILL_CI_PINNED` is not a full commit.
+- `SKILL_CI_PINNED` is set, but this skill-ci was not installed from a git commit.
+- `SKILL_CI_PINNED` names a commit other than the one installed.
+
+### Signals
+
+- **These signals stop a run:** `SIGINT`, `SIGTERM`, `SIGHUP`, `SIGQUIT`, `SIGUSR1`, `SIGUSR2`, `SIGALRM`, `SIGPIPE`, `SIGABRT`, `SIGVTALRM`, `SIGPROF` and `SIGXCPU`, plus `SIGPOLL` and `SIGPWR` where the system has them. Each one ends the child and its whole process group. skill-ci sends `SIGINT` to the child first. When the grace period passes, or once the child has exited, it sends `SIGKILL` to the child's whole process group. The grace period is 3 seconds, or 5 seconds for the pinned run. skill-ci exits with 128 plus the number of the first signal it got.
+- **Other signals** are not forwarded, such as `SIGWINCH` from a terminal resize or `SIGINFO`.
+- **Ctrl-Z** suspends skill-ci but not its child. The child keeps running until it finishes. Resume skill-ci with `fg`.
+- **Fault signals** keep their default action and are not forwarded: `SIGSEGV`, `SIGBUS`, `SIGFPE`, `SIGILL`, `SIGTRAP`, `SIGEMT` and `SIGSYS`.
+- **A signal ignored at startup**, as under `nohup` or in a background job, stays ignored for skill-ci and for its child. `SIGINT` is the exception. Every child starts with `SIGINT` at its default action, because skill-ci stops its children with it.
 
 ## Keep manifests outside the skills directory
 
@@ -75,10 +249,11 @@ Use relative `skill_paths` for portable manifests. The coverage check also accep
 
 ## Tasks
 
-`skill-tasks.toml` defines these mise tasks. Your repository includes that file from its `mise.toml`.
+`skill-ci init` adds these as mise tasks when the repository has a `mise.toml`. Each task is one line that calls the `skill-ci` subcommand of the same name, so `mise run skill-lint` and `skill-ci lint` do the same thing.
 
 | Task | Where it runs | Cost | What it does |
 | --- | --- | --- | --- |
+| `skill-check` | CI and local | Free | Runs the model-free checks that CI runs. |
 | `skill-lint` | CI and local | Free | Runs the frontmatter checker and the content checker over the skills directory. |
 | `skill-package` | Local, and CI when `package-check` is on | Free | Lists every file in each skill package. If `INSTALLED_SKILLS_DIR` is set, also compares each package with its installed copy. See [Check package files and installed copies](docs/packages.md). |
 | `skill-coverage` | Local, and CI when `require-populated-manifests` is on | Free | Requires a populated, correctly bound manifest for every skill directory. |
@@ -168,8 +343,8 @@ An answer run refuses to start when a folder above its workspace holds `.claude`
 
 ## Update skill-ci
 
-- **CI.** Each repository's workflow uses the skill-ci SHA it pins. Dependabot opens a pull request when skill-ci changes, and the new SHA takes effect when you merge it.
-- **Local tasks.** They use whatever your `SKILL_CI` checkout contains. Pull that checkout to get the latest runner pin.
+Run `skill-ci update` to move an exact-tag pin to the newest release. See [Update the pin](#update-the-pin). Your terminal, hooks, mise tasks, no-mistakes, and CI all run the version in `.skill-ci.toml`, so one commit moves them together.
+
 - **Earlier run directories.** A runner pin can change recorded identities, so re-run `prepare` and every arm before comparing with older runs. The earlier pin to `6634de1` changed trigger protocol hashes and added optional `expected_skills` and `forbidden_skills` lists for catalog routing. Regenerate both trigger comparison arms with this runner. Unscoped queries retain their existing activation rule.
 
 The pinned runner supports `report --fail-on-failures` for offline saved-result gates. It checks `with_skill` by default and permits expected baseline assertion failures while requiring complete evidence across all arms. Rendering remains the default. The runner also ships an [offline captured-edit example](https://github.com/mdsmithaustin/skill-eval-harness/tree/70e83674f787327e3d271310fc64106dc89a2708/examples/edited-file-demo). Its native permission smoke is separate and opt-in.

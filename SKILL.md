@@ -1,83 +1,34 @@
 ---
 name: skill-ci
-description: Set up Agent Skill testing in the current repository. Use when the user says "activate skill-ci", "set up skill testing", "add skill evals to this repo", "add skill lints", or asks how the skills in this repo get tested. Wires the reusable lint workflow, the mise tasks, the pinned skill-eval-harness runner, and one empty manifest per skill, then stops.
+description: Set up Agent Skill testing in the current repository. Use when the user says "activate skill-ci", "set up skill testing", "add skill evals to this repo", "add skill lints", or asks how the skills in this repo get tested. Runs `skill-ci init`, which writes the version pin, the CI workflow, hook entries, and one empty manifest per skill, then reports what it wrote and stops.
 ---
 
 # skill-ci
 
-Activation wires one target repository into the shared skill testing home. It writes configuration and empty manifests and then stops. Activation never runs a paid model step. It never writes a test case, never commits, and never pushes. The person runs `skill-trigger` and `skill-run` by hand, on their own logins, when they choose.
+Activation is `skill-ci init`, then `skill-ci check`, and a report of what they printed. `init` writes configuration and empty manifests. Activation never runs a paid model step, never writes a test case, never commits, and never pushes. The person runs `skill-ci trigger` and `skill-ci run` by hand, on their own logins, when they choose.
 
 ## Before you start
 
-- `SKILL_CI` is the absolute path of the directory holding this file. Every command below uses it.
-- `SKILLS_DIR` is the target's skills directory: the one whose children each hold a `SKILL.md`. Default `skills`. If the target has no such directory, stop and say so.
-- `EVALS_DIR` is where the target's manifests live. Default `evals` at the repository root, outside `SKILLS_DIR`. A skill installer copies a skill directory verbatim, so a manifest kept beside a skill ships that skill's trigger queries, expected answers, and oracle scripts to everyone who installs it. Keep manifests out of `SKILLS_DIR` unless the target already has them there, in which case leave them where they are and skip `EVALS_DIR` everywhere below.
-- `CONTENT_LINK_EXCEPTIONS_FILE` is an optional path to a version-1 JSON policy. `skill-lint` passes it to `check-skill-content.py --link-exceptions-file`. It permits listed missing direct inline Markdown links that target files created after a template is copied. Its source paths are relative to `SKILLS_DIR`. See `docs/link-exceptions.md` for the policy shape.
-- `CONTENT_CONVENTIONS_FILE` is an optional path to a version-1 JSON file. `skill-lint` passes it to `check-skill-content.py --conventions-file`. It declares the target's skill-name prefixes, such as `pattern-`, and retired text the checker reports. Without it, a bold name counts as a skill reference only on a line that contains "skill". See `docs/content-conventions.md` for the file shape.
-- `runner.lock` is the only runner pin. Local tasks read it at execution time through `$SKILL_CI/tools/run_runner.py`.
+- Work at the repository root. `init` refuses to run anywhere else, and it refuses a directory that is in no git repository.
+- The skills directory is the one whose children each hold a `SKILL.md`. It defaults to `skills`. If the repository keeps its skills elsewhere, pass `--skills-dir`. If there is no such directory, `init` stops and says so.
+- `uv` and `git` must be on `PATH`, and the machine needs network access to the skill-ci source, because `init` pins the newest release tag.
+- If `skill-ci` is not on `PATH`, run it through uv. Replace `skill-ci` with the command below in every step:
+
+  ```sh
+  uv tool run --from git+https://github.com/mdsmithaustin/skill-ci.git skill-ci
+  ```
 
 ## Steps
 
-1. Workflow. Write `.github/workflows/skill-checks.yml` in the target, or add the `skills` job to an existing lint workflow. Reference the reusable workflow. Do not copy its body. Resolve the full commit SHA of the published skill-ci revision before writing the caller. Write that SHA in `uses`. Keep every existing `with` input that the target uses. Remove `skill-ci-ref` when present because the reusable workflow accepts it only for compatibility and ignores it. Set `skills-dir` to `SKILLS_DIR` and `evals-dir` to `EVALS_DIR`. Set `content-link-exceptions-file` only when the target has the reviewed policy described in `docs/link-exceptions.md`. Set `content-conventions-file` only when the target has a conventions file described in `docs/content-conventions.md`. Omit `evals-dir` only for a target whose manifests stay inside the skills tree. The job fails when `evals-dir` names a directory that does not exist.
-
-   Inspect `.github/dependabot.yml` and `.github/dependabot.yaml`. Reuse an existing `github-actions` update entry for directory `/` only when it covers the default branch, permits version-update PRs, and includes `mdsmithaustin/skill-ci`. Check `target-branch`, `open-pull-requests-limit`, and any `allow` or `ignore` rules. A matching ecosystem and directory alone do not prove updates are enabled. Add an entry when neither file has one. Preserve the existing file spelling and unrelated ecosystems, schedules, groups, and labels.
-
-   Repair a rule scoped only to `mdsmithaustin/skill-ci` when activation authorizes that change. If a broader or intentional policy blocks updates, leave it intact and report the exact blocker. Do not claim automatic updates are active until an eligible default-branch entry includes this dependency.
-
-   ```yaml
-   version: 2
-   updates:
-     - package-ecosystem: github-actions
-       directory: /
-       schedule:
-         interval: weekly
-   ```
-
-2. mise tasks. In the target's `mise.toml` (create it if absent) add the env and the include. If `task_config.includes` already exists, append to it.
-
-   ```toml
-   [env]
-   SKILL_CI = "{{ config_root }}/../skill-ci"
-   EVALS_DIR = "evals"
-
-   [task_config]
-   includes = ["../skill-ci/skill-tasks.toml"]
-   ```
-
-   Omit `EVALS_DIR` for a target whose manifests stay inside the skills tree. Every task that reads a manifest honors it, so a task run without it would check nothing. Set `CONTENT_LINK_EXCEPTIONS_FILE` only when the target has the reviewed policy described in `docs/link-exceptions.md`. Set `CONTENT_CONVENTIONS_FILE` only when the target has a conventions file described in `docs/content-conventions.md`.
-
-   Use the real relative path from the target to this checkout. Confirm with `mise tasks ls` that `skill-lint`, `skill-coverage`, `skill-validate`, `skill-audit`, `skill-trigger`, and `skill-run` are listed.
-
-3. Runner. Warm the pinned runner through the same dispatcher every task uses:
-
-   ```sh
-   uv run --no-project python "$SKILL_CI/tools/run_runner.py" skill-benchmark --help
-   ```
-
-   If the lock is invalid or uv is unavailable, report the failure. Never install from an unpinned ref or from upstream.
-
-4. Manifests. Scaffold one empty manifest per skill:
-
-   ```sh
-   uv run --no-project --with-requirements "$SKILL_CI/tools/requirements.txt" \
-     python "$SKILL_CI/tools/scaffold_manifest.py" --evals-dir "$EVALS_DIR" "$SKILLS_DIR"/*/
-   ```
-
-   This writes `$EVALS_DIR/<skill>/shared-benchmark.json` with an empty `cases` list and `skill_paths` relative to the repository root, and refuses to touch a manifest that already exists. `EVALS_DIR` must be named `evals`, because that is the name the runner resolves the repository root from. Drop `--evals-dir` for a target whose manifests stay inside the skills tree, which writes `evals/shared-benchmark.json` under each skill with `skill_paths` relative to the skill directory. Leave `cases` empty. Trigger rows come from the reviewed session harvest. Outcome cases are the skill author's.
-
-   Case files, `prompt_ref`, and script-oracle paths resolve against the manifest's own directory, not the repository root, so they belong next to the manifest.
-
-5. Check. Run `mise run skill-lint`, and run `mise run skill-validate` when the runner warm-up succeeds. Fix only what activation introduced. A lint finding inside an existing skill belongs to its author: list it in the report and leave it.
-
-6. Ignore run output. The paid tasks default to a unique directory beside the target checkout, outside skill packages. Keep `eval-runs/` and `evals/runs/` ignored in the target for earlier runs and explicit `OUT` paths. Add those patterns to `.gitignore` if they are not already ignored. Run artifacts hold raw agent transcripts and must never be committed.
-
-7. Stop. Report the files written, the tasks listed, whether the runner warm-up passed, the manifest count, and any findings.
+1. Run `skill-ci init`. It lists the files it wrote, updated, and kept, plus notes and to-do items. Run it again at any point. It keeps what exists.
+2. Run `skill-ci check`. Fix only what `init` introduced. A finding inside an existing skill belongs to its author. List it in the report and leave it.
+3. Stop. Report the lines `init` printed, the `check` result, and the manifest count. Quote every `to do:` item and every `note:` line, such as the no-mistakes setting.
 
 ## Rules
 
-- Never edit `tools/check-skill-frontmatter.py` or `tools/check-skill-content.py` during activation. A checker defect gets its own change in this repository.
-- Re-activation is safe. Every step converges: existing workflow jobs, includes, and manifests are kept, not rewritten.
-- The pin lives in `runner.lock` only. Do not write the runner version anywhere else.
-- New callers pin only the reusable workflow. Dependabot updates that full SHA through its `github-actions` entry.
-- `README.md` in this checkout owns the overview and configuration reference. `docs/authoring-cases.md` owns the authoring conventions. Point authors there instead of restating them.
+- If `init` says the source has no release tag, report that and stop. Do not write a `main` pin for the person. That pin follows the branch head instead of a release, so it is theirs to choose.
+- A `to do:` line means `init` could not finish that step. When there is an entry to add by hand, the line prints it. Report the line, and do not guess at an edit.
+- Never edit the checks during activation. A checker defect gets its own change in the skill-ci repository.
+- The version lives in `.skill-ci.toml` only. `skill-ci update` moves it to the newest tag. Do not write a version anywhere else.
+- `README.md` in the skill-ci repository owns the overview and the `.skill-ci.toml` reference. `docs/authoring-cases.md` owns the authoring conventions. Point authors there instead of restating them.
 - `DECISIONS.md` owns the rationale, including why the runner is a pinned fork and the test for when to stop using it. Point a reader there rather than explaining it in a run report.
