@@ -20,7 +20,7 @@ The inventory includes empty directories and exact executable permission bits as
 
 The command owns one in-memory inventory and derives both its digest and path-level differences from it. A separate serialized-inventory format would add storage, freshness, and schema coordination without a current consumer. Automatic selection based on whether `SKILL.md` exists was rejected because a missing marker would change which directories the command inspected.
 
-Both new reusable workflow inputs default to false. Consumers can adopt package inspection or require manifests independently. The existing copied checker files and their drift checks retain their current contracts.
+The `package` and `require_populated_manifests` settings both default to false. Consumers can adopt package inspection or populated coverage independently.
 
 ## Left with their existing owners
 

@@ -1,8 +1,8 @@
 # Add your repository's naming conventions to the content check
 
-`check-skill-content.py` applies one rule to bold names. A bold kebab name on a line that contains the word "skill" must name a directory under `SKILLS_DIR`. Some repositories need more. A family of skills can share a name prefix, so that a bold `pattern-` name is always a skill reference even when the line never says "skill". A repository can also retire a path or a command and want every remaining mention reported. A conventions file declares both for your repository.
+The content check applies one rule to bold names. A bold kebab name on a line that contains the word "skill" must name a directory under the skills directory. Some repositories need more. A family of skills can share a name prefix, so that a bold `pattern-` name is always a skill reference even when the line never says "skill". A repository can also retire a path or a command and want every remaining mention reported. A conventions file declares both for your repository.
 
-Without the file, the checker applies only the "skill" rule and reports no retired text.
+Without the file, the content check applies only the "skill" rule and reports no retired text.
 
 ## Write the conventions file
 
@@ -25,16 +25,10 @@ The file is version-1 JSON. Both keys after `version` are optional.
 - A bold name that starts with the prefix always reads as a skill reference, so `**pattern-nope**` fails when `pattern-nope/` does not exist.
 - On a line that contains the prefix without its hyphen, a bare bold name also resolves against the prefixed directory. With `pattern-`, the line "Apply the **retry** pattern from the skill list." passes when `pattern-retry/` exists.
 
-The checker rejects the file with exit code 2 if it has unknown keys, a version other than 1, a value of the wrong type, an empty string, a prefix that does not end in a hyphen, a repeated prefix, or a repeated object key.
+The content check rejects the file with exit code 2 if it has unknown keys, a version other than 1, a value of the wrong type, an empty string, a prefix that does not end in a hyphen, a repeated prefix, or a repeated object key.
 
 ## Point the checks at the file
 
-- For the checker directly, pass `--conventions-file PATH`.
-- For local linting, set `CONTENT_CONVENTIONS_FILE` to the path, then run `mise run skill-lint`.
-- For the reusable workflow, set the `content-conventions-file` input to the same path.
+Set `content_conventions_file` in `.skill-ci.toml` to the path. A path in the file is relative to the file. `skill-ci lint`, `skill-ci check`, and the hook entries that run `skill-ci check --fast` all read that key, so CI, hooks, and your terminal apply the same conventions. For one run, pass `--content-conventions-file PATH`.
 
-If your repository has no prefixed skill family and no retired text to report, leave out the option, the variable, and the input.
-
-## Keep a local checker copy in sync
-
-If your repository keeps its own copy of `tools/check-skill-content.py` for a pre-commit hook, copy it from the same skill-ci revision that your workflow pins, and pass the same `--conventions-file` in the hook. The workflow fails when the two copies differ.
+If your repository has no prefixed skill family and no retired text to report, leave out the key.
