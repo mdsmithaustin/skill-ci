@@ -155,12 +155,12 @@ GitHub Enterprise Server (GHES) cannot call a reusable workflow from github.com,
 
    ```sh
    git clone --bare https://github.com/mdsmithaustin/skill-ci.git
-   git -C skill-ci.git push --all https://ghes.example.com/acme/skill-ci.git
+   git -C skill-ci.git push --all --no-follow-tags https://ghes.example.com/acme/skill-ci.git
    ```
 
-   Upstream tags still name the github.com harness. `latest`, the newer-tag notice, and `skill-ci update` pick the highest `v*` tag on the source. A copied upstream tag could therefore send a pin to a commit that cannot install on your network.
+   The commits that upstream tags point to carry the github.com harness line. `latest`, the newer-tag notice, and `skill-ci update` pick the highest `v*` tag on the source. A copied upstream tag could therefore send a pin to a commit that cannot install on your network.
 
-2. Mirror the harness the same way, from `https://github.com/mdsmithaustin/skill-eval-harness.git`. skill-ci installs `skill-eval-harness-ext` from the git URL on one line of its `pyproject.toml`, so a mirror of skill-ci alone still reaches github.com. Clone your mirror of skill-ci and change that line to name your mirror of the harness at the same commit. Commit the change on the default branch, because the install in step 3 and the install in the workflow both take that branch. Then tag the commit with a release tag of your own, such as `v1.0.0`, and push the branch and the tag. The pinned run installs the tagged commit, so the tag carries the change too. skill-ci has no tooling for this step.
+2. Mirror the harness the same way, from `https://github.com/mdsmithaustin/skill-eval-harness.git`. skill-ci installs `skill-eval-harness-ext` from the git URL on one line of its `pyproject.toml`, so a mirror of skill-ci alone still reaches github.com. Clone your mirror of skill-ci and change that line to name your mirror of the harness at the same commit. Commit the change on the default branch, because the install in step 3 and the install in the workflow both take that branch. Then tag the commit with a release tag of your own, such as `v1.0.0`, and push the branch and the tag. The tag names your commit, which can be ahead of upstream's latest release. The pinned run installs the tagged commit, so the tag carries the change too. skill-ci has no tooling for this step.
 
    ```sh
    git clone https://ghes.example.com/acme/skill-ci.git skill-ci-edit
@@ -192,7 +192,7 @@ The workflow installs uv with `pip install uv==0.12.7`, and runners on a restric
 - Put Python 3.12 or later on the runner. Otherwise uv downloads one from `releases.astral.sh`.
 - If pip stops with `externally-managed-environment` on a self-hosted runner, change the `pip install uv==0.12.7` line in the workflow to install uv in a virtual environment, or by another method.
 
-To take a later upstream release, merge it into a clone of your mirror's default branch with `git pull https://github.com/mdsmithaustin/skill-ci.git v1.1.0`. That merges the release commit and does not copy its tag. If the merge conflicts on the harness line in `pyproject.toml`, keep your mirror's URL. Tag the merge with your next release tag, such as `v1.1.0`, and push the branch and the tag. When the release pins a newer harness commit, push the harness again from a fresh bare clone.
+To take a later upstream release, merge it into a clone of your mirror's default branch with `git pull --no-rebase https://github.com/mdsmithaustin/skill-ci.git v1.1.0`. That merges the release commit and does not copy its tag. If the merge conflicts on the harness line in `pyproject.toml`, keep your mirror's URL and take the release's commit hash. Tag the merge with your next release tag, such as `v1.1.0`, and push the branch and the tag. When the release pins a newer harness commit, push the harness again from a fresh bare clone.
 
 `source` may not carry credentials. A private mirror authenticates through a git credential helper on the runner.
 
