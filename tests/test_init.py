@@ -685,9 +685,10 @@ class ReadmeTests(unittest.TestCase):
         section = self.readme.split("\n### Signals\n", 1)[1].split("\n## ", 1)[0]
         stops = section.split("Each one ends", 1)[0]
         documented = set(re.findall(r"`(SIG[A-Z0-9]+)`", stops))
-        stopping = {signal.Signals(number).name for number in children.STOPPING}
-        self.assertLessEqual(stopping, documented)
-        self.assertLessEqual(documented - stopping, {"SIGPOLL", "SIGPWR"})
+        # SIGIO and SIGPOLL are one number on Linux, so compare numbers.
+        numbers = {getattr(signal, name) for name in documented if hasattr(signal, name)}
+        self.assertLessEqual(children.STOPPING, numbers)
+        self.assertLessEqual({name for name in documented if not hasattr(signal, name)}, {"SIGPOLL", "SIGPWR"})
 
     def test_the_readme_documents_every_exit_code_it_can_end_with(self) -> None:
         table = self.readme.split("\n### Exit codes\n", 1)[1].split("\n### ", 1)[0]
