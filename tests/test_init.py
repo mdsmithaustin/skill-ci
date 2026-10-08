@@ -576,6 +576,12 @@ class NoMistakesTests(InitTestCase):
         self.assertIn("updated .no-mistakes.yaml (commands.lint: make lint -> make lint && skill-ci check)", result.lines)
         self.assertIn("note: no-mistakes reads commands from the default branch, not from the branch you push, so this change applies after it merges there", result.lines)
 
+    def test_a_windows_file_changes_only_by_the_suffix(self) -> None:
+        path = self.repository / ".no-mistakes.yaml"
+        path.write_bytes(b"agent: claude\r\ncommands:\r\n  lint: make lint\r\n  test: make test\r\n")
+        self.assertEqual(self.init().status, 0)
+        self.assertEqual(path.read_bytes(), b"agent: claude\r\ncommands:\r\n  lint: make lint && skill-ci check\r\n  test: make test\r\n")
+
     def test_each_scalar_style_gains_the_suffix_and_keeps_its_quotes_and_comment(self) -> None:
         for name, before, after in (
             ("plain", "commands:\n  lint: make lint\n", "commands:\n  lint: make lint && skill-ci check\n"),

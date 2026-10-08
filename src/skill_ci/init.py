@@ -323,7 +323,7 @@ def wire_no_mistakes(layout: Layout) -> list[Outcome]:
     if not path.is_file():
         return []
     try:
-        text = path.read_text(encoding="utf-8")
+        text = path.read_bytes().decode("utf-8")
         configured = yaml_mapping(text) or {}
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as error:
         return [Outcome(Verb.TODO, f"add skill-ci to {NO_MISTAKES_FILE}", f"cannot read it: {error}")]
