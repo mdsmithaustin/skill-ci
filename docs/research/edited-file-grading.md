@@ -24,7 +24,7 @@ uv run skill-ci run .github/fixtures/populated/skills/project-editing \
 	--codex-cmd "\"$launcher\" exec --json --skip-git-repo-check --sandbox workspace-write"
 ```
 
-A zero task exit alone does not prove passing grades. Inspect both benchmark reports for objective scores, missing runs, and execution errors. The retained run had objective score 1.00 for each variant, no missing runs, and no execution errors on either provider.
+A zero exit alone does not prove passing grades. Inspect both benchmark reports for objective scores, missing runs, and execution errors. The retained run had objective score 1.00 for each variant, no missing runs, and no execution errors on either provider.
 
 The model-free oracle tests exercise known-good evidence and rejection of missing capture, forged hashes, unrelated writes, and a behaviorally incorrect patch. CI never executes the paid path.
 

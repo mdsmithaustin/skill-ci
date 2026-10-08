@@ -143,7 +143,7 @@ no-mistakes runs `commands.lint` from `.no-mistakes.yaml`. `init` handles the tw
             - skill-ci check
   ```
 
-  Add that entry to `~/.no-mistakes/config.yaml` on each machine that gates the repository. It applies on that machine at once and is not committed. `init` keys the entry by the `origin` remote URL. When that URL holds an `@`, which marks a user name or a token, `init` prints `<remote URL>` in its place and adds a note, so the user name or token never reaches the output. In `config.yaml`, write the URL without the user name or token. With no `origin`, the entry names `<remote URL>` and no note follows.
+  Add that entry to `~/.no-mistakes/config.yaml` on each machine that gates the repository. It applies on that machine at once and is not committed. `init` keys the entry by the `origin` remote URL. When that URL holds an `@`, which marks a user name or a token, `init` prints `<remote URL>` in its place and adds a note. The user name or token never reaches the output. In `config.yaml`, write the URL without them. With no `origin`, the entry names `<remote URL>` and no note follows.
 
 no-mistakes reads `commands` from the default branch, not from the branch you push. A change to `commands.lint` applies after it merges there.
 
@@ -151,25 +151,25 @@ no-mistakes reads `commands` from the default branch, not from the branch you pu
 
 GitHub Enterprise Server (GHES) cannot call a reusable workflow from github.com, so skill-ci no longer ships one. The version lives in `.skill-ci.toml`, a plain file in your repository. The `source` key tells skill-ci where to fetch itself. It defaults to github.com. On a network that blocks github.com, point it at a mirror on your instance.
 
-1. Copy skill-ci and its tags into your instance. Use `--bare`, which leaves out the `refs/pull/*` refs that GitHub refuses to receive:
+1. Mirror skill-ci and its tags into your instance. Use `--bare`, which leaves out the `refs/pull/*` refs that GitHub refuses to receive:
 
    ```sh
    git clone --bare https://github.com/mdsmithaustin/skill-ci.git
    git -C skill-ci.git push --mirror https://ghes.example.com/acme/skill-ci.git
    ```
 
-2. Copy the harness the same way, from `https://github.com/mdsmithaustin/skill-eval-harness.git`. skill-ci installs `skill-eval-harness-ext` from the git URL on one line of its `pyproject.toml`, so a copy of skill-ci alone still reaches github.com. Clone your copy of skill-ci, change that line to name your copy of the harness at the same commit, and commit the change on the default branch. The bootstrap install and the workflow both install the default branch, and the pinned run installs the tagged commit, so both need the change. Tag the commit with a new release tag, such as `v1.0.1`, that upstream has not used, and push the branch and the tag. skill-ci has no tooling for this step. To take a later upstream release, push its tag alone. Do not repeat `push --mirror`, which resets the default branch and deletes your tag.
+2. Mirror the harness the same way, from `https://github.com/mdsmithaustin/skill-eval-harness.git`. skill-ci installs `skill-eval-harness-ext` from the git URL on one line of its `pyproject.toml`, so a mirror of skill-ci alone still reaches github.com. Clone your mirror of skill-ci and change that line to name your mirror of the harness at the same commit. Commit the change on the default branch, because the install in step 3 and the install in the workflow both take that branch. Then tag the commit with a new release tag, such as `v1.0.1`, and push the branch and the tag. The pinned run installs the tagged commit, so the tag carries the change too. skill-ci has no tooling for this step.
 
    ```sh
    git clone https://ghes.example.com/acme/skill-ci.git skill-ci-edit
    cd skill-ci-edit
    $EDITOR pyproject.toml   # replace the URL on the skill-eval-harness-ext line
-   git commit -am "chore: use the internal harness copy"
+   git commit -am "chore: use the internal harness mirror"
    git tag v1.0.1
    git push origin HEAD v1.0.1
    ```
 
-3. In your repository, install skill-ci from the copy and write `.skill-ci.toml` with that copy as `source` and your tag as `version`:
+3. In your repository, install skill-ci from the mirror, and write `.skill-ci.toml` with the mirror as `source` and your tag as `version`:
 
    ```sh
    uv tool install "git+https://ghes.example.com/acme/skill-ci.git"
@@ -182,7 +182,15 @@ GitHub Enterprise Server (GHES) cannot call a reusable workflow from github.com,
    evals_dir = "evals"
    ```
 
-4. Run `skill-ci init`, which writes the workflow with that `source`, and commit what it wrote. The workflow uses the `actions/checkout` action. If your instance does not offer it, replace that step with your own checkout step. The workflow installs uv with `pip install uv==0.12.7`. pip and uv read different settings, so point both at your package mirror on the runner, with `PIP_INDEX_URL` and `UV_DEFAULT_INDEX`, or change that line.
+4. Run `skill-ci init`, which writes the workflow with that `source`, and commit what it wrote. The workflow uses the `actions/checkout` action. If your instance does not offer it, replace that step with your own checkout step.
+
+The workflow installs uv with `pip install uv==0.12.7`, and runners on a restricted network need three adjustments.
+
+- Point pip and uv at your package mirror. They read different settings, so set both `PIP_INDEX_URL` and `UV_DEFAULT_INDEX`.
+- Put Python 3.12 or later on the runner. Otherwise uv downloads one from `releases.astral.sh`.
+- If pip stops with `externally-managed-environment` on a self-hosted runner, change the `pip install uv==0.12.7` line in the workflow to install uv in a virtual environment, or by another method.
+
+To take a later upstream release, do not push the upstream tag into your mirror. That tag still names the github.com harness, and `latest`, the newer-tag notice, and `skill-ci update` all pick the highest `v*` tag on the source. Instead, fetch the release, re-apply the harness edit on the default branch, and tag the result with a new internal tag. Internal tags share the `v*` namespace with upstream tags, so choose a number that upstream has not released. Push to the harness mirror again with `push --mirror` when the release pins a newer harness commit. Never repeat `push --mirror` on the skill-ci mirror, because it resets the default branch and deletes your tags.
 
 `source` may not carry credentials. A private mirror authenticates through a git credential helper on the runner.
 
@@ -404,7 +412,7 @@ Each `description_contains` entry must appear in that skill's `description`, com
 
 ## Run output and host isolation
 
-The default run directory sits beside the consuming checkout, outside installed skill packages. Each invocation allocates a unique directory. When the output directory overlaps the skill package, whether it is the default or one you name with `out`, the command stops before calling a model and asks you to pass `--out` with a directory outside the package.
+The default run directory sits beside the consuming checkout, outside installed skill packages. Each invocation allocates a unique directory. The output directory may be the default or one you name with `out`. When it overlaps the skill package, the command stops before calling a model and asks you to pass `--out` with a directory outside the package.
 
 The runner keeps the skills in your home directory out of every answer and trigger run, so a run sees only the skills it mounts. For Claude it also hides your agents, `CLAUDE.md`, MCP servers, and auto memory. Judge runs are sealed further and see no skills at all. The paid commands still start Claude through the bundled `claude-project-only` launcher, which lets a case write files inside the run's temporary workspace. They start Codex through the bundled `codex-project-only` launcher, which moves HOME to an empty directory. That move is now redundant.
 

@@ -13,9 +13,11 @@ Deliberate gaps, each with the reason it is open.
 
 - The edited-file proof passed capture and deterministic grading on both providers. Claude's `acceptEdits` launcher permitted edits but denied the requested Python checks. The oracle verified the reconstructed product afterward. An agent-verification gate or broader command permissions would need a separate task and proof. The fixture proves plumbing, not skill benefit. See [the proof record](docs/research/edited-file-grading.md).
 
-- Dependabot covers the GitHub Actions used by the workflows and the pinned Python dependencies in `pyproject.toml`. It ignores `skill-eval-harness-ext`, which `pyproject.toml` pins as a git commit. Moving that pin stays a judgement call gated on the fork's tests and the exit test in `DECISIONS.md`, so it needs a person or a scheduled check of the fork branch.
+- Dependabot covers the GitHub Actions used by the workflows and the pinned Python dependencies in `pyproject.toml`. It ignores `skill-eval-harness-ext`, which `pyproject.toml` pins as a git commit. Moving that pin stays a judgement call gated on the fork's tests and the exit test in `DECISIONS.md`, so a person has to classify the change. A scheduled check of the fork branch can flag new commits.
 
 - `src/skill_ci/templates/skill-checks.yml` pins the checkout action's SHA and `uv==0.12.7` for every repository that `init` sets up. Dependabot reads this repository's own workflows and not the template, so moving those pins is manual.
+
+- The `15cc612` harness pin has no classification under the exit test in `DECISIONS.md`. It adds the upstream merge `40f2927` and fork #21 to #23.
 
 - A harvest review sheet quotes real user prompts, and those quotes contain text shaped like markdown links and bold skill names. The content check reads them as real links and fails. Nothing is broken while review sheets stay untracked, which is where they belong, but committing one needs the quoted text escaped or the sheet kept out of the skills tree.
 
