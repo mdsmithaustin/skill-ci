@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 
-CHECKER = Path(__file__).with_name("check-skill-package.py")
+CHECKER = ["-m", "skill_ci.checks.package"]
 
 
 def snapshot(root: Path) -> dict[str, tuple[int, bytes | str]]:
@@ -44,7 +44,7 @@ class PackageChecker(unittest.TestCase):
 
     def execute(self, *arguments: Path | str, cwd: Path | None = None) -> tuple[int, str]:
         result = subprocess.run(
-            [sys.executable, str(CHECKER), *(str(argument) for argument in arguments)],
+            [sys.executable, *CHECKER, *(str(argument) for argument in arguments)],
             capture_output=True,
             text=True,
             check=False,
@@ -159,14 +159,13 @@ class PackageChecker(unittest.TestCase):
     def test_read_failure_reports_the_path_and_summary_without_a_traceback(self) -> None:
         package = self.skill("alpha")
         driver = (
-            "import errno, os, runpy, sys\n"
+            "import errno, os, runpy\n"
             "from unittest.mock import patch\n"
-            "sys.argv = sys.argv[1:]\n"
             "with patch('os.read', side_effect=OSError(errno.EIO, 'Input/output error')):\n"
-            "    runpy.run_path(sys.argv[0], run_name='__main__')\n"
+            "    runpy.run_module('skill_ci.checks.package', run_name='__main__')\n"
         )
         result = subprocess.run(
-            [sys.executable, "-c", driver, str(CHECKER), "--skill", str(package)],
+            [sys.executable, "-c", driver, "--skill", str(package)],
             capture_output=True,
             text=True,
             timeout=5,

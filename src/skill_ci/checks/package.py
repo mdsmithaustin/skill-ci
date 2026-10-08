@@ -8,6 +8,7 @@ import hashlib
 import os
 import stat
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -252,20 +253,24 @@ def print_results(results: tuple[PackageResult, ...]) -> int:
     return 1 if failed else 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def check_packages(*, skill: Path | None = None, skills_dir: Path | None = None, compare_to: Path | None = None) -> int:
+    try:
+        packages = selected_packages(skill, skills_dir)
+        return print_results(check(packages, compare_to))
+    except CheckError as exc:
+        print(f"error: {exc}")
+        print("packages checked: 0; passed: 0; failed: 0; copies compared: 0")
+        return 1
+
+
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     selection = parser.add_mutually_exclusive_group(required=True)
     selection.add_argument("--skill", type=Path, metavar="DIRECTORY")
     selection.add_argument("--skills-dir", type=Path, metavar="DIRECTORY")
     parser.add_argument("--compare-to", type=Path, metavar="INSTALLED_SKILLS_DIRECTORY")
     args = parser.parse_args(argv)
-    try:
-        packages = selected_packages(args.skill, args.skills_dir)
-        return print_results(check(packages, args.compare_to))
-    except CheckError as exc:
-        print(f"error: {exc}")
-        print("packages checked: 0; passed: 0; failed: 0; copies compared: 0")
-        return 1
+    return check_packages(skill=args.skill, skills_dir=args.skills_dir, compare_to=args.compare_to)
 
 
 if __name__ == "__main__":

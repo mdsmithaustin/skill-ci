@@ -25,6 +25,7 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterator, Mapping
@@ -512,8 +513,43 @@ def iter_markdown_files(root: Path) -> Iterator[Path]:
         yield path
 
 
-def main() -> int:
+def check_content(
+    root: Path,
+    *,
+    ignore: frozenset[str] = frozenset(),
+    link_exceptions_file: Path | None = None,
+    conventions_file: Path | None = None,
+) -> int:
     global ROOT, IGNORE, INLINE_LINK_EXCEPTIONS, CONVENTIONS
+    ROOT = root
+    IGNORE = ignore
+    try:
+        INLINE_LINK_EXCEPTIONS = load_inline_link_exceptions(link_exceptions_file)
+        CONVENTIONS = load_content_conventions(conventions_file)
+    except ValueError as error:
+        print(f"content: {error}", file=sys.stderr)
+        return 2
+
+    findings: list[Finding] = []
+    files_checked = 0
+    for path in iter_markdown_files(ROOT):
+        files_checked += 1
+        try:
+            parsed = parse_file(path)
+        except OSError as error:
+            findings.append(Finding(path, 1, "unreadable", f"cannot read file: {error}"))
+            continue
+        for _name, check in REGISTRY:
+            findings.extend(check(parsed))
+
+    findings.sort(key=lambda f: (str(f.path), f.line, f.kind))
+    for finding in findings:
+        print(finding)
+    print(f"content: {files_checked} files, {len(findings)} findings", file=sys.stderr)
+    return 1 if findings else 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--ignore",
@@ -531,30 +567,13 @@ def main() -> int:
         help="JSON file of repository skill prefixes and retired text",
     )
     ap.add_argument("root", nargs="?", default="skills")
-    args = ap.parse_args()
-    ROOT = Path(args.root)
-    IGNORE = frozenset(n for n in args.ignore.split(",") if n)
-    try:
-        INLINE_LINK_EXCEPTIONS = load_inline_link_exceptions(
-            args.link_exceptions_file
-        )
-        CONVENTIONS = load_content_conventions(args.conventions_file)
-    except ValueError as error:
-        ap.error(str(error))
-
-    findings: list[Finding] = []
-    files_checked = 0
-    for path in iter_markdown_files(ROOT):
-        files_checked += 1
-        parsed = parse_file(path)
-        for _name, check in REGISTRY:
-            findings.extend(check(parsed))
-
-    findings.sort(key=lambda f: (str(f.path), f.line, f.kind))
-    for finding in findings:
-        print(finding)
-    print(f"content: {files_checked} files, {len(findings)} findings", file=sys.stderr)
-    return 1 if findings else 0
+    args = ap.parse_args(argv)
+    return check_content(
+        Path(args.root),
+        ignore=frozenset(n for n in args.ignore.split(",") if n),
+        link_exceptions_file=args.link_exceptions_file,
+        conventions_file=args.conventions_file,
+    )
 
 
 if __name__ == "__main__":

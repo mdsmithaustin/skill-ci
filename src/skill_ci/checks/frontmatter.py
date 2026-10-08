@@ -6,6 +6,7 @@ import argparse
 import json
 import re
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -225,7 +226,7 @@ def check_trigger_declarations(skills: dict[str, SkillMetadata], corpus_path: Pa
     return errors
 
 
-def main(root: Path, triggers: Path | None = None) -> int:
+def check_skills(root: Path, triggers: Path | None = None) -> int:
     errors: list[Diagnostic] = []
     if not root.is_dir():
         errors.append(Diagnostic(root, "skills root is not a directory"))
@@ -258,13 +259,17 @@ def main(root: Path, triggers: Path | None = None) -> int:
     return 1 if errors else 0
 
 
-def parse_args(argv: list[str]) -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("skills_root", nargs="?", default="skills", type=Path)
     parser.add_argument("--triggers", type=Path, help="version-1 trigger declaration corpus")
     return parser.parse_args(argv)
 
 
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_args(argv)
+    return check_skills(args.skills_root, args.triggers)
+
+
 if __name__ == "__main__":
-    args = parse_args(sys.argv[1:])
-    raise SystemExit(main(args.skills_root, args.triggers))
+    raise SystemExit(main())

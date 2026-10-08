@@ -9,9 +9,7 @@ import unittest
 from pathlib import Path
 
 
-TOOLS = Path(__file__).resolve().parent
-CHECKER = TOOLS / "check-skill-frontmatter.py"
-REPOSITORY = TOOLS.parent
+REPOSITORY = Path(__file__).resolve().parents[1]
 
 
 class FrontmatterChecker(unittest.TestCase):
@@ -38,7 +36,7 @@ class FrontmatterChecker(unittest.TestCase):
         return path
 
     def check(self, triggers: Path | None = None) -> tuple[int, str]:
-        command = [sys.executable, str(CHECKER), str(self.root)]
+        command = [sys.executable, "-m", "skill_ci.checks.frontmatter", str(self.root)]
         if triggers is not None:
             command.extend(["--triggers", str(triggers)])
         result = subprocess.run(command, capture_output=True, text=True, check=False)
