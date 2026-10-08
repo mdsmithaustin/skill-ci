@@ -239,17 +239,23 @@ def rerun(pin: Pin, commit: Commit, arguments: Sequence[str]) -> NoReturn:
         # The pinned run's own window would open after the scratch directory exists and close before it is removed.
         with children.stopping_signals(), tempfile.TemporaryDirectory(prefix="skill-ci-") as scratch:
             started = Path(scratch) / "started"
-            status = children.run(
-                [uv, "tool", "run", "--isolated", "--from", f"git+{pin.source}@{commit}", "skill-ci", *arguments],
-                env={**{key: value for key, value in os.environ.items() if key not in SHADOWING}, PINNED: commit, STARTED: str(started)},
-                grace=children.HAND_OFF_GRACE,
-            ).returncode
-            began = started.exists()
+
+            def attempt(*network: str) -> tuple[int, bool]:
+                status = children.run(
+                    [uv, "tool", "run", *network, "--isolated", "--from", f"git+{pin.source}@{commit}", "skill-ci", *arguments],
+                    env={**{key: value for key, value in os.environ.items() if key not in SHADOWING}, PINNED: commit, STARTED: str(started)},
+                    grace=children.HAND_OFF_GRACE,
+                ).returncode
+                return status, started.exists()
+
+            # Online, uv revalidates package index pages cached more than 10 minutes ago even when the pinned commit is
+            # built, which is slower and fails without a network. Offline fails only when uv lacks something it needs.
+            status, began = attempt("--offline")
+            if status > 0 and not began:
+                print(f"skill-ci: uv could not start the pinned commit {commit} offline; trying again with network access", file=sys.stderr)
+                status, began = attempt()
     except OSError as error:
         raise HandoffError(f"cannot run {uv} for the pinned commit {commit}: {error}") from error
     if status > 0 and not began:
-        raise HandoffError(
-            f"uv could not start the pinned commit {commit} (exit {status}); fix the uv error above, "
-            f"such as no network access to {pin.source} or a UV_PYTHON that this commit does not support"
-        )
+        raise HandoffError(f"uv could not start the pinned commit {commit}; see the uv error above")
     raise SystemExit(shell_status(status))

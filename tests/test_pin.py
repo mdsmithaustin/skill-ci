@@ -31,21 +31,30 @@ ISOLATED_GIT = {
     "GIT_COMMITTER_EMAIL": "tests@example.com",
 }
 UNKNOWN_KEY = "skill-ci: .skill-ci.toml: unknown key 'skils_dir'; did you mean 'skills_dir'?"
+OFFLINE_UV_ERROR = "error: Remote Git fetches are not allowed because network connectivity is disabled"
+ONLINE_UV_ERROR = "error: Failed to fetch: https://pypi.org/simple/mdurl/"
 FAKE_UV = """\
 import json, os, signal, subprocess, sys, time
 with open(os.environ["FAKE_UV_LOG"], "a", encoding="utf-8") as log:
     record = {"arguments": sys.argv[1:], "pinned": os.environ.get("SKILL_CI_PINNED"), "pythonpath": os.environ.get("PYTHONPATH")}
     log.write(json.dumps(record) + "\\n")
+arguments = sys.argv[sys.argv.index("skill-ci") + 1:]
+offline = "--offline" in sys.argv or os.environ.get("UV_OFFLINE") == "1"
 if os.environ.get("FAKE_UV_DIES"):
     os.kill(os.getpid(), signal.SIGTERM)
-if os.environ.get("FAKE_UV_FAILS"):
-    sys.exit("error: Failed to fetch the pinned commit")
+if os.environ.get("FAKE_UV_FAILS") in ("always", "offline" if offline else "online"):
+    sys.exit("error: Remote Git fetches are not allowed because network connectivity is disabled" if offline else "error: Failed to fetch: https://pypi.org/simple/mdurl/")
+if waiting := os.environ.get("FAKE_UV_WAITS"):
+    signal.signal(signal.SIGINT, lambda number, frame: sys.exit(2))
+    with open(waiting, "w") as log:
+        log.write(str(os.getpid()))
+    time.sleep(30)
 if installed := os.environ.get("FAKE_UV_CHILD"):
     command = os.environ["FAKE_UV_COMMAND"]
     environment = {**os.environ, "PYTHONPATH": installed}
     if pids := os.environ.get("FAKE_UV_SPAWNS"):
         # Like uv 0.12.7, run the pinned skill-ci as a child in uv's group and pass on a signal sent to uv's pid.
-        child = subprocess.Popen([command, *sys.argv[7:]], env=environment)
+        child = subprocess.Popen([command, *arguments], env=environment)
         for name in ("SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "SIGUSR1", "SIGUSR2", "SIGALRM", "SIGWINCH", "SIGPIPE", "SIGINFO"):
             if hasattr(signal, name):
                 signal.signal(getattr(signal, name), lambda number, frame: child.send_signal(number))
@@ -53,7 +62,7 @@ if installed := os.environ.get("FAKE_UV_CHILD"):
             log.write(f"{os.getpid()} {child.pid}")
         status = child.wait()
         raise SystemExit(128 - status if status < 0 else status)
-    os.execve(command, [command, *sys.argv[7:]], environment)
+    os.execve(command, [command, *arguments], environment)
 open(os.environ["SKILL_CI_STARTED"], "x").close()
 if received := os.environ.get("FAKE_UV_SIGNALS"):
     def record(number, frame):
@@ -105,7 +114,7 @@ class PinTestCase(unittest.TestCase):
         self.scratch = self.root / "tmp"
         self.scratch.mkdir()
         self.environment = {
-            **{key: value for key, value in ENVIRONMENT.items() if key != "SKILL_CI_PINNED"},
+            **{key: value for key, value in ENVIRONMENT.items() if key != "UV_OFFLINE"},
             **ISOLATED_GIT,
             "GIT_CEILING_DIRECTORIES": str(self.root),
             "HOME": str(self.root / "home"),
@@ -157,7 +166,7 @@ class PinTestCase(unittest.TestCase):
             [json.loads(line) for line in self.uv_log.read_text().splitlines()],
             [
                 {
-                    "arguments": ["tool", "run", "--isolated", "--from", f"git+{self.source.as_uri()}@{commit}", "skill-ci", *arguments],
+                    "arguments": ["tool", "run", "--offline", "--isolated", "--from", f"git+{self.source.as_uri()}@{commit}", "skill-ci", *arguments],
                     "pinned": commit,
                     "pythonpath": None,
                 }
@@ -373,7 +382,7 @@ class OfflineTests(PinTestCase):
                 result = self.skill_ci("lint", GIT_SSH_VARIANT="simple", GIT_SSH_COMMAND=str(serving))
                 self.assertEqual(result.returncode, 3, result.stderr)
                 [handed] = [json.loads(line) for line in self.uv_log.read_text().splitlines()]
-                self.assertEqual(handed["arguments"][4], f"git+{source}@{self.commits['v0.10.0']}")
+                self.assertEqual(handed["arguments"][5], f"git+{source}@{self.commits['v0.10.0']}")
                 cached, record = self.cache_record()
                 self.assertEqual((cached, record["source"]), (pin.cache_file(self.cache / "skill-ci", source), source))
 
@@ -696,22 +705,47 @@ class HandOffTests(PinTestCase):
         super().setUp()
         self.pin("v0.10.0")
         self.banner = f"skill-ci v0.10.0 ({self.commits['v0.10.0']})"
+        self.retrying = f"skill-ci: uv could not start the pinned commit {self.commits['v0.10.0']} offline; trying again with network access"
+
+    def attempts(self, *modes: str) -> list[list[str]]:
+        calls = [json.loads(line)["arguments"] for line in self.uv_log.read_text().splitlines()]
+        self.uv_log.unlink()
+        self.assertEqual(
+            calls, [["tool", "run", *mode.split(), "--isolated", "--from", f"git+{self.source.as_uri()}@{self.commits['v0.10.0']}", "skill-ci", "lint"] for mode in modes]
+        )
+
+    def test_a_built_pinned_commit_runs_offline_when_the_package_index_is_unreachable(self) -> None:
+        result = self.skill_ci("lint", FAKE_UV_FAILS="online")
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual(result.stderr.splitlines(), [self.banner])
+        self.attempts("--offline")
+
+    def test_a_first_build_tries_offline_and_then_once_with_network_access(self) -> None:
+        result = self.skill_ci("lint", FAKE_UV_FAILS="offline")
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual(result.stderr.splitlines(), [self.banner, OFFLINE_UV_ERROR, self.retrying])
+        self.attempts("--offline", "")
 
     def test_a_uv_failure_before_the_pinned_commit_starts_names_the_commit(self) -> None:
-        failed = self.skill_ci("lint", FAKE_UV_FAILS="1")
-        self.assertEqual(failed.returncode, 126, failed.stderr)
-        self.assertEqual(
-            failed.stderr.splitlines(),
-            [
-                self.banner,
-                "error: Failed to fetch the pinned commit",
-                f"skill-ci: uv could not start the pinned commit {self.commits['v0.10.0']} (exit 1); fix the uv error above, "
-                f"such as no network access to {self.source.as_uri()} or a UV_PYTHON that this commit does not support",
-            ],
-        )
+        for variables, last_error in (({}, ONLINE_UV_ERROR), ({"UV_OFFLINE": "1"}, OFFLINE_UV_ERROR)):
+            with self.subTest(**variables):
+                failed = self.skill_ci("lint", FAKE_UV_FAILS="always", **variables)
+                self.assertEqual(failed.returncode, 126, failed.stderr)
+                self.assertEqual(
+                    failed.stderr.splitlines(),
+                    [
+                        self.banner,
+                        OFFLINE_UV_ERROR,
+                        self.retrying,
+                        last_error,
+                        f"skill-ci: uv could not start the pinned commit {self.commits['v0.10.0']}; see the uv error above",
+                    ],
+                )
+                self.attempts("--offline", "")
         killed = self.skill_ci("lint", FAKE_UV_DIES="1")
         self.assertEqual(killed.returncode, 128 + signal.SIGTERM, killed.stderr)
         self.assertEqual(killed.stderr.splitlines(), [self.banner])
+        self.attempts("--offline")
         self.assertEqual(list(self.scratch.iterdir()), [])
 
     def test_a_pin_on_another_commit_hands_off_once_and_the_child_reports_an_unknown_key(self) -> None:
@@ -722,12 +756,13 @@ class HandOffTests(PinTestCase):
         self.assertEqual(result.stdout, "")
         self.assertEqual(result.stderr.splitlines(), [self.banner, UNKNOWN_KEY])
 
-    def test_the_pinned_commit_keeps_its_own_exit_code(self) -> None:
+    def test_the_pinned_commit_keeps_its_own_exit_code_and_runs_once(self) -> None:
         for code in (0, 1, 2):
             with self.subTest(code=code):
                 result = self.skill_ci("lint", FAKE_UV_EXIT=str(code))
                 self.assertEqual(result.returncode, code, result.stderr)
                 self.assertEqual(result.stderr.splitlines(), [self.banner])
+                self.attempts("--offline")
 
     def test_a_hand_off_under_faulthandler_keeps_the_pinned_commits_exit_code(self) -> None:
         result = self.skill_ci("lint", FAKE_UV_EXIT="4", PYTHONFAULTHANDLER="1")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import os
 import signal
 import subprocess
@@ -204,6 +205,20 @@ class ChildStopTests(PinTestCase):
                 transports = [int(pid) for pid in transport.read_text().split()] if transport.exists() else []
                 self.assertEqual(self.survivors(*transports), [])
                 self.assertEqual(list(self.scratch.iterdir()), [])
+
+    def test_a_stop_during_the_offline_attempt_starts_no_second_uv(self) -> None:
+        self.pin("v0.10.0")
+        self.skill_ci("lint")
+        self.uv_log.unlink()
+        waiting = self.waiting()
+        variables = {"DRIVER_SIGNAL": str(int(signal.SIGTERM)), "DRIVER_BEFORE": "no such child", "DRIVER_PIDS": str(waiting / "spawned")}
+        process = self.start(sys.executable, str(self.driver), "lint", **variables, FAKE_UV_WAITS=str(waiting / "uv"))
+        [uv] = self.ready(waiting / "uv", process)
+        os.kill(process.pid, signal.SIGTERM)
+        self.assertEqual(process.wait(timeout=30), 128 + signal.SIGTERM)
+        self.assertEqual((waiting / "spawned").read_text().split(), [str(uv)])
+        self.assertEqual([json.loads(line)["arguments"][2] for line in self.uv_log.read_text().splitlines()], ["--offline"])
+        self.assertEqual(self.survivors(uv), [])
 
     def test_a_stop_while_a_temporary_file_exists_leaves_none_behind(self) -> None:
         driver = write(self.root / "stopped near.py", STOPPED_NEAR)
