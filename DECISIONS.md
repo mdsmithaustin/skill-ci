@@ -16,7 +16,7 @@ Building our own would have reproduced about twenty thousand lines to add two th
 
 ## Why a fork, and when to leave it
 
-`pyproject.toml` pins a fork, as the distribution `skill-eval-harness-ext`, rather than the upstream release `skill-eval-harness`. The pin is one git commit, because the fork has no release tags of its own. `git ls-remote --tags` on the fork lists only `sync-upstream-2026-10-05`, and its local `v0.x` tags are upstream's. The pin is now `15cc612`, the commit that renamed the distribution. At the `80e49af` pin, the fork carried the twenty patches listed below. Patches 1 to 8 were classified on 2026-09-27. Patches 9 to 20 arrived with that pin and name the fork pull request each came from. Fork #11 and #13 changed only tests and docs, so they are not patches. The `6634de1` pin also includes fork #20, classified below on 2026-10-04.
+`pyproject.toml` pins a fork, as the distribution `skill-eval-harness-ext`, rather than the upstream release `skill-eval-harness`. The pin is one git commit, because the fork has no release tags of its own. `git ls-remote --tags` on the fork lists only `sync-upstream-2026-10-05`, and its local `v0.x` tags are upstream's. The pin is now `c23ed79`, fork #25. The commit before it, `15cc612`, renamed the distribution. At the `80e49af` pin, the fork carried the twenty patches listed below. Patches 1 to 8 were classified on 2026-09-27. Patches 9 to 20 arrived with that pin and name the fork pull request each came from. Fork #11 and #13 changed only tests and docs, so they are not patches. The `6634de1` pin also includes fork #20, classified below on 2026-10-04.
 
 1. The judge prompt no longer reveals which arm it is grading.
 2. Codex skill loads are read from the session rollout, because an explicit mention injects the skill with no tool event.
@@ -75,9 +75,9 @@ Fork [#20](https://github.com/mdsmithaustin/skill-eval-harness/pull/20) was clas
 
 These changes fit the existing opt-in and adapter categories. They do not add another accepted difference in evaluation or reopen the exit decision.
 
-The `15cc612` pin is later than the last classification above. It adds the upstream merge `40f2927`, fork #21, #22, and #23, and the upstream commits that merge brought in. They are not yet classified under the exit test. That classification is the operator's open decision.
+The `15cc612` pin is later than the last classification above. It adds the upstream merge `40f2927`, fork #21, #22, and #23, and the upstream commits that merge brought in. The `c23ed79` pin adds fork #25 on top of `15cc612`. None of these are yet classified under the exit test. That classification is the operator's open decision.
 
-Leaving stays cheap to assess. The upstream `adewale/skill-eval-harness` revision assessed on 2026-10-01, `2297000`, remains an ancestor of the `15cc612` pin. Verified on 2026-10-08 with `git merge-base --is-ancestor`. The fork remains a superset of that assessed revision.
+Leaving stays cheap to assess. The upstream `adewale/skill-eval-harness` revision assessed on 2026-10-01, `2297000`, remains an ancestor of the `c23ed79` pin. Verified on 2026-10-08 with `git merge-base --is-ancestor`. The fork remains a superset of that assessed revision.
 
 ## How skill-ci is distributed
 

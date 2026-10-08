@@ -17,7 +17,7 @@ Deliberate gaps, each with the reason it is open.
 
 - `src/skill_ci/templates/skill-checks.yml` pins the checkout action's SHA and `uv==0.12.7` for every repository that `init` sets up. Dependabot reads this repository's own workflows and not the template, so moving those pins is manual.
 
-- The `15cc612` harness pin has no classification under the exit test in `DECISIONS.md`. It adds the upstream merge `40f2927` and fork #21 to #23.
+- The `15cc612` and `c23ed79` harness pins have no classification under the exit test in `DECISIONS.md`. Together they add the upstream merge `40f2927`, fork #21 to #23, and fork #25.
 
 - A harvest review sheet quotes real user prompts, and those quotes contain text shaped like markdown links and bold skill names. The content check reads them as real links and fails. Nothing is broken while review sheets stay untracked, which is where they belong, but committing one needs the quoted text escaped or the sheet kept out of the skills tree.
 
