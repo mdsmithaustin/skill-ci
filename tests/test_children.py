@@ -48,17 +48,18 @@ raise SystemExit(cli.main(sys.argv[1:]))
 """
 STOPPED_NEAR = """\
 import importlib, os, signal, sys
-side, target = os.environ.pop("DRIVER_STOP").split()
+side, target, *suffix = os.environ.pop("DRIVER_STOP").split()
 module, name = target.rsplit(".", 1)
 owner = importlib.import_module(module)
 real = getattr(owner, name)
 
 
 def stop(*arguments, **options):
-    if side == "before":
+    due = not suffix or str(arguments[-1]).endswith(suffix[0])
+    if due and side == "before":
         os.kill(os.getpid(), signal.SIGTERM)
     result = real(*arguments, **options)
-    if side == "after":
+    if due and side == "after":
         os.kill(os.getpid(), signal.SIGTERM)
     return result
 
@@ -224,7 +225,7 @@ class ChildStopTests(PinTestCase):
         for name, version, command, stop, directory in (
             ("hand-off scratch directory", "v0.10.0", "lint", "after tempfile.mkdtemp", self.scratch),
             ("cache write", "latest", "lint", "before os.replace", self.cache / "skill-ci" / "refs"),
-            ("update", "v0.9.0", "update", "after os.fsync", self.consumer),
+            ("update", "v0.9.0", "update", "before os.replace .skill-ci.toml", self.consumer),
         ):
             with self.subTest(file=name):
                 path = self.pin(version)
