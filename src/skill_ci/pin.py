@@ -5,7 +5,6 @@ import json
 import os
 import re
 import shutil
-import stat
 import subprocess
 import sys
 import tempfile
@@ -16,7 +15,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import NewType, NoReturn
 
-from skill_ci import children
+from skill_ci import children, files
 from skill_ci.config import Pin, Source, Tag, Track, Version
 from skill_ci.harness import shell_status
 
@@ -173,29 +172,28 @@ def write_cache(cache: Path, refs: Refs) -> None:
     }
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, prefix=f"{path.name}.", delete_on_close=False) as partial:
-            partial.write(json.dumps(record, indent=2) + "\n")
-            partial.close()
-            os.replace(partial.name, path)
+        files.atomic_write(path, (json.dumps(record, indent=2) + "\n").encode())
     except OSError as error:
         print(f"skill-ci: warning: cannot cache the versions of {refs.source} in {path}: {error}", file=sys.stderr)
 
 
 def read_cache(cache: Path, source: Source) -> Refs | None:
-    path = cache_file(cache, source)
     try:
-        # Reading a FIFO would wait for a writer.
-        if not stat.S_ISREG(path.stat().st_mode):
-            return None
-        record = json.loads(path.read_text(encoding="utf-8"))
-        if record["source"] != source:
-            return None
-        tags = {tag: as_commit(commit) for name, commit in record["tags"].items() if (tag := Tag.parse(name)) is not None}
-        main = None if record["main"] is None else as_commit(record["main"])
-        fetched_at = datetime.fromisoformat(record["fetched_at"])
-    except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
+        refs = as_refs(json.loads(files.read_regular_text(cache_file(cache, source))))
+    except (OSError, ValueError, RecursionError):
         return None
-    return Refs(source, fetched_at, main, tags) if fetched_at.tzinfo is not None else None
+    return refs if refs.source == source else None
+
+
+def as_refs(value: object) -> Refs:
+    match value:
+        case {"source": str(source), "fetched_at": str(fetched_at), "main": main, "tags": dict(tags)}:
+            fetched = datetime.fromisoformat(fetched_at)
+            if fetched.tzinfo is None:
+                raise ValueError("fetched_at names no time zone")
+            commits = {tag: as_commit(commit) for name, commit in tags.items() if (tag := Tag.parse(name)) is not None}
+            return Refs(Source(source), fetched, None if main is None else as_commit(main), commits)
+    raise ValueError("not a cache record")
 
 
 def as_commit(value: object) -> Commit:

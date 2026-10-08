@@ -4,7 +4,6 @@ import argparse
 import difflib
 import os
 import re
-import stat
 import tomllib
 import unicodedata
 from collections.abc import Callable, Mapping, Sequence
@@ -14,6 +13,7 @@ from pathlib import Path
 from typing import Any, NewType
 from urllib.parse import unquote, urlsplit
 
+from skill_ci import files
 from skill_ci.runs import Agent
 from skill_ci.suite import PiiScope
 
@@ -146,11 +146,8 @@ def find(directory: Path) -> Path | None:
 
 def read(path: Path, *, ignore_unknown: bool = False) -> Config:
     try:
-        # Reading a FIFO would wait for a writer.
-        if not stat.S_ISREG(path.stat().st_mode):
-            raise ConfigError(path, ["cannot read: not a regular file"])
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, RecursionError) as error:
+        data = tomllib.loads(files.read_regular_text(path))
+    except (OSError, ValueError, RecursionError) as error:
         raise ConfigError(path, [f"cannot read: {error}"]) from error
     problems: list[str] = []
 
