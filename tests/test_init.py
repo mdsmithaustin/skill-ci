@@ -209,7 +209,10 @@ class BareRepositoryTests(InitTestCase):
             result.stderr.splitlines(),
             [
                 f"skill-ci: {config.DEFAULT_SOURCE} has no release tag yet, and init pins an exact tag, so it wrote nothing",
-                'skill-ci: to follow the branch head until the first tag exists, write .skill-ci.toml with version = "main" and run skill-ci init again',
+                "skill-ci: to follow the branch head until the first tag exists, write .skill-ci.toml as below and run skill-ci init again",
+                'skill-ci: version = "main"',
+                'skill-ci: skills_dir = "skills"',
+                'skill-ci: evals_dir = "evals"',
             ],
         )
         self.assertEqual(self.tree(), before)
@@ -226,8 +229,10 @@ class BareRepositoryTests(InitTestCase):
     def test_a_hand_written_main_pin_lets_init_finish_without_a_tag(self) -> None:
         for tag in ("v0.9.0", "v1.1.0"):
             self.git("push", "-q", "origin", f":refs/tags/{tag}", cwd=self.work)
-        pinned = write(self.repository / config.FILE_NAME, 'version = "main"\nskills_dir = "skills"\nevals_dir = "evals"\n')
+        refused = self.init()
+        pinned = write(self.repository / config.FILE_NAME, "".join(line.removeprefix("skill-ci: ") + "\n" for line in refused.stderr.splitlines()[-3:]))
         text = pinned.read_text()
+        self.assertEqual(text, 'version = "main"\nskills_dir = "skills"\nevals_dir = "evals"\n')
         result = self.init()
         self.assertEqual((result.status, result.stderr), (0, ""))
         self.assertEqual(result.lines[0], "kept .skill-ci.toml")

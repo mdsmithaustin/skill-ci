@@ -113,7 +113,7 @@ def settle(root: Path, skills_dir: Path | None, evals_dir: Path | None, loaded: 
         except scaffold_manifest.ScaffoldError as error:
             raise Refusal(str(error)) from error
     source = config.Source(config.DEFAULT_SOURCE) if loaded is None else loaded.pin.source
-    selected = config.Pin(newest_release(source), source) if loaded is None else loaded.pin
+    selected = config.Pin(newest_release(source, skills, evals), source) if loaded is None else loaded.pin
     return Layout(root, selected, skills, evals, tuple(marker.parent for marker in markers))
 
 
@@ -142,18 +142,16 @@ def detect_evals_dir(root: Path, skills: Path) -> Path | None:
     return None if any((root / skills).glob("*/evals/shared-benchmark.json")) else Path("evals")
 
 
-def newest_release(source: config.Source) -> config.Tag:
+def newest_release(source: config.Source, skills: Path, evals: Path | None) -> config.Tag:
     try:
         refs = pin.fetch(config.Pin(config.Track.LATEST, source), pin.cache_directory(), datetime.now(UTC))
     except pin.Unreachable as error:
-        raise Refusal(
-            f"cannot reach {source} ({error})\n"
-            f"init needs the network to find the newest release tag; offline, write {config.FILE_NAME} with a version such as v1.0.0 and run skill-ci init again"
-        ) from error
+        raise Refusal(f"cannot reach {source} ({error})\ninit needs the network to find the newest release tag") from error
     if not refs.tags:
+        floating = "\n".join(config_lines('"main"', skills, evals)[1:])
         raise Refusal(
             f"{source} has no release tag yet, and init pins an exact tag, so it wrote nothing\n"
-            f'to follow the branch head until the first tag exists, write {config.FILE_NAME} with version = "main" and run skill-ci init again'
+            f"to follow the branch head until the first tag exists, write {config.FILE_NAME} as below and run skill-ci init again\n{floating}"
         )
     return max(refs.tags)
 
@@ -161,15 +159,18 @@ def newest_release(source: config.Source) -> config.Tag:
 def write_config(layout: Layout) -> list[Outcome]:
     if os.path.lexists(layout.root / config.FILE_NAME):
         return [Outcome(Verb.KEPT, config.FILE_NAME)]
-    lines = [
-        "# The skill-ci release this repository runs, here and in CI. skill-ci update moves it to the newest tag.",
-        f"version = {json.dumps(str(layout.pin.version))}",
-        f"skills_dir = {toml_path('skills_dir', layout.skills_dir)}",
-    ]
-    if layout.evals_dir is not None:
-        lines.append(f"evals_dir = {toml_path('evals_dir', layout.evals_dir)}")
+    lines = config_lines(json.dumps(str(layout.pin.version)), layout.skills_dir, layout.evals_dir)
     save(layout.root / config.FILE_NAME, ("\n".join(lines) + "\n").encode("utf-8"))
     return [Outcome(Verb.WROTE, config.FILE_NAME, f"version {layout.pin.version}")]
+
+
+def config_lines(version: str, skills: Path, evals: Path | None) -> list[str]:
+    lines = [
+        "# The skill-ci release this repository runs, here and in CI. skill-ci update moves it to the newest tag.",
+        f"version = {version}",
+        f"skills_dir = {toml_path('skills_dir', skills)}",
+    ]
+    return lines if evals is None else [*lines, f"evals_dir = {toml_path('evals_dir', evals)}"]
 
 
 def toml_path(key: str, path: Path) -> str:
