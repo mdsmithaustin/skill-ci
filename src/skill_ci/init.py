@@ -24,7 +24,6 @@ MISE_FILES = ("mise.toml", ".mise.toml")
 NO_MISTAKES_FILE = ".no-mistakes.yaml"
 GITIGNORE = ".gitignore"
 IGNORED_RUN_OUTPUT = ("eval-runs/", "evals/runs/")
-IGNORE_COMMENT = "# skill-ci run output holds raw agent transcripts"
 MISE_TASKS = {f"skill-{command}": f"skill-ci {command}" for command in ("check", "lint", "package", "coverage", "validate", "audit", "trigger", "run")}
 LINT_SUFFIX = " && skill-ci check"
 COMMAND = "skill-ci check"
@@ -169,7 +168,7 @@ def write_config(layout: Layout) -> list[Outcome]:
     ]
     if layout.evals_dir is not None:
         lines.append(f"evals_dir = {toml_path('evals_dir', layout.evals_dir)}")
-    save(layout.root / config.FILE_NAME, "\n".join(lines) + "\n")
+    save(layout.root / config.FILE_NAME, ("\n".join(lines) + "\n").encode("utf-8"))
     return [Outcome(Verb.WROTE, config.FILE_NAME, f"version {layout.pin.version}")]
 
 
@@ -189,17 +188,17 @@ def write_workflow(layout: Layout) -> list[Outcome]:
             return [kept]
         return [kept, Outcome(Verb.NOTE, f"{WORKFLOW} does not run `{COMMAND}`; add a step that does, or replace the file with the template in the README")]
     template = resources.files("skill_ci").joinpath("templates/skill-checks.yml").read_text(encoding="utf-8")
-    save(path, template.replace("@SOURCE@", json.dumps(layout.pin.source, ensure_ascii=False)))
+    save(path, template.replace("@SOURCE@", json.dumps(layout.pin.source, ensure_ascii=False)).encode("utf-8"))
     return [Outcome(Verb.WROTE, str(WORKFLOW))]
 
 
-def save(path: Path, text: str) -> None:
+def save(path: Path, data: bytes) -> None:
     if path.exists():
-        rewrite(path, text.encode("utf-8"))
+        rewrite(path, data)
         return
     with children.stopping_signals():
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
+        path.write_bytes(data)
 
 
 def rewrite(path: Path, data: bytes) -> None:
@@ -432,11 +431,13 @@ def scaffold_manifests(layout: Layout) -> list[Outcome]:
 
 def ignore_run_output(layout: Layout) -> list[Outcome]:
     path = layout.root / GITIGNORE
-    text = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
-    present = {line.strip().strip("/") for line in text.splitlines()}
+    data = path.read_bytes() if path.exists() else b""
+    present = {line.strip().strip("/") for line in data.decode("utf-8", errors="replace").splitlines()}
     missing = [pattern for pattern in IGNORED_RUN_OUTPUT if pattern.strip("/") not in present]
     if not missing:
         return [Outcome(Verb.KEPT, GITIGNORE, "already ignores the run output")]
-    separator = "" if not text or text.endswith("\n") else "\n"
-    save(path, text + separator + "\n".join([IGNORE_COMMENT, *missing]) + "\n")
-    return [Outcome(Verb.UPDATED if text else Verb.WROTE, GITIGNORE, f"added {', '.join(missing)}")]
+    newline = b"\r\n" if b"\r\n" in data else b"\n"
+    separator = b"" if not data or data.endswith(b"\n") else newline
+    added = newline.join(line.encode("utf-8") for line in missing) + newline
+    save(path, data + separator + added)
+    return [Outcome(Verb.UPDATED if data else Verb.WROTE, GITIGNORE, f"added {', '.join(missing)}")]

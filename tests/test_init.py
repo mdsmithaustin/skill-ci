@@ -186,7 +186,7 @@ class BareRepositoryTests(InitTestCase):
             "# The skill-ci release this repository runs, here and in CI. skill-ci update moves it to the newest tag.\n"
             'version = "v1.1.0"\nskills_dir = "skills"\nevals_dir = "evals"\n',
         )
-        self.assertEqual((self.repository / ".gitignore").read_text(), "# skill-ci run output holds raw agent transcripts\neval-runs/\nevals/runs/\n")
+        self.assertEqual((self.repository / ".gitignore").read_text(), "eval-runs/\nevals/runs/\n")
         manifest = json.loads((self.repository / "evals/alpha/shared-benchmark.json").read_text())
         self.assertEqual((manifest["skill_name"], manifest["skill_paths"], manifest["cases"]), ("alpha", ["skills/alpha/SKILL.md"], []))
 
@@ -638,8 +638,17 @@ class GitignoreTests(InitTestCase):
     def test_only_the_missing_patterns_are_added_after_a_file_with_no_final_newline(self) -> None:
         path = write(self.repository / ".gitignore", "node_modules/\n/eval-runs")
         result = self.init()
-        self.assertEqual(path.read_text(), "node_modules/\n/eval-runs\n# skill-ci run output holds raw agent transcripts\nevals/runs/\n")
+        self.assertEqual(path.read_text(), "node_modules/\n/eval-runs\nevals/runs/\n")
         self.assertIn("updated .gitignore (added evals/runs/)", result.lines)
+
+    def test_the_file_keeps_its_line_endings_and_bytes_that_are_not_utf8(self) -> None:
+        path = self.repository / ".gitignore"
+        path.write_bytes(b"caf\xe9/\r\nnode_modules/")
+        self.init()
+        self.assertEqual(
+            path.read_bytes(),
+            b"caf\xe9/\r\nnode_modules/\r\neval-runs/\r\nevals/runs/\r\n",
+        )
 
     def test_a_file_that_ignores_both_is_kept(self) -> None:
         text = "evals/runs\neval-runs/\n"

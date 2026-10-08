@@ -64,7 +64,7 @@ You need `uv` and `git`. `mise` and `lefthook` are optional, and `init` wires th
 | no-mistakes | Appends ` && skill-ci check` to `commands.lint` and shows the change. | No `.no-mistakes.yaml` exists, or `commands.lint` already runs `skill-ci check`. |
 | mise | Adds the one-line tasks `skill-check`, `skill-lint`, `skill-package`, `skill-coverage`, `skill-validate`, `skill-audit`, `skill-trigger` and `skill-run`. | No `mise.toml` or `.mise.toml` exists. A task you already define is kept. |
 | Manifests | Writes one empty `shared-benchmark.json` per skill. | A manifest exists. It stays byte for byte as it was. |
-| `.gitignore` | Adds `eval-runs/` and `evals/runs/`, because runs save raw agent transcripts. | The file already ignores them. |
+| `.gitignore` | Adds `eval-runs/` and `evals/runs/`, which cover run output from earlier layouts and an `out` path inside the repository. Run output holds raw agent transcripts and must never be committed. | The file already ignores them. |
 
 - **Where it runs.** `init` must run at the repository root. It stops with exit code 2 anywhere else, in a directory outside a git repository, and when the skills directory holds no skill. Pass `--skills-dir DIR` for another skills directory. Pass `--evals-dir DIR` for another evals directory, whose name must be `evals`. With neither flag and no `.skill-ci.toml`, `init` writes manifests to `evals/<skill>/`, or beside their skills when the repository already keeps them there. With a `.skill-ci.toml`, `init` follows its `skills_dir` and `evals_dir`.
 - **The network.** `init` asks the source for its newest release tag, so it needs the network once. Offline, write `.skill-ci.toml` yourself with a version such as `v1.0.0` and run `init` again.
