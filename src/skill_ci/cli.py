@@ -6,80 +6,17 @@ import sys
 import traceback
 from collections.abc import Callable, Sequence
 from dataclasses import fields
+from datetime import UTC, datetime
 from importlib import metadata
 from pathlib import Path
-from typing import Any
 
-from skill_ci import harness, runs, suite
+from skill_ci import children, config, files, harness, pin, runs, suite
 from skill_ci.checks import coverage, manifests, package
+from skill_ci.config import OPTIONS, Track
 from skill_ci.harness import Command
-from skill_ci.runs import Agent, RunOptions, TriggerOptions
-from skill_ci.suite import CheckOptions, PiiScope
+from skill_ci.runs import RunOptions, TriggerOptions
+from skill_ci.suite import CheckOptions
 
-OPTIONS: dict[str, tuple[str, dict[str, Any]]] = {
-    "skills_dir": ("--skills-dir", {"type": Path, "metavar": "DIR", "help": "directory holding one subdirectory per skill"}),
-    "evals_dir": (
-        "--evals-dir",
-        {
-            "type": Path,
-            "metavar": "DIR",
-            "help": "directory holding <skill>/shared-benchmark.json; unset, manifests sit at <skill>/evals/",
-        },
-    ),
-    "pii_scope": (
-        "--pii-scope",
-        {"type": PiiScope, "choices": tuple(PiiScope), "help": "limit the PII scan to the skills directory, or cover the whole repository"},
-    ),
-    "trigger_cases": (
-        "--trigger-cases",
-        {"type": Path, "metavar": "FILE", "help": "version-1 trigger declaration corpus that must declare every skill"},
-    ),
-    "content_ignore_file": (
-        "--content-ignore-file",
-        {
-            "type": Path,
-            "metavar": "FILE",
-            "help": "skill names that live in another repository, separated by commas or newlines, '#' comment lines allowed",
-        },
-    ),
-    "content_link_exceptions_file": (
-        "--content-link-exceptions-file",
-        {"type": Path, "metavar": "FILE", "help": "version-1 JSON file of missing inline links created at output time"},
-    ),
-    "content_conventions_file": (
-        "--content-conventions-file",
-        {"type": Path, "metavar": "FILE", "help": "version-1 JSON file of skill-name prefixes and retired text"},
-    ),
-    "require_manifests": ("--require-manifests", {"action": "store_true", "help": "fail when no manifest is found"}),
-    "require_populated_manifests": (
-        "--require-populated-manifests",
-        {"action": "store_true", "help": "require a manifest with cases bound to every skill"},
-    ),
-    "package": (
-        "--package",
-        {"action": "store_true", "help": "inspect every package entry and reject symlinks and special files"},
-    ),
-    "out": (
-        "--out",
-        {
-            "type": Path,
-            "metavar": "DIR",
-            "help": "output directory outside the skill package; unset, a new directory under <checkout>.eval-runs/<skill>/",
-        },
-    ),
-    "runs": ("--runs", {"type": int, "metavar": "N", "help": "runs per query or variant"}),
-    "agents": ("--agent", {"action": "append", "type": Agent, "choices": tuple(Agent), "help": "agent to run; repeatable"}),
-    "model": ("--model", {"help": "Claude model"}),
-    "matrix_model": ("--model", {"metavar": "MODEL", "help": "model for every agent; unset, each agent's own model list"}),
-    "codex_model": ("--codex-model", {"help": "Codex model"}),
-    "codex_cmd": (
-        "--codex-cmd",
-        {"metavar": "COMMAND", "help": "Codex command line (default: the bundled codex launcher, read-only sandbox)"},
-    ),
-    "timeout": ("--timeout", {"type": int, "metavar": "SECONDS", "help": "per-run timeout"}),
-    "judge_model": ("--judge-model", {"help": "Claude judge model"}),
-    "judge_runs": ("--judge-runs", {"type": int, "metavar": "N", "help": "judge repeats per run"}),
-}
 LINT = ("skills_dir", "trigger_cases", "content_ignore_file", "content_link_exceptions_file", "content_conventions_file")
 MANIFESTS = ("skills_dir", "evals_dir")
 
@@ -89,8 +26,40 @@ def main(argv: Sequence[str] | None = None) -> int:
     sys.stdout.reconfigure(line_buffering=True)
     arguments = list(sys.argv[1:] if argv is None else argv)
     try:
-        namespace = build_parser().parse_args(arguments)
-        return namespace.handler(namespace)
+        distribution = metadata.distribution("skill-ci")
+        running = pin.running_commit(distribution)
+        child = pin.claim(os.environ, running)
+        directory = working_directory()
+        found = None if directory is None else config.find(directory)
+        updating = arguments[:1] == ["update"]
+        loaded = None if found is None else config.read(found, ignore_unknown=updating)
+        announced = loaded is not None and not child and not updating
+        if announced:
+            try:
+                resolved = pin.resolve(loaded.pin, pin.cache_directory(), datetime.now(UTC))
+            except pin.PinError:
+                if loaded.unknown_keys:
+                    report(config.ConfigError(loaded.path, loaded.unknown_keys))
+                raise
+            announce(loaded.pin, resolved)
+            if resolved.commit != running:
+                pin.rerun(loaded.pin, resolved.commit, arguments)
+        if loaded is not None and loaded.unknown_keys:
+            raise config.ConfigError(loaded.path, loaded.unknown_keys)
+        identity = f"skill-ci {distribution.version} ({running or 'commit unknown'})"
+        namespace = build_parser(identity).parse_args(arguments)
+        if not child and not announced:
+            print(identity, file=sys.stderr)
+        settings = {} if loaded is None else loaded.settings
+        return namespace.handler(argparse.Namespace(**settings | vars(namespace), loaded=loaded))
+    except (config.ConfigError, pin.PinError) as error:
+        report(error)
+        return 2
+    except pin.HandoffError as error:
+        print(f"skill-ci: {error}", file=sys.stderr)
+        return error.status
+    except children.Stopped as stopped:
+        return stopped.status
     except KeyboardInterrupt:
         return 130
     except Exception as error:
@@ -101,12 +70,36 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
 
-def build_parser() -> argparse.ArgumentParser:
+def report(error: Exception) -> None:
+    for line in str(error).splitlines():
+        print(f"skill-ci: {line}", file=sys.stderr)
+
+
+def working_directory() -> Path | None:
+    try:
+        return Path.cwd()
+    except OSError:
+        return None
+
+
+def announce(selected: config.Pin, resolved: pin.Resolved) -> None:
+    print(f"skill-ci {resolved.name} ({resolved.commit})", file=sys.stderr)
+    if resolved.unreachable is not None:
+        print(
+            f"skill-ci: warning: cannot reach {selected.source} ({resolved.unreachable}); "
+            f"running {resolved.commit}, which {selected.version} named on {resolved.fetched_at:%Y-%m-%d %H:%M} UTC",
+            file=sys.stderr,
+        )
+    if resolved.newer is not None:
+        print(f"skill-ci: {resolved.newer} is newer than the pinned {selected.version}; run skill-ci update to move the pin", file=sys.stderr)
+
+
+def build_parser(identity: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="skill-ci",
         description="Model-free checks and operator-local eval runs for repositories of Agent Skills.",
     )
-    parser.add_argument("--version", action="version", version=f"skill-ci {metadata.version('skill-ci')}")
+    parser.add_argument("--version", action="version", version=identity)
     commands = parser.add_subparsers(dest="command", metavar="COMMAND", required=True)
 
     def subcommand(name: str, handler: Callable[[argparse.Namespace], int], help_text: str) -> argparse.ArgumentParser:
@@ -134,6 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
         "harness", lambda namespace: run_harness(namespace.arguments), "run skill-benchmark or skill-trigger-matrix"
     )
     harness_parser.add_argument("arguments", nargs=argparse.REMAINDER, metavar="COMMAND [ARGS...]")
+    subcommand("update", update, f"move an exact-tag version in {config.FILE_NAME} to the newest release tag, keeping comments and other keys")
     return parser
 
 
@@ -153,9 +147,8 @@ def options[T](options_type: type[T], namespace: argparse.Namespace) -> T:
 
 
 def warn_about_shadowing() -> None:
-    try:
-        project = Path.cwd()
-    except OSError:
+    project = working_directory()
+    if project is None:
         return
     for warning in harness.shadowing_warnings(project):
         print(f"skill-ci: warning: {warning}", file=sys.stderr)
@@ -208,3 +201,31 @@ def run_harness(arguments: Sequence[str]) -> int:
         return 2
     warn_about_shadowing()
     return harness.execute(Command(arguments[0]), arguments[1:])
+
+
+def update(namespace: argparse.Namespace) -> int:
+    loaded: config.Config | None = namespace.loaded
+    if loaded is None:
+        print(f"skill-ci: no {config.FILE_NAME} in the working directory, or in a parent directory inside the same git repository", file=sys.stderr)
+        return 2
+    path, selected = loaded.path, loaded.pin
+    shown = os.path.relpath(path)
+    if isinstance(selected.version, Track):
+        print(f"{shown}: version is {selected.version}, which floats; update moves only an exact tag, so the file is unchanged")
+        return 0
+    newest = pin.newest_tag(selected, pin.cache_directory(), datetime.now(UTC))
+    if selected.version == newest:
+        print(f"{shown}: version is already {newest}, the newest tag")
+        return 0
+    if selected.version > newest:
+        print(f"skill-ci: {shown} pins {selected.version}, but the newest tag on {selected.source} is {newest}; left unchanged", file=sys.stderr)
+        return 2
+    try:
+        updated = config.with_version(path.read_bytes().decode("utf-8"), newest).encode("utf-8")
+        with children.stopping_signals():
+            files.atomic_write(path, updated)
+    except (OSError, ValueError) as error:
+        print(f"skill-ci: cannot update {shown}: {error}", file=sys.stderr)
+        return 2
+    print(f"{shown}: version {selected.version} -> {newest}")
+    return 0

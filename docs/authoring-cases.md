@@ -28,12 +28,12 @@ A case is one test prompt in `shared-benchmark.json`. A trigger case asks whethe
 
    For a file-editing task, grade the saved edits instead. `run-agent` records `workspace-changes.json`, `candidate.patch`, and `candidate-files/` in `{output_dir}`. Verify the capture receipt and hashes, reject unrelated writes, reconstruct the product from the patch, and execute its behavior checks. The [edited-file grading proof](research/edited-file-grading.md) exercised this path on Claude and Codex through the `skill-run` task that `skill-ci run` replaced. The fixture oracle grades the delivered file, not whether the agent ran its own checks.
 
-   Codex needs a writable sandbox for a file-editing case. The proof gave it one through the bundled `codex-project-only` launcher, with `--sandbox workspace-write` in place of the default `--sandbox read-only`. Running Codex without that launcher has not been tested. The launcher ships inside the skill-ci package, so print its path with Python from the same environment, then pass it to `--codex-cmd`. Set `source` to the source you install skill-ci from.
+   Codex needs a writable sandbox for a file-editing case. The proof gave it one through the bundled `codex-project-only` launcher, with `--sandbox workspace-write` in place of the default `--sandbox read-only`. Running Codex without that launcher has not been tested. The launcher ships inside the skill-ci package, so print its path with Python from the same environment, then pass it to `--codex-cmd`. Set `skill_ci` to the `--from` value that you install skill-ci with. In a repository whose `.skill-ci.toml` pins a version, `skill-ci run` runs the pinned commit instead. In such a repository, set `skill_ci` to `git+<URL>@<commit>`. Take the commit from the `skill-ci <version> (<commit>)` line that `skill-ci --version` prints first. The URL is the file's `source`, or `https://github.com/mdsmithaustin/skill-ci.git` when the file has no `source`. uv does not accept a path after `git+`, so write a path `source` as a `file://` URL with an absolute path, such as `file:///srv/skill-ci.git`. A relative path in `source` starts from the directory that holds `.skill-ci.toml`.
 
    ```sh
-   source="git+https://github.com/mdsmithaustin/skill-ci.git@<commit>"
-   launcher=$(uv tool run --from "$source" python -c 'from importlib.resources import files; print(files("skill_ci") / "launchers" / "codex-project-only")')
-   uv tool run --from "$source" skill-ci run skills/my-skill \
+   skill_ci="git+https://github.com/mdsmithaustin/skill-ci.git@<commit>"
+   launcher=$(uv tool run --from "$skill_ci" python -c 'from importlib.resources import files; print(files("skill_ci") / "launchers" / "codex-project-only")')
+   uv tool run --from "$skill_ci" skill-ci run skills/my-skill \
    	--codex-cmd "\"$launcher\" exec --json --skip-git-repo-check --sandbox workspace-write"
    ```
 
