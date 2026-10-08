@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from importlib import metadata
 from pathlib import Path
 
-from skill_ci import children, config, files, harness, pin, runs, suite
+from skill_ci import children, config, files, harness, init, pin, runs, suite
 from skill_ci.checks import coverage, manifests, package
 from skill_ci.config import OPTIONS, Track
 from skill_ci.harness import Command
@@ -127,6 +127,8 @@ def build_parser(identity: str) -> argparse.ArgumentParser:
         "harness", lambda namespace: run_harness(namespace.arguments), "run skill-benchmark or skill-trigger-matrix"
     )
     harness_parser.add_argument("arguments", nargs=argparse.REMAINDER, metavar="COMMAND [ARGS...]")
+    init_parser = subcommand("init", initialize, f"set up this repository: write {config.FILE_NAME}, a CI workflow, hook entries, and one empty manifest per skill")
+    add_options(init_parser, CheckOptions, ("skills_dir", "evals_dir"))
     subcommand("update", update, f"move an exact-tag version in {config.FILE_NAME} to the newest release tag, keeping comments and other keys")
     return parser
 
@@ -201,6 +203,10 @@ def run_harness(arguments: Sequence[str]) -> int:
         return 2
     warn_about_shadowing()
     return harness.execute(Command(arguments[0]), arguments[1:])
+
+
+def initialize(namespace: argparse.Namespace) -> int:
+    return init.run(Path.cwd(), skills_dir=getattr(namespace, "skills_dir", None), evals_dir=getattr(namespace, "evals_dir", None), loaded=namespace.loaded)
 
 
 def update(namespace: argparse.Namespace) -> int:

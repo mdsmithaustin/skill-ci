@@ -1,0 +1,18 @@
+# Written by skill-ci init. The version this runs is the one in .skill-ci.toml: the first step installs whatever skill-ci
+# the source serves, and that skill-ci runs the pinned version.
+name: skill-checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  skills:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SKILL_CI_SOURCE: @SOURCE@
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: pip install uv==0.12.7
+      - run: uv tool run --from "git+$SKILL_CI_SOURCE" skill-ci check
