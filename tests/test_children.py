@@ -12,8 +12,7 @@ import types
 import unittest
 from pathlib import Path
 
-from support import ENVIRONMENT, INSTALLED_COMMAND, REPOSITORY, FakeHarness, fake_git_install, write
-from test_pin import PinTestCase, still_running
+from support import ENVIRONMENT, INSTALLED_COMMAND, REPOSITORY, FakeHarness, PinTestCase, fake_git_install, still_running, write
 
 from skill_ci import children
 

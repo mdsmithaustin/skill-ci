@@ -12,186 +12,18 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from support import ENVIRONMENT, INSTALLED_COMMAND, REPOSITORY, FakeHarness, fake_git_install, run_in_a_broken_cwd, skill_ci, write, write_skill
+from support import INSTALLED_COMMAND, REPOSITORY, FakeHarness, PinTestCase, fake_git_install, run_in_a_broken_cwd, still_running, write
 
 from skill_ci import pin
 from skill_ci.config import Tag
 
-ISOLATED_GIT = {
-    "GIT_CONFIG_GLOBAL": os.devnull,
-    "GIT_CONFIG_NOSYSTEM": "1",
-    "GIT_AUTHOR_NAME": "skill-ci tests",
-    "GIT_AUTHOR_EMAIL": "tests@example.com",
-    "GIT_COMMITTER_NAME": "skill-ci tests",
-    "GIT_COMMITTER_EMAIL": "tests@example.com",
-}
 UNKNOWN_KEY = "skill-ci: .skill-ci.toml: unknown key 'skils_dir'; did you mean 'skills_dir'?"
 OFFLINE_UV_ERROR = "error: Remote Git fetches are not allowed because network connectivity is disabled"
 ONLINE_UV_ERROR = "error: Failed to fetch: https://pypi.org/simple/mdurl/"
-FAKE_UV = """\
-import json, os, signal, subprocess, sys, time
-with open(os.environ["FAKE_UV_LOG"], "a", encoding="utf-8") as log:
-    record = {"arguments": sys.argv[1:], "pinned": os.environ.get("SKILL_CI_PINNED"), "pythonpath": os.environ.get("PYTHONPATH")}
-    log.write(json.dumps(record) + "\\n")
-arguments = sys.argv[sys.argv.index("skill-ci") + 1:]
-offline = "--offline" in sys.argv or os.environ.get("UV_OFFLINE") == "1"
-if os.environ.get("FAKE_UV_DIES"):
-    os.kill(os.getpid(), signal.SIGTERM)
-if os.environ.get("FAKE_UV_FAILS") in ("always", "offline" if offline else "online"):
-    sys.exit("error: Remote Git fetches are not allowed because network connectivity is disabled" if offline else "error: Failed to fetch: https://pypi.org/simple/mdurl/")
-if waiting := os.environ.get("FAKE_UV_WAITS"):
-    signal.signal(signal.SIGINT, lambda number, frame: sys.exit(2))
-    with open(waiting, "w") as log:
-        log.write(str(os.getpid()))
-    time.sleep(30)
-if installed := os.environ.get("FAKE_UV_CHILD"):
-    command = os.environ["FAKE_UV_COMMAND"]
-    environment = {**os.environ, "PYTHONPATH": installed}
-    if pids := os.environ.get("FAKE_UV_SPAWNS"):
-        # Like uv 0.12.7, run the pinned skill-ci as a child in uv's group and pass on a signal sent to uv's pid.
-        child = subprocess.Popen([command, *arguments], env=environment)
-        for name in ("SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "SIGUSR1", "SIGUSR2", "SIGALRM", "SIGWINCH", "SIGPIPE", "SIGINFO"):
-            if hasattr(signal, name):
-                signal.signal(getattr(signal, name), lambda number, frame: child.send_signal(number))
-        with open(pids, "w") as log:
-            log.write(f"{os.getpid()} {child.pid}")
-        status = child.wait()
-        raise SystemExit(128 - status if status < 0 else status)
-    os.execve(command, [command, *arguments], environment)
-open(os.environ["SKILL_CI_STARTED"], "x").close()
-if received := os.environ.get("FAKE_UV_SIGNALS"):
-    def record(number, frame):
-        with open(received, "a") as log:
-            log.write(f"{number}\\n")
-        raise SystemExit(100 + number)
-    for number in signal.valid_signals() - {signal.SIGKILL, signal.SIGSTOP}:
-        signal.signal(number, record)
-    with open(received + ".pid", "w") as log:
-        log.write(str(os.getpid()))
-    open(received, "w").close()
-    time.sleep(30)
-raise SystemExit(int(os.environ.get("FAKE_UV_EXIT", "3")))
-"""
-
-
-def still_running(pid: int) -> bool:
-    deadline = time.monotonic() + 2
-    while time.monotonic() < deadline:
-        if exited(pid):
-            return False
-        time.sleep(0.05)
-    return True
-
-
-def exited(pid: int) -> bool:
-    # A zombie has exited, but it stays listed until its parent reaps it, and nothing reaps it when the tests run as
-    # PID 1 in a container without an init process. A slim Linux image may have no ps, so read /proc there.
-    if Path("/proc/self/stat").exists():
-        try:
-            return Path(f"/proc/{pid}/stat").read_text().rpartition(")")[2].split()[0] == "Z"
-        except FileNotFoundError:
-            return True
-    state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False).stdout.strip()
-    return state[:1] in ("", "Z")
-
-
-class PinTestCase(unittest.TestCase):
-    def setUp(self) -> None:
-        temporary = tempfile.TemporaryDirectory(prefix="skill-ci-pin-")
-        self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name).resolve()
-        bin_directory = self.root / "bin"
-        self.uv_log = self.root / "uv.json"
-        write(bin_directory / "uv", f"#!{sys.executable}\n{FAKE_UV}").chmod(0o755)
-        self.git_log = self.root / "git.log"
-        write(self.root / "git shim" / "git", f'#!/bin/sh\necho "$*" >> "{self.git_log}"\nexec "{shutil.which("git")}" "$@"\n').chmod(0o755)
-        self.cache = self.root / "cache"
-        self.scratch = self.root / "tmp"
-        self.scratch.mkdir()
-        self.environment = {
-            **{key: value for key, value in ENVIRONMENT.items() if key != "UV_OFFLINE"},
-            **ISOLATED_GIT,
-            "GIT_CEILING_DIRECTORIES": str(self.root),
-            "HOME": str(self.root / "home"),
-            "XDG_CACHE_HOME": str(self.cache),
-            "TMPDIR": str(self.scratch),
-            "FAKE_UV_LOG": str(self.uv_log),
-            "PATH": f"{bin_directory}{os.pathsep}{os.environ['PATH']}",
-        }
-        self.source = self.root / "source.git"
-        self.work = self.root / "work"
-        self.git("init", "-q", "--bare", "--initial-branch=main", str(self.source), cwd=self.root)
-        self.git("clone", "-q", str(self.source), str(self.work), cwd=self.root)
-        self.commits = {name: self.commit(name) for name in ("v0.9.0", "v0.9.1", "v0.10.0")}
-        self.git("tag", "v0.9.0", self.commits["v0.9.0"])
-        self.git("tag", "-a", "-m", "annotated", "v0.9.1", self.commits["v0.9.1"])
-        self.git("tag", "-a", "-m", "annotated", "v0.10.0", self.commits["v0.10.0"])
-        self.git("tag", "release-candidate", self.commits["v0.10.0"])
-        self.main = self.commit("after v0.10.0")
-        self.git("push", "-q", "origin", "main", "--tags")
-        self.consumer = self.root / "consumer"
-        write_skill(self.consumer / "skills" / "example")
-        self.git("init", "-q", cwd=self.consumer)
-        self.git("add", "-A", cwd=self.consumer)
-
-    def git(self, *arguments: str, cwd: Path | None = None) -> str:
-        result = subprocess.run(
-            ["git", *arguments], cwd=cwd or self.work, env=self.environment, capture_output=True, text=True, check=True
-        )
-        return result.stdout.strip()
-
-    def commit(self, message: str) -> str:
-        self.git("commit", "-q", "--allow-empty", "-m", message)
-        return self.git("rev-parse", "HEAD")
-
-    def push_commit(self, message: str) -> str:
-        commit = self.commit(message)
-        self.git("push", "-q", "origin", "main")
-        return commit
-
-    def pin(self, version: str, *lines: str) -> Path:
-        return write(self.consumer / ".skill-ci.toml", "\n".join((f'version = "{version}"', f'source = "{self.source}"', *lines, "")))
-
-    def skill_ci(self, *arguments: str, **variables: str) -> subprocess.CompletedProcess[str]:
-        return skill_ci(*arguments, cwd=self.consumer, env={**self.environment, **variables})
-
-    def handed_off(self, result: subprocess.CompletedProcess[str], commit: str, *arguments: str, status: int = 3) -> None:
-        self.assertEqual(result.returncode, status, result.stdout + result.stderr)
-        self.assertEqual(
-            [json.loads(line) for line in self.uv_log.read_text().splitlines()],
-            [
-                {
-                    "arguments": ["tool", "run", "--offline", "--isolated", "--from", f"git+{self.source.as_uri()}@{commit}", "skill-ci", *arguments],
-                    "pinned": commit,
-                    "pythonpath": None,
-                }
-            ],
-        )
-        self.uv_log.unlink()
-
-    def running(self, commit: str) -> dict[str, str]:
-        return {"PYTHONPATH": str(fake_git_install(self.root / "installed", commit))}
-
-    def unreachable(self) -> None:
-        self.source.rename(self.root / "moved.git")
-
-    def shimmed(self) -> dict[str, str]:
-        return {"PATH": f"{self.root / 'git shim'}{os.pathsep}{self.environment['PATH']}"}
-
-    def cache_record(self) -> tuple[Path, dict[str, object]]:
-        [cached] = (self.cache / "skill-ci" / "refs").glob("*.json")
-        return cached, json.loads(cached.read_text())
-
-    def tag(self, name: str) -> str:
-        commit = self.push_commit(name)
-        self.git("tag", name, commit)
-        self.git("push", "-q", "origin", name)
-        return commit
 
 
 class ResolutionTests(PinTestCase):
@@ -231,10 +63,7 @@ class ResolutionTests(PinTestCase):
 
     def test_a_missing_tag_stops_before_any_run(self) -> None:
         self.pin("v9.9.9")
-        result = self.skill_ci("lint")
-        self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertEqual(result.stderr.splitlines(), [f"skill-ci: {self.source.as_uri()} has no tag v9.9.9"])
-        self.assertFalse(self.uv_log.exists())
+        self.refused(self.skill_ci("lint"), [f"skill-ci: {self.source.as_uri()} has no tag v9.9.9"])
 
     def test_a_control_character_in_source_stops_before_git_runs(self) -> None:
         write(self.consumer / ".skill-ci.toml", 'version = "latest"\nsource = "https://git.example.com/skill-ci.git\\u0000x"\n')
@@ -248,9 +77,7 @@ class ResolutionTests(PinTestCase):
 
     def test_an_unknown_key_is_reported_before_a_resolution_error(self) -> None:
         self.pin("v9.9.9", 'skils_dir = "skills"')
-        missing = self.skill_ci("lint")
-        self.assertEqual(missing.returncode, 2, missing.stderr)
-        self.assertEqual(missing.stderr.splitlines(), [UNKNOWN_KEY, f"skill-ci: {self.source.as_uri()} has no tag v9.9.9"])
+        self.refused(self.skill_ci("lint"), [UNKNOWN_KEY, f"skill-ci: {self.source.as_uri()} has no tag v9.9.9"])
         shutil.rmtree(self.cache)
         self.unreachable()
         self.pin("latest", 'skils_dir = "skills"')
@@ -649,28 +476,21 @@ class RerunGuardTests(PinTestCase):
                 if version == "unreachable latest":
                     self.unreachable()
                 self.pin(version.split()[-1], 'skils_dir = "skills"', 'runs = "five"')
-                result = self.skill_ci("check", "--fast", **self.shimmed(), **variables)
-                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-                self.assertEqual(result.stderr.splitlines(), problems)
+                self.refused(self.skill_ci("check", "--fast", **self.shimmed(), **variables), problems)
         self.assertFalse(self.git_log.exists())
-        self.assertFalse(self.uv_log.exists())
 
     def test_a_pin_on_the_running_commit_reports_an_unknown_key_without_a_hand_off(self) -> None:
         self.pin("v0.10.0", 'skils_dir = "skills"')
         result = self.skill_ci("check", "--fast", **self.running(self.commits["v0.10.0"]))
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.refused(result, [f"skill-ci v0.10.0 ({self.commits['v0.10.0']})", UNKNOWN_KEY])
         self.assertEqual(result.stdout, "")
-        self.assertEqual(result.stderr.splitlines(), [f"skill-ci v0.10.0 ({self.commits['v0.10.0']})", UNKNOWN_KEY])
-        self.assertFalse(self.uv_log.exists())
 
     def test_a_direct_child_run_reports_an_unknown_key_and_nothing_else(self) -> None:
         self.pin("v0.9.1", 'skils_dir = "skills"')
         child = {**self.running(self.commits["v0.9.0"]), "SKILL_CI_PINNED": self.commits["v0.9.0"]}
         result = self.skill_ci("check", "--fast", **child)
-        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.refused(result, [UNKNOWN_KEY])
         self.assertEqual(result.stdout, "")
-        self.assertEqual(result.stderr.splitlines(), [UNKNOWN_KEY])
-        self.assertFalse(self.uv_log.exists())
 
     def test_a_deleted_or_unreadable_working_directory_still_runs(self) -> None:
         for breaking_command in ("rmdir", "chmod 000"):
