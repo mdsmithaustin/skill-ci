@@ -81,7 +81,7 @@ Leaving stays cheap to assess. The upstream `adewale/skill-eval-harness` revisio
 
 ## How skill-ci is distributed
 
-A repository names its skill-ci version once, in `.skill-ci.toml`. Every place that runs skill-ci runs that version, whether it starts in a terminal, lefthook, no-mistakes, or a CI service. skill-ci is a `skill-ci` command that uv installs from git, and no package registry is involved. The operator and the program root settled the design on 2026-10-06. Two later review rounds changed the credentials rule and the hand-off, and their sections give those dates. Each decision below gives its reason.
+A repository names its skill-ci version once, in `.skill-ci.toml`. Every place that runs skill-ci runs that version, whether it starts in a terminal, lefthook, no-mistakes, or a CI service. skill-ci is a `skill-ci` command that uv installs from git, and no package registry is involved. The operator settled the design on 2026-10-06 in a design review. Two later review rounds changed the credentials rule and the hand-off, and their sections give those dates. Each decision below gives its reason.
 
 The earlier setup had a consumer include `skill-tasks.toml` from a sibling checkout of skill-ci and call a reusable workflow pinned by SHA. It had three faults. Local runs and CI could run different code, and nothing showed it. The `SKILL_CI` variable moved the tools, but not the hardcoded include of the task definitions. An `sbx --clone` sandbox or a Dev Container has no sibling checkout at all.
 
@@ -141,11 +141,11 @@ The package version reads `1.0.0` in the commit that gets tagged `v1.0.0`. A pin
 
 A pinned run starts `uv tool run --isolated` at the pinned commit. uv revalidates its cached package index over the network once those responses are 10 minutes old. With the network down, that hand-off exited with code 126 after about 6 seconds, even though the commit's environment was already built. The message also blamed the source, which was never the failing part.
 
-The hand-off now tries `--offline` first and retries online once only when uv exits before the pinned child starts, which skill-ci knows from a start marker. A child that started and failed is never retried, because a retry could repeat a paid call. The program root chose this on 2026-10-08, after the performance lane measured the fault. After a stale index, a first run with the network down used to exit with code 126 after 4.2 to 7.4 seconds. It now exits with code 0 after 0.8 seconds. A first run online went from 1.0 to 0.8 seconds. A first build of a commit runs uv twice, once offline and once online.
+The hand-off now tries `--offline` first and retries online once only when uv exits before the pinned child starts, which skill-ci knows from a start marker. A child that started and failed is never retried, because a retry could repeat a paid call. A review chose this on 2026-10-08, after a performance run measured the fault. After a stale index, a first run with the network down used to exit with code 126 after 4.2 to 7.4 seconds. It now exits with code 0 after 0.8 seconds. A first run online went from 1.0 to 0.8 seconds. A first build of a commit runs uv twice, once offline and once online.
 
 ### Why `source` rejects credentials
 
-The program root set the credentials rule on 2026-10-07 as a default, and the operator can instead allow tokens in `source`, which would bring redaction back. `source` is a URL that skill-ci prints, caches, and hands to git. Redacting a token from it failed three times, because each fix missed a new shape of URL. The deeper fault is that a token in a committed `.skill-ci.toml` has already reached everyone who can read the repository. Redaction protected a log line while the file itself leaked.
+A review set the credentials rule on 2026-10-07. The operator can still decide to allow tokens in `source`, and that would bring redaction back. `source` is a URL that skill-ci prints, caches, and hands to git. Redacting a token from it failed three times, because each fix missed a new shape of URL. The deeper fault is that a token in a committed `.skill-ci.toml` has already reached everyone who can read the repository. Redaction protected a log line while the file itself leaked.
 
 skill-ci now rejects a `source` that carries credentials. Only an ssh user name is allowed. The error names the key, points at a git credential helper, and never echoes the value. A private mirror authenticates through that helper. The redaction code is deleted, and the cache key is the source as written.
 

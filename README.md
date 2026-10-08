@@ -151,22 +151,24 @@ no-mistakes reads `commands` from the default branch, not from the branch you pu
 
 GitHub Enterprise Server (GHES) cannot call a reusable workflow from github.com, so skill-ci no longer ships one. The version lives in `.skill-ci.toml`, a plain file in your repository. The `source` key tells skill-ci where to fetch itself. It defaults to github.com. On a network that blocks github.com, point it at a mirror on your instance.
 
-1. Mirror skill-ci and its tags into your instance. Use `--bare`, which leaves out the `refs/pull/*` refs that GitHub refuses to receive:
+1. Mirror skill-ci's branches into your instance, and leave its tags behind. Use a bare clone, which leaves out the `refs/pull/*` refs that GitHub refuses to receive:
 
    ```sh
    git clone --bare https://github.com/mdsmithaustin/skill-ci.git
-   git -C skill-ci.git push --mirror https://ghes.example.com/acme/skill-ci.git
+   git -C skill-ci.git push --all https://ghes.example.com/acme/skill-ci.git
    ```
 
-2. Mirror the harness the same way, from `https://github.com/mdsmithaustin/skill-eval-harness.git`. skill-ci installs `skill-eval-harness-ext` from the git URL on one line of its `pyproject.toml`, so a mirror of skill-ci alone still reaches github.com. Clone your mirror of skill-ci and change that line to name your mirror of the harness at the same commit. Commit the change on the default branch, because the install in step 3 and the install in the workflow both take that branch. Then tag the commit with a new release tag, such as `v1.0.1`, and push the branch and the tag. The pinned run installs the tagged commit, so the tag carries the change too. skill-ci has no tooling for this step.
+   Upstream tags still name the github.com harness. `latest`, the newer-tag notice, and `skill-ci update` pick the highest `v*` tag on the source. A copied upstream tag could therefore send a pin to a commit that cannot install on your network.
+
+2. Mirror the harness the same way, from `https://github.com/mdsmithaustin/skill-eval-harness.git`. skill-ci installs `skill-eval-harness-ext` from the git URL on one line of its `pyproject.toml`, so a mirror of skill-ci alone still reaches github.com. Clone your mirror of skill-ci and change that line to name your mirror of the harness at the same commit. Commit the change on the default branch, because the install in step 3 and the install in the workflow both take that branch. Then tag the commit with a release tag of your own, such as `v1.0.0`, and push the branch and the tag. The pinned run installs the tagged commit, so the tag carries the change too. skill-ci has no tooling for this step.
 
    ```sh
    git clone https://ghes.example.com/acme/skill-ci.git skill-ci-edit
    cd skill-ci-edit
    $EDITOR pyproject.toml   # replace the URL on the skill-eval-harness-ext line
    git commit -am "chore: use the internal harness mirror"
-   git tag v1.0.1
-   git push origin HEAD v1.0.1
+   git tag v1.0.0
+   git push origin HEAD v1.0.0
    ```
 
 3. In your repository, install skill-ci from the mirror, and write `.skill-ci.toml` with the mirror as `source` and your tag as `version`:
@@ -176,7 +178,7 @@ GitHub Enterprise Server (GHES) cannot call a reusable workflow from github.com,
    ```
 
    ```toml
-   version = "v1.0.1"
+   version = "v1.0.0"
    source = "https://ghes.example.com/acme/skill-ci.git"
    skills_dir = "skills"
    evals_dir = "evals"
@@ -190,7 +192,7 @@ The workflow installs uv with `pip install uv==0.12.7`, and runners on a restric
 - Put Python 3.12 or later on the runner. Otherwise uv downloads one from `releases.astral.sh`.
 - If pip stops with `externally-managed-environment` on a self-hosted runner, change the `pip install uv==0.12.7` line in the workflow to install uv in a virtual environment, or by another method.
 
-To take a later upstream release, do not push the upstream tag into your mirror. That tag still names the github.com harness, and `latest`, the newer-tag notice, and `skill-ci update` all pick the highest `v*` tag on the source. Instead, fetch the release, re-apply the harness edit on the default branch, and tag the result with a new internal tag. Internal tags share the `v*` namespace with upstream tags, so choose a number that upstream has not released. Push to the harness mirror again with `push --mirror` when the release pins a newer harness commit. Never repeat `push --mirror` on the skill-ci mirror, because it resets the default branch and deletes your tags.
+To take a later upstream release, merge it into a clone of your mirror's default branch with `git pull https://github.com/mdsmithaustin/skill-ci.git v1.1.0`. That merges the release commit and does not copy its tag. If the merge conflicts on the harness line in `pyproject.toml`, keep your mirror's URL. Tag the merge with your next release tag, such as `v1.1.0`, and push the branch and the tag. When the release pins a newer harness commit, push the harness again from a fresh bare clone.
 
 `source` may not carry credentials. A private mirror authenticates through a git credential helper on the runner.
 
