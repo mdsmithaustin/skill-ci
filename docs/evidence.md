@@ -13,6 +13,8 @@ Skill-ci has three implementation layers. A result can support one or more of th
 
 The existing frontmatter and content lints cover their documented structural rules. Manifest validation checks case definitions, leakage, and readiness. The opt-in populated coverage check proves that every discovered skill has cases bound to its actual marker. It does not prove that those cases distinguish useful behavior. The external runner collects trigger and paired outcome evidence. A green model-free CI run does not mean those paid runs happened.
 
+Successful runs of prepared [fixed recovery cases](https://github.com/mdsmithaustin/skill-eval-harness/blob/70e83674f787327e3d271310fc64106dc89a2708/docs/recovery.md) collect raw process evidence and file snapshots in `recovery.json` and `recovery/`, instead of ordinary answer grades. Setup, spawn, or capture failures can leave partial or absent artifacts. A model-free run with fake processes can verify checkpoint-stop plumbing, fixture retention, and fresh process phases. It cannot establish live provider eligibility or model behavior. A missing forbidden file alone does not prove an enforcing denial. The consumer must establish the attempted write, enforcing denial, and absent forbidden file from the evidence.
+
 The optional package check inventories files and compares copies. Its digest includes relative paths, file bytes, empty directories, and executable bits. It does not validate metadata, run an installer, load a skill, or grade an outcome. Compare quiescent trees. A read-only inventory is not an atomic filesystem snapshot.
 
 ## Author cases that can distinguish behavior
