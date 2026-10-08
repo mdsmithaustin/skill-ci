@@ -21,7 +21,7 @@ STOPPING = frozenset(
 GRACE = 3.0
 HAND_OFF_GRACE = GRACE + 2.0
 TICK = 0.05
-OPEN_WINDOWS: list[list[int]] = []
+open_window: list[int] | None = None
 
 
 class Stopped(BaseException):
@@ -66,9 +66,10 @@ def run(
 
 @contextlib.contextmanager
 def stopping_signals() -> Iterator[list[int]]:
-    if OPEN_WINDOWS:
+    global open_window
+    if open_window is not None:
         # A window inside another shares its handlers and its signals. A stop that came first ends it before it starts.
-        received = OPEN_WINDOWS[-1]
+        received = open_window
         if received:
             raise Stopped(received[0])
         try:
@@ -97,11 +98,11 @@ def stopping_signals() -> Iterator[list[int]]:
         number: signal.signal(number, ignore if number in ignored else record)
         for number in STOPPING - ignored | {signal.SIGINT}
     }
-    OPEN_WINDOWS.append(received)
+    open_window = received
     try:
         yield received
     finally:
-        OPEN_WINDOWS.pop()
+        open_window = None
         # Blocking runs every handler that has already fired.
         mask = signal.pthread_sigmask(signal.SIG_BLOCK, STOPPING)
         for number, handler in previous.items():
@@ -131,13 +132,11 @@ def wait(
         if interrupted is not None and now - interrupted >= grace:
             kill_group(child)
         try:
-            if interrupted is None and child.stdout is not None:
+            if interrupted is None:
                 return child.communicate(timeout=TICK)
             child.wait(timeout=TICK)
         except subprocess.TimeoutExpired:
             continue
-        if interrupted is None:
-            return None, None
         # git dies of a signal at once and leaves its ssh transport running.
         kill_group(child)
         return None
