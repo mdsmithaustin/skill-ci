@@ -81,7 +81,7 @@ Leaving stays cheap to assess. The upstream `adewale/skill-eval-harness` revisio
 
 ## How skill-ci is distributed
 
-A repository names its skill-ci version once, in `.skill-ci.toml`. Every place that runs skill-ci runs that version, whether it starts in a terminal, lefthook, no-mistakes, or a CI service. skill-ci is a `skill-ci` command that uv installs from git, and no package registry is involved. The operator settled the design on 2026-10-06 in a design review. Two later review rounds changed the credentials rule and the hand-off, and their sections give those dates. Each decision below gives its reason.
+A repository names its skill-ci version once, in `.skill-ci.toml`. Every place that runs skill-ci runs that version, whether it starts in a terminal, lefthook, no-mistakes, or a CI service. skill-ci is a `skill-ci` command that uv installs from git, and skill-ci is not published to a package registry. The operator settled the design on 2026-10-06 in a design review. Two later review rounds changed the credentials rule and the hand-off, and their sections give those dates. Each decision below gives its reason.
 
 The earlier setup had a consumer include `skill-tasks.toml` from a sibling checkout of skill-ci and call a reusable workflow pinned by SHA. It had three faults. Local runs and CI could run different code, and nothing showed it. The `SKILL_CI` variable moved the tools, but not the hardcoded include of the task definitions. An `sbx --clone` sandbox or a Dev Container has no sibling checkout at all.
 
@@ -121,7 +121,7 @@ Some enterprise networks block github.com, so `.skill-ci.toml` has a `source` ke
 
 ### Why skill-ci is not on PyPI
 
-PyPI rejects an upload whose own metadata declares a direct dependency (`warehouse/forklift/legacy.py`, line 464, read on 2026-10-06). skill-ci depends on the harness fork through a git URL, so publishing it would mean publishing the fork under its own name first. Publishing is not planned. A git tag already lets anyone run `uv tool install git+https://github.com/mdsmithaustin/skill-ci.git@<tag>`.
+PyPI rejects an upload whose own metadata declares a dependency as a direct URL (`warehouse/forklift/legacy.py`, line 464, read on 2026-10-06). skill-ci depends on the harness fork through a git URL, so publishing it would mean publishing the fork under its own name first. Publishing is not planned. A git tag already lets anyone run `uv tool install git+https://github.com/mdsmithaustin/skill-ci.git@<tag>`.
 
 Checking PyPI for the fork's name exposed a worse problem. PyPI already holds `skill-eval-harness` 0.6.0, published by the upstream author. The fork's `pyproject.toml` used the same name and the same version with different code. An adopter who ran `pip install skill-eval-harness` got upstream, without the blinding patches that the exit test above counts as an accepted difference. Their results would not be comparable with skill-ci's, and the version numbers would not show it. The fork's distribution is now `skill-eval-harness-ext`. Its modules and console scripts keep their names.
 

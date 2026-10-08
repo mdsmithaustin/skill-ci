@@ -192,7 +192,7 @@ The workflow installs uv with `pip install uv==0.12.7`, and runners on a restric
 - Put Python 3.12 or later on the runner. Otherwise uv downloads one from `releases.astral.sh`.
 - If pip stops with `externally-managed-environment` on a self-hosted runner, change the `pip install uv==0.12.7` line in the workflow to install uv in a virtual environment, or by another method.
 
-To take a later upstream release, merge it into a clone of your mirror's default branch with `git pull --no-rebase https://github.com/mdsmithaustin/skill-ci.git v1.1.0`. That merges the release commit and does not copy its tag. If the merge conflicts on the harness line in `pyproject.toml`, keep your mirror's URL and take the release's commit hash. Tag the merge with your next release tag, such as `v1.1.0`, and push the branch and the tag. When the release pins a newer harness commit, push the harness again from a fresh bare clone.
+To take a later upstream release, merge it into a clone of your mirror's default branch with `git pull --no-rebase https://github.com/mdsmithaustin/skill-ci.git v1.1.0`. That merges the release commit and does not copy its tag. If the merge conflicts on the harness line in `pyproject.toml`, keep your mirror's URL and take the release's commit hash. Tag the merge with your next release tag, such as `v1.1.0`. When the release pins a newer harness commit, push the harness to its mirror again from a fresh bare clone first. Then push the branch and the tag.
 
 `source` may not carry credentials. A private mirror authenticates through a git credential helper on the runner.
 
