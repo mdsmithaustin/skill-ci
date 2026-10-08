@@ -630,6 +630,23 @@ class NoMistakesTests(InitTestCase):
                     result.stdout,
                 )
 
+    def test_an_origin_with_credentials_is_never_printed(self) -> None:
+        write(self.repository / ".no-mistakes.yaml", "agent: claude\n")
+        self.git("remote", "add", "origin", "https://example.com/widget.git")
+        for origin in (
+            "https://oauth2:TOKEN-MARKER@example.com/team/widget.git",
+            "https://TOKEN-MARKER@example.org/widget.git",
+            "ssh://git:TOKEN-MARKER@example.com/widget.git",
+            "ssh://TOKEN-MARKER@example.com/widget.git",
+            "TOKEN-MARKER@example.com:team/widget.git",
+        ):
+            with self.subTest(origin=origin):
+                self.git("remote", "set-url", "origin", origin)
+                result = self.init()
+                self.assertNotIn("TOKEN-MARKER", result.stdout + result.stderr)
+                self.assertIn("  <remote URL>:", result.stdout)
+                self.assertIn("note: the origin remote URL holds a user name or credentials, so it is not shown; write it without them in place of <remote URL>", result.lines)
+
     def test_the_override_names_a_placeholder_when_the_repository_has_no_origin(self) -> None:
         write(self.repository / ".no-mistakes.yaml", "agent: claude\n")
         self.assertIn("  <remote URL>:", self.init().stdout)

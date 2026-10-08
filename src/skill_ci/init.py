@@ -332,7 +332,7 @@ def wire_no_mistakes(layout: Layout) -> list[Outcome]:
     if not (isinstance(lint, str) and lint.strip()):
         return [
             Outcome(Verb.KEPT, NO_MISTAKES_FILE, "commands.lint is empty, and setting it would replace the agent's lint duty"),
-            Outcome(Verb.NOTE, f"add this to ~/.no-mistakes/config.yaml to run skill-ci check beside the agent's lint, on this machine only. {DEFAULT_BRANCH_NOTE}, so a change to {NO_MISTAKES_FILE} would apply only after it merges", override_snippet(layout.root)),
+            *override_notes(layout.root),
         ]
     if COMMAND in lint:
         return [Outcome(Verb.KEPT, NO_MISTAKES_FILE, "commands.lint already runs skill-ci check")]
@@ -346,14 +346,19 @@ def wire_no_mistakes(layout: Layout) -> list[Outcome]:
     ]
 
 
-def override_snippet(root: Path) -> str:
+def override_notes(root: Path) -> list[Outcome]:
     try:
         remote = children.run(["git", "remote", "get-url", "origin"], capture=True, cwd=root)
         origin = remote.stdout.decode(errors="replace").strip() if remote.returncode == 0 else ""
     except OSError:
         origin = ""
-    lines = ["repository_overrides:", f"  {origin or '<remote URL>'}:", "    commands:", "      lint:", "        additional:", f"          - {COMMAND}"]
-    return "\n".join(lines)
+    # Every git URL form, scp-style user@host:path included, ends its user name or token at an '@'.
+    hidden = "@" in origin
+    lines = ["repository_overrides:", f"  {'<remote URL>' if hidden or not origin else origin}:", "    commands:", "      lint:", "        additional:", f"          - {COMMAND}"]
+    notes = [Outcome(Verb.NOTE, f"add this to ~/.no-mistakes/config.yaml to run skill-ci check beside the agent's lint, on this machine only. {DEFAULT_BRANCH_NOTE}, so a change to {NO_MISTAKES_FILE} would apply only after it merges", "\n".join(lines))]
+    if hidden:
+        notes.append(Outcome(Verb.NOTE, "the origin remote URL holds a user name or credentials, so it is not shown; write it without them in place of <remote URL>"))
+    return notes
 
 
 QUOTED_LINT = re.compile(r"""(?P<lead> +lint:[ \t]+)(?P<quote>["'])(?P<body>.*)(?P=quote)(?P<tail>[ \t]*(?:#.*)?)""")
