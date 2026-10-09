@@ -46,6 +46,21 @@ class FrontmatterChecker(unittest.TestCase):
         self.skill()
         self.assertEqual(self.check()[0], 0)
 
+    def test_invalid_utf8_is_a_diagnostic_and_other_skills_are_checked(self) -> None:
+        path = self.skill()
+        path.write_bytes(b'---\r\nname: a\r\ndescription: "caf\xe9"\r\n---\r\nBody.\r\n')
+        other = self.skill("z", "name: z\ndescription: 3")
+        code, output = self.check()
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            output,
+            f"{path}:3: invalid UTF-8 at byte 32 (0xE9): invalid continuation byte\n"
+            f"{other}: description must be a string\n",
+        )
+        self.skill()
+        self.skill("z", 'name: z\ndescription: "valid"')
+        self.assertEqual(self.check(), (0, ""))
+
     def test_valid_block_scalar_and_omitted_openai_policy_pass(self) -> None:
         self.skill(frontmatter="name: a\ndescription: >-\n  Valid block scalar description\nmetadata:\n  owner: tools")
         policy = self.root / "a" / "agents"

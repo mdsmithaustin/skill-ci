@@ -92,6 +92,13 @@ def nonblank_string(value: Any, label: str, path: Path, errors: list[Diagnostic]
 def read_skill(path: Path) -> tuple[SkillMetadata | None, list[Diagnostic]]:
     try:
         text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as error:
+        line = len(re.split(rb"\r\n|\r|\n", error.object[: error.start]))
+        return None, [Diagnostic(
+            path,
+            f"invalid UTF-8 at byte {error.start + 1} (0x{error.object[error.start]:02X}): {error.reason}",
+            line,
+        )]
     except OSError as error:
         return None, [Diagnostic(path, f"cannot read file: {error}")]
     match = FRONTMATTER.match(text)

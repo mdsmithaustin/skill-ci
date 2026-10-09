@@ -2,7 +2,7 @@
 
 The content check applies one rule to bold names. A bold kebab name on a line that contains the word "skill" must name a directory under the skills directory. Some repositories need more. A family of skills can share a name prefix, so that a bold `pattern-` name is always a skill reference even when the line never says "skill". A repository can also retire a path or a command and want every remaining mention reported. A conventions file declares both for your repository.
 
-Without the file, the content check applies only the "skill" rule and reports no retired text.
+Without the file, bold-name matching uses only the "skill" hint and reports no retired text. The other content checks still run.
 
 ## Write the conventions file
 

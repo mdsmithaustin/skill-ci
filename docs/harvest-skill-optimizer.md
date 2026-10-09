@@ -27,7 +27,7 @@ The `package` and `require_manifests` settings both default to false. Consumers 
 | Candidate | Reason |
 | --- | --- |
 | The donor's full frontmatter, reference, and OpenAI-sidecar validator. | The recipient already validates metadata and invocation policy. The donor requires UI fields and portable-only keys that conflict with valid recipient packages. |
-| Bare resource paths in code spans. | This is useful follow-up work for the shared parser-based content checker. The donor's regex uses different path rules and would misread examples if copied directly. The shared checker must be updated and synchronized with its consumers. |
+| The donor's regex for bare resource paths. | The shared parser-based content checker now checks whole inline-code resource paths under `scripts/`, `references/`, and `assets/`. It preserves the existing containing-file resolution base and skips commands, placeholders, globs, directory mentions, and fenced examples. |
 | The donor's eval JSON schema, audit-focus taxonomy, and optimizer-specific fixtures. | The external runner already owns manifest validation and readiness. The donor cases judge the optimizer's semantic audits, not general skill infrastructure. |
 | The live `npx skills` installer probe. | It hard-codes the donor name, installer identity, target, and listing expectations. Generalizing it adds Node and registry dependencies. The package check makes no installer claim. |
 | The `install_to` helper. | It removes an existing destination before copying. Offline comparison needs no installation or replacement operation. |
