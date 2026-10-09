@@ -87,7 +87,7 @@ Low-severity findings from the v1.0.0 reviews that stay open. The operator accep
 - The no-mistakes snippet that `init` prints is indented four spaces, where the README shows column 0. "version key is quoted" in the `update` section is easy to misread. Rare.
 - The README does not say that uv's "Remote Git fetches are not allowed" error on a cold cache is expected before the online retry. Rare.
 - The README says the harness has two commands, but the package also ships `skill-pi-trigger-eval`. By design, since `skill-ci harness` runs only the two.
-- The README's `--evals-dir` wording is loose, as `skills/evals` is accepted, and it does not say how the flag and the file combine for `check`. Rare.
+- The README's `--evals-dir` wording is loose, as `skills/evals` is accepted. Rare.
 - The README's hand-written workflow omits the two-line header comment that `init` writes. By design, since a hand-written file was not written by `init`.
 - The exit-code table's 128+N row says a harness command died of that signal, but with the `c23ed79` pin the harness exits 130 or 143 itself. The code a user sees is the same. Rare.
 - `DECISIONS.md` does not say that `runner.lock` was retired or why, and the other-CI example has no decision of its own. Rare.

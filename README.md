@@ -2,7 +2,7 @@
 
 skill-ci tests Agent Skills. A skill is a directory with a `SKILL.md` file that tells an AI coding agent, such as Claude Code or Codex, how to do a task. If a repository holds skills, skill-ci gives it two kinds of checks:
 
-- **Free checks.** `skill-ci check` lints each `SKILL.md`, finds broken links, rejects personal data, and validates the test-case files. No model is called. Run it from a terminal, a git hook, no-mistakes, or any CI service. `skill-ci init` writes a GitHub Actions workflow that runs it on every push and pull request.
+- **Free checks.** `skill-ci check` lints each `SKILL.md`, finds broken links, rejects personal data, and validates the test-case files. No model is called. Run it from a terminal, a git hook, no-mistakes, or any CI service. `skill-ci init` writes a GitHub Actions workflow that runs it on each pull request and on each push to the default branch.
 - **Paid checks on your machine.** `skill-ci trigger` and `skill-ci run` run Claude and Codex on test prompts. One checks whether the skill loads when it should. The other runs each prompt with and without the skill and grades whether the skill helped. They use your own logins and spend model budget. They never run in CI.
 
 skill-ci is a command that uv installs from git. A repository names its skill-ci version once, in `.skill-ci.toml`, and every place that runs skill-ci runs that version. skill-ci does not have its own test runner. It installs [`skill-eval-harness-ext`](https://github.com/mdsmithaustin/skill-eval-harness), a fork of skill-eval-harness, at the commit that its own `pyproject.toml` pins, and runs that. `DECISIONS.md` explains why, and when to stop using the fork.
@@ -432,6 +432,8 @@ An answer run refuses to start when a folder above its workspace holds `.claude`
 ## Update skill-ci
 
 Run `skill-ci update` to move an exact-tag pin to the newest release. See [Update the pin](#update-the-pin). Your terminal, hooks, mise tasks, no-mistakes, and CI all run the version in `.skill-ci.toml`, so one commit moves them together.
+
+- **Files that `init` wrote before v1.1.0.** `init` keeps an existing workflow and existing mise tasks, so an update does not change them. To get the v1.1.0 workflow, replace the file with the [workflow above](#what-init-does) and name your default branch under `push`. Its job is now `skill-checks`, so rename a required status check named `skills` in your branch protection. To get the mise task descriptions, add a `description` line to each `skill-*` task by hand.
 
 - **Earlier run directories.** A runner pin can change recorded identities, so re-run `prepare` and every arm before comparing with older runs. The earlier pin to `6634de1` changed trigger protocol hashes and added optional `expected_skills` and `forbidden_skills` lists for catalog routing. Regenerate both trigger comparison arms with this runner. Unscoped queries retain their existing activation rule.
 
