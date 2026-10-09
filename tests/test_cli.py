@@ -528,16 +528,68 @@ class LintTests(ConsumerTestCase):
         )
         self.assertNotIn("Traceback", result.stderr)
 
-    def test_a_check_that_raises_is_named_on_one_line_and_the_next_check_still_runs(self) -> None:
+    def test_invalid_utf8_is_diagnosed_by_both_markdown_checks(self) -> None:
         (self.root / "skills/other").mkdir()
         (self.root / "skills/other/SKILL.md").write_bytes(b"---\nname: other\ndescription: caf\xe9\n---\n")
         result = self.skill_ci("lint")
-        decode = "UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe9 in position 32: invalid continuation byte"
+        decode = "invalid UTF-8 at byte 33 (0xE9): invalid continuation byte"
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertEqual(lines(result), ["checks run: 2; failed: 2 (frontmatter, content)"])
-        banner, *reasons = result.stderr.splitlines()
-        self.assertRegex(banner, r"^skill-ci \S+ \(commit unknown\)$")
-        self.assertEqual(reasons, [f"skill-ci: frontmatter check: {decode}", f"skill-ci: content check: {decode}"])
+        self.assertEqual(
+            lines(result),
+            [
+                f"skills/other/SKILL.md:3: {decode}",
+                f"skills/other/SKILL.md:3: invalid-utf8: {decode}",
+                "checks run: 2; failed: 2 (frontmatter, content)",
+            ],
+        )
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_new_author_findings_run_in_all_model_free_modes(self) -> None:
+        marker = self.root.parent / "harness-loaded"
+        plant = write(
+            self.root.parent / "plant/skill_benchmark.py",
+            f"open({str(marker)!r}, 'w').close()\nraise RuntimeError('model harness loaded')\n",
+        )
+        self.append(
+            "\nRead `scripts/MISSING.py`.\n\n"
+            "[x]: https://example.com/first\n[x]: https://example.com/second\n\n"
+            "Text\u202e\n"
+        )
+        empty = write(
+            self.root / "skills/empty/SKILL.md",
+            "---\nname: empty\ndescription: Empty example.\n---\n\n<!-- Only a comment. -->\n",
+        )
+        invalid = write_skill(self.root / "skills/invalid") / "SKILL.md"
+        invalid.write_bytes(b"---\nname: invalid\ndescription: \xff\n---\nBody.\n")
+        expected = [
+            "skills/invalid/SKILL.md:3: invalid UTF-8 at byte 32 (0xFF): invalid start byte",
+            "skills/empty/SKILL.md:5: empty-skill-body: body has no content after frontmatter",
+            "skills/example/SKILL.md:7: relative-link: target does not exist: scripts/MISSING.py",
+            "skills/example/SKILL.md:10: conflicting-reference: label 'X' conflicts with definition on line 9",
+            "skills/example/SKILL.md:12: unsafe-character: literal U+202E at column 5",
+            "skills/invalid/SKILL.md:3: invalid-utf8: invalid UTF-8 at byte 32 (0xFF): invalid start byte",
+        ]
+        modes = (
+            (("lint",), 2, []),
+            (("check", "--fast"), 3, []),
+            (("check",), 4, ["manifests checked: 0"]),
+        )
+        for arguments, count, extra in modes:
+            with self.subTest(arguments=arguments):
+                result = self.skill_ci(*arguments, env={**ENVIRONMENT, "PYTHONPATH": str(plant.parent)})
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual(lines(result), expected + extra + [f"checks run: {count}; failed: 2 (frontmatter, content)"])
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertFalse(marker.exists())
+        write_skill(self.skill)
+        write_skill(empty.parent)
+        write_skill(invalid.parent)
+        for arguments, count, extra in modes:
+            with self.subTest(repaired=arguments):
+                result = self.skill_ci(*arguments, env={**ENVIRONMENT, "PYTHONPATH": str(plant.parent)})
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(lines(result), extra + [f"checks run: {count}; failed: 0"])
+                self.assertFalse(marker.exists())
 
 
 class FastCheckTests(ConsumerTestCase):

@@ -2,9 +2,14 @@
 """Fail on broken content inside skills/**/*.md.
 
 Relative destinations in CommonMark links and reference definitions must resolve
-to something on disk. Whitespace-free paths beginning `./` or `../` and quoted
-paths with spaces that occupy an entire inline-code span follow the same rule.
-Explicit project placeholders such as `[PR]({url})` are skipped.
+to something on disk. Entire inline-code paths beginning `./`, `../`, `scripts/`,
+`references/`, or `assets/` follow the same rule, including quoted paths with
+spaces. Bare resource directory mentions, commands, globs, and placeholders are
+skipped. Explicit project placeholders such as `[PR]({url})` are skipped.
+
+Conflicting parsed reference definitions and empty SKILL.md bodies are findings.
+Literal C0 controls other than TAB, LF, and CR, DEL, and bidi overrides are
+reported across raw Markdown. Invalid UTF-8 files are reported without parsing.
 
 A bolded kebab name reads as a skill reference when "skill" appears on the same
 rendered line, and then it must name a real directory under the skills root.
@@ -37,9 +42,12 @@ from markdown_it.rules_inline.backticks import backtick
 from markdown_it.rules_inline.state_inline import StateInline
 from markdown_it.token import Token
 
+from skill_ci.checks.frontmatter import FRONTMATTER
+
 ROOT = Path("skills")
 IGNORE: frozenset[str] = frozenset()
 MARKDOWN = MarkdownIt("commonmark")
+UNSAFE_CODEPOINTS = (frozenset(range(32)) - {9, 10, 13}) | {127, 0x202D, 0x202E}
 
 
 def rendered_newlines(tokens: list[Token]) -> int:
@@ -107,7 +115,10 @@ class Finding:
     detail: str
 
     def __str__(self) -> str:
-        return f"{self.path}:{self.line}: {self.kind}: {self.detail}"
+        return "".join(
+            f"\\u{ord(character):04X}" if ord(character) in UNSAFE_CODEPOINTS else character
+            for character in f"{self.path}:{self.line}: {self.kind}: {self.detail}"
+        )
 
 
 @dataclass(frozen=True)
@@ -143,10 +154,10 @@ class ContentConventions:
 CONVENTIONS = ContentConventions({}, ())
 
 
-CODE_PATH = re.compile(r"\.\.?/[^\s<>]+")
+CODE_PATH = re.compile(r"(?:\.\.?/|scripts/|references/|assets/)[^\s<>]+")
 QUOTED_CODE_PATH = re.compile(
-    r'(?:"(?P<double>\.\.?/[^"\r\n<>]+)"|'
-    r"'(?P<single>\.\.?/[^'\r\n<>]+)')"
+    r'(?:"(?P<double>(?:\.\.?/|scripts/|references/|assets/)[^"\r\n<>]+)"|'
+    r"'(?P<single>(?:\.\.?/|scripts/|references/|assets/)[^'\r\n<>]+)')"
 )
 SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*:", re.I)
 SKILL_NAME = re.compile(r"[a-z][a-z0-9-]*")
@@ -194,7 +205,7 @@ def parse_file(path: Path) -> ParsedFile:
     references = env.get("references", {})
     return ParsedFile(
         path=path,
-        raw=list(enumerate(text.splitlines(), start=1)),
+        raw=list(enumerate(text.removesuffix("\n").split("\n"), start=1)),
         tokens=tokens,
         references=references,
         duplicate_references=env.get("duplicate_refs", []),
@@ -304,9 +315,16 @@ def load_content_conventions(path: Path | None) -> ContentConventions:
 
 def inline_code_path(content: str) -> str | None:
     if CODE_PATH.fullmatch(content):
-        return content
-    quoted = QUOTED_CODE_PATH.fullmatch(content)
-    return (quoted.group("double") or quoted.group("single")) if quoted else None
+        path = content
+    elif quoted := QUOTED_CODE_PATH.fullmatch(content):
+        path = quoted.group("double") or quoted.group("single")
+    else:
+        return None
+    if not path.startswith(("./", "../")) and (
+        path.endswith("/") or re.search(r"[*?\[\]{}$|;&]", path)
+    ):
+        return None
+    return path
 
 
 def finding_for_target(
@@ -317,6 +335,8 @@ def finding_for_target(
         return None
     resolved = parsed.path.parent / target
     try:
+        if not markdown and not target.startswith(("./", "../")) and resolved.is_dir():
+            return None
         ok = resolved.is_file() if target.endswith(".md") else resolved.exists()
     except (OSError, ValueError):
         ok = False
@@ -481,7 +501,9 @@ def check_unclosed_fence(parsed: ParsedFile) -> Iterator[Finding]:
         if token.level > 0 and token.map[1] < len(parsed.raw):
             continue
         source_lines = token.map[1] - token.map[0]
-        content_lines = len(token.content.splitlines())
+        content_lines = token.content.count("\n") + int(
+            bool(token.content) and not token.content.endswith("\n")
+        )
         if source_lines != content_lines + 2:
             yield Finding(
                 parsed.path,
@@ -489,6 +511,58 @@ def check_unclosed_fence(parsed: ParsedFile) -> Iterator[Finding]:
                 "unclosed-fence",
                 "fence opened here is never closed, so link and sibling checks skip the rest of the file",
             )
+
+
+def check_conflicting_references(parsed: ParsedFile) -> Iterator[Finding]:
+    for definition in parsed.duplicate_references:
+        label = definition["label"]
+        original = parsed.references[label]
+        if (definition["href"], definition["title"]) == (
+            original["href"], original["title"]
+        ):
+            continue
+        yield Finding(
+            parsed.path,
+            definition["map"][0] + 1,
+            "conflicting-reference",
+            f"label {label!r} conflicts with definition on line {original['map'][0] + 1}",
+        )
+
+
+def check_empty_skill_body(parsed: ParsedFile) -> Iterator[Finding]:
+    if parsed.path.name != "SKILL.md":
+        return
+    text = "\n".join(line for _number, line in parsed.raw)
+    match = FRONTMATTER.match(text)
+    if match is None:
+        return
+    body = text[match.end() :]
+    if any(
+        token.type in {"fence", "code_block"} and token.content.strip()
+        for token in MARKDOWN.parse(body)
+    ):
+        return
+    if re.sub(r"<!--.*?(?:-->|\Z)", "", body, flags=re.DOTALL).strip():
+        return
+    yield Finding(
+        parsed.path,
+        text.count("\n", 0, match.end()) + 1,
+        "empty-skill-body",
+        "body has no content after frontmatter",
+    )
+
+
+def check_unsafe_characters(parsed: ParsedFile) -> Iterator[Finding]:
+    for line, text in parsed.raw:
+        for column, character in enumerate(text, start=1):
+            codepoint = ord(character)
+            if codepoint in UNSAFE_CODEPOINTS:
+                yield Finding(
+                    parsed.path,
+                    line,
+                    "unsafe-character",
+                    f"literal U+{codepoint:04X} at column {column}",
+                )
 
 
 def check_retired_text(parsed: ParsedFile) -> Iterator[Finding]:
@@ -502,6 +576,9 @@ REGISTRY: list[tuple[str, Callable[[ParsedFile], Iterator[Finding]]]] = [
     ("relative-link", check_relative_links),
     ("sibling-skill", check_sibling_skill),
     ("unclosed-fence", check_unclosed_fence),
+    ("conflicting-reference", check_conflicting_references),
+    ("empty-skill-body", check_empty_skill_body),
+    ("unsafe-character", check_unsafe_characters),
     ("retired-text", check_retired_text),
 ]
 
@@ -536,6 +613,17 @@ def check_content(
         files_checked += 1
         try:
             parsed = parse_file(path)
+        except UnicodeDecodeError as error:
+            line = len(re.split(rb"\r\n|\r|\n", error.object[: error.start]))
+            findings.append(
+                Finding(
+                    path,
+                    line,
+                    "invalid-utf8",
+                    f"invalid UTF-8 at byte {error.start + 1} (0x{error.object[error.start]:02X}): {error.reason}",
+                )
+            )
+            continue
         except OSError as error:
             findings.append(Finding(path, 1, "unreadable", f"cannot read file: {error}"))
             continue
