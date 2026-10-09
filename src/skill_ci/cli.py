@@ -129,7 +129,7 @@ def build_parser(identity: str) -> argparse.ArgumentParser:
     harness_parser.add_argument("arguments", nargs=argparse.REMAINDER, metavar="COMMAND [ARGS...]")
     init_parser = subcommand("init", initialize, f"set up this repository: write {config.FILE_NAME}, a CI workflow, hook entries, and one empty manifest per skill")
     add_options(init_parser, CheckOptions, ("skills_dir", "evals_dir"))
-    subcommand("update", update, f"move an exact-tag version in {config.FILE_NAME} to the newest release tag, keeping comments and other keys")
+    subcommand("update", update, f"move an exact-tag version in {config.FILE_NAME} to the newest release tag, keeping comments and other keys; on latest or main, refresh the cached commit")
     return parser
 
 
@@ -216,10 +216,12 @@ def update(namespace: argparse.Namespace) -> int:
         return 2
     path, selected = loaded.path, loaded.pin
     shown = os.path.relpath(path)
+    refs = pin.refresh(selected, pin.cache_directory(), datetime.now(UTC))
     if isinstance(selected.version, Track):
-        print(f"{shown}: version is {selected.version}, which floats; update moves only an exact tag, so the file is unchanged")
+        resolved = pin.answer(selected.version, refs)
+        print(f"{shown}: version is {selected.version}, which floats, so the file is unchanged; it now runs {resolved.name} ({resolved.commit})")
         return 0
-    newest = pin.newest_tag(selected, pin.cache_directory(), datetime.now(UTC))
+    newest = pin.newest(refs)
     if selected.version == newest:
         print(f"{shown}: version is already {newest}, the newest tag")
         return 0

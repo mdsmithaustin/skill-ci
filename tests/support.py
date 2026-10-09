@@ -335,6 +335,10 @@ class PinTestCase(unittest.TestCase):
         [cached] = (self.cache / "skill-ci" / "refs").glob("*.json")
         return cached, json.loads(cached.read_text())
 
+    def rewrite_cache(self, **changes: object) -> None:
+        cached, record = self.cache_record()
+        cached.write_text(json.dumps({**record, **changes}))
+
     def tag(self, name: str) -> str:
         commit = self.push_commit(name)
         self.git("tag", name, commit)
