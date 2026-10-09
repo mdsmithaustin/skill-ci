@@ -1,11 +1,17 @@
 # Written by skill-ci init. The version this runs is the one in .skill-ci.toml. The job installs whatever skill-ci the
 # source serves, and that skill-ci runs the pinned version.
 name: skill-checks
-on: [push, pull_request]
+on:
+  push:
+    branches: [@BRANCH@]
+  pull_request:
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
-  skills:
+  skill-checks:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:

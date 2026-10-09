@@ -75,7 +75,14 @@ Fork [#20](https://github.com/mdsmithaustin/skill-eval-harness/pull/20) was clas
 
 These changes fit the existing opt-in and adapter categories. They do not add another accepted difference in evaluation or reopen the exit decision.
 
-The `15cc612` pin is later than the last classification above. It adds the upstream merge `40f2927`, fork #21, #22, and #23, and the upstream commits that merge brought in. The `c23ed79` pin adds fork #25 on top of `15cc612`. None of these are yet classified under the exit test. That classification is the operator's open decision.
+The `15cc612` pin is later than the last classification above. It adds the upstream merge `40f2927`, fork #21, #22, and #23, and the upstream commits that merge brought in. The `c23ed79` pin adds fork #25 on top of `15cc612`. The operator accepted this classification on 2026-10-09.
+
+- **Not patches.** Fork #21 changes docs and CI. Fork #23 renames the distribution.
+- **Adapter edge.** Fork #25 stops agent sessions on SIGINT and SIGTERM.
+- **Opt-in addition.** Fork #22 makes a recovery case optional. `answer_case_input_fingerprint` and `answer_task_fingerprint` add a `recovery` key only when a case declares one, so existing fingerprints are unchanged.
+- **Upstream's own rules.** The upstream merge `40f2927` is not a fork patch. Its upstream commits change upstream's own grading rules, which the fork follows. Its conflict resolutions were not audited for grading changes.
+
+None of these reopens the exit decision.
 
 Leaving stays cheap to assess. The upstream `adewale/skill-eval-harness` revision assessed on 2026-10-01, `2297000`, remains an ancestor of the `c23ed79` pin. Verified on 2026-10-08 with `git merge-base --is-ancestor`. The fork remains a superset of that assessed revision.
 
@@ -103,7 +110,7 @@ no-mistakes runs skill-ci second. When `commands.lint` is set, `init` appends ` 
 
 The cost is losing Dependabot's automatic bump pull requests. Dependabot bumped the `uses:` line by itself and cannot read `.skill-ci.toml`. `skill-ci update` moves an exact-tag pin, and every run of an exact-tag pin prints a notice when a newer tag exists. Both work on GHES with no extra service. An adopter who already runs Renovate can add a custom rule later.
 
-`version` is an exact tag, `latest`, or `main`. no-mistakes tells adopters never to pin its [CI action](https://github.com/kunchenguid/no-mistakes/tree/main/.github/actions/require-no-mistakes) to `@main`. The risk that rule covers is a pull request editing the `main` that checks it. A consumer's pull request cannot edit skill-ci's `main`, so that risk does not apply here. The cost of `latest` and `main` is narrower. A CI run and a local run look the version up separately, so a release between them can make them differ. Every run prints its exact commit on its first line to make that visible. `init` writes the newest tag as an exact tag, so a new adopter gets results they can reproduce.
+`version` is an exact tag, `latest`, or `main`. no-mistakes tells adopters never to pin its [CI action](https://github.com/kunchenguid/no-mistakes/tree/main/.github/actions/require-no-mistakes) to `@main`. The risk that rule covers is a pull request editing the `main` that checks it. A consumer's pull request cannot edit skill-ci's `main`, so that risk does not apply here. The cost of `latest` and `main` is narrower. A CI run and a local run look the version up separately, so a release between them can make them differ. A local run can also reuse a lookup up to a day old, as [Why a tag resolves to a commit](#why-a-tag-resolves-to-a-commit) explains. Every run prints its exact commit on its first line to make that visible. `init` writes the newest tag as an exact tag, so a new adopter gets results they can reproduce.
 
 Five alternatives lost to this design.
 
@@ -131,9 +138,11 @@ skill-ci owns the harness version in any repository that uses it. `pyproject.tom
 
 The prototype on 2026-10-06, with uv 0.12.7, compared the two ways to run a pinned version. `uv tool run --from git+<source>@<commit>` took 0.23 to 0.34 seconds warm and worked with `--offline`. The same command with a tag took 1.31 to 1.81 seconds warm, and `--offline` failed with exit code 1. skill-ci therefore resolves a tag to its commit with `git ls-remote` and always passes the commit to uv.
 
-Resolution has its own cost. skill-ci caches an exact tag for a day per source, so a tag moved on the source can keep its old commit for up to a day. `latest` and `main` ask the source on every run, because following the head is their purpose.
+Resolution has its own cost. skill-ci caches each source's answer for a day (`REFS_FRESH_FOR` in `src/skill_ci/pin.py`), and every pin reuses it while it is fresh. A tag moved on the source can keep its old commit for up to a day. An exact tag that the cache lacks is looked up at once.
 
-Offline, `latest` and `main` run the last answer skill-ci looked up and print a warning that names its commit. A lookup needs the network. The warning lets a local run keep working offline without hiding that its commit may be stale. When nothing was ever looked up, skill-ci exits with a message that says so. An exact tag in the cache needs no lookup.
+`latest` and `main` asked the source on every run until v1.1.0, because following the head is their purpose. On 2026-10-09 the operator judged a network check on every run too costly. They now reuse a cached answer for up to a day, as an exact tag does. The cost is that a local run can run a commit up to a day older than CI, which starts with no cache. `skill-ci update` asks the source at once and refreshes the cache.
+
+Offline, once the cached answer is a day old, `latest` and `main` run the last answer skill-ci looked up and print a warning that names its commit. A lookup needs the network. The warning lets a local run keep working offline without hiding that its commit may be stale. When nothing was ever looked up, skill-ci exits with a message that says so. An exact tag in the cache needs no lookup.
 
 The package version reads `1.0.0` in the commit that gets tagged `v1.0.0`. A pin to `v1.0.0` fails until that tag exists. Pins start there because earlier revisions cannot report that the pinned run started, and a run that cannot report it can happen twice and repeat a paid `run`.
 

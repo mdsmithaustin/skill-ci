@@ -24,7 +24,19 @@ MISE_FILES = ("mise.toml", ".mise.toml")
 NO_MISTAKES_FILE = ".no-mistakes.yaml"
 GITIGNORE = ".gitignore"
 IGNORED_RUN_OUTPUT = ("eval-runs/", "evals/runs/")
-MISE_TASKS = {f"skill-{command}": f"skill-ci {command}" for command in ("check", "lint", "package", "coverage", "validate", "audit", "trigger", "run")}
+MISE_TASKS = {
+    "skill-check": {"description": "Run the model-free checks that CI runs", "run": "skill-ci check"},
+    "skill-lint": {"description": "Check frontmatter, links, sibling references, and retired text", "run": "skill-ci lint"},
+    "skill-package": {"description": "Inspect skill package trees", "run": "skill-ci package"},
+    "skill-coverage": {"description": "Require a populated manifest bound to every skill", "run": "skill-ci coverage"},
+    "skill-validate": {"description": "Validate every manifest with the pinned harness", "run": "skill-ci validate"},
+    "skill-audit": {"description": "Run the readiness audit on every manifest", "run": "skill-ci audit"},
+    "skill-trigger": {"description": "Run the trigger matrix for one skill (paid)", "run": "skill-ci trigger"},
+    "skill-run": {"description": "Run the paired benchmark for one skill (paid)", "run": "skill-ci run"},
+}
+# HEAD names its branch even before the first commit, when origin/HEAD is not set yet.
+BRANCH_REFS = (("refs/remotes/origin/HEAD", "refs/remotes/origin/"), ("HEAD", "refs/heads/"))
+FALLBACK_BRANCH = "main"
 LINT_SUFFIX = " && skill-ci check"
 COMMAND = "skill-ci check"
 BLANK = re.compile(r"[ \t]*(?:#.*)?")
@@ -189,8 +201,19 @@ def write_workflow(layout: Layout) -> list[Outcome]:
             return [kept]
         return [kept, Outcome(Verb.NOTE, f"{WORKFLOW} does not run `{COMMAND}`; add a step that does, or replace the file with the template in the README")]
     template = resources.files("skill_ci").joinpath("templates/skill-checks.yml").read_text(encoding="utf-8")
-    save(path, template.replace("@SOURCE@", json.dumps(layout.pin.source, ensure_ascii=False)).encode("utf-8"))
-    return [Outcome(Verb.WROTE, str(WORKFLOW))]
+    branch = default_branch(layout.root)
+    text = template.replace("@SOURCE@", json.dumps(layout.pin.source, ensure_ascii=False)).replace("@BRANCH@", json.dumps(branch, ensure_ascii=False))
+    save(path, text.encode("utf-8"))
+    return [Outcome(Verb.WROTE, str(WORKFLOW), f"push runs on {branch}")]
+
+
+def default_branch(root: Path) -> str:
+    for ref, prefix in BRANCH_REFS:
+        named = children.run(["git", "symbolic-ref", "--quiet", ref], capture=True, cwd=root)
+        target = named.stdout.decode(errors="replace").strip()
+        if named.returncode == 0 and target.startswith(prefix):
+            return target.removeprefix(prefix)
+    return FALLBACK_BRANCH
 
 
 def save(path: Path, data: bytes) -> None:
@@ -397,13 +420,16 @@ def add_mise_tasks(layout: Layout) -> list[Outcome]:
     except (UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
         return [Outcome(Verb.TODO, f"add the skill tasks to {path.name}", f"cannot read it: {error}")]
     tasks = configured.get("tasks", {})
-    missing = {name: command for name, command in MISE_TASKS.items() if not isinstance(tasks, dict) or name not in tasks}
+    missing = {name: table for name, table in MISE_TASKS.items() if not isinstance(tasks, dict) or name not in tasks}
     if not missing:
         return [Outcome(Verb.KEPT, path.name, "already has the skill tasks")]
     newline = "\r\n" if "\r\n" in text else "\n"
-    tables = "".join(f"{newline}[tasks.{name}]{newline}run = {json.dumps(command)}{newline}" for name, command in missing.items())
+    tables = "".join(
+        f"{newline}[tasks.{name}]{newline}description = {json.dumps(table['description'])}{newline}run = {json.dumps(table['run'])}{newline}"
+        for name, table in missing.items()
+    )
     edited = text + ("" if not text or text.endswith("\n") else newline) + tables
-    expected = {**configured, "tasks": {**(tasks if isinstance(tasks, dict) else {}), **{name: {"run": command} for name, command in missing.items()}}}
+    expected = {**configured, "tasks": {**(tasks if isinstance(tasks, dict) else {}), **missing}}
     try:
         safe = tomllib.loads(edited) == expected
     except tomllib.TOMLDecodeError:

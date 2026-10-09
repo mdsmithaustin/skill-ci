@@ -229,6 +229,8 @@ class ChildStopTests(PinTestCase):
         ):
             with self.subTest(file=name):
                 path = self.pin(version)
+                if self.cache.exists():
+                    self.expire_cache()
                 listing = sorted(os.listdir(directory)) if directory.exists() else []
                 process = self.start(sys.executable, str(driver), command, DRIVER_STOP=stop)
                 self.assertEqual(process.wait(timeout=30), 128 + signal.SIGTERM)

@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "skill-ci"
-version = "1.0.0"
+version = "1.1.0"
 description = "Model-free checks and operator-local eval runs for repositories of Agent Skills."
 readme = "README.md"
 requires-python = ">=3.12"

@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -65,7 +66,20 @@ pre-push:
     skill-ci-check:
       run: skill-ci check
 """
-SKILL_CHECK_TASKS = {f"skill-{command}": f"skill-ci {command}" for command in ("check", "lint", "package", "coverage", "validate", "audit", "trigger", "run")}
+SKILL_CHECK_TASKS = {
+    "skill-check": {"description": "Run the model-free checks that CI runs", "run": "skill-ci check"},
+    "skill-lint": {"description": "Check frontmatter, links, sibling references, and retired text", "run": "skill-ci lint"},
+    "skill-package": {"description": "Inspect skill package trees", "run": "skill-ci package"},
+    "skill-coverage": {"description": "Require a populated manifest bound to every skill", "run": "skill-ci coverage"},
+    "skill-validate": {"description": "Validate every manifest with the pinned harness", "run": "skill-ci validate"},
+    "skill-audit": {"description": "Run the readiness audit on every manifest", "run": "skill-ci audit"},
+    "skill-trigger": {"description": "Run the trigger matrix for one skill (paid)", "run": "skill-ci trigger"},
+    "skill-run": {"description": "Run the paired benchmark for one skill (paid)", "run": "skill-ci run"},
+}
+CONCURRENCY = {
+    "group": "${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}",
+    "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
+}
 
 
 @dataclass(frozen=True)
@@ -111,7 +125,7 @@ class InitTestCase(unittest.TestCase):
         self.repository = self.root / "repository"
         write_skill(self.repository / "skills" / "alpha")
         write_skill(self.repository / "skills" / "beta")
-        self.git("init", "-q", cwd=self.repository)
+        self.git("init", "-q", "-b", "main", cwd=self.repository)
 
     def git(self, *arguments: str, cwd: Path | None = None) -> str:
         return git(*arguments, cwd=cwd or self.repository, env=self.environment)
@@ -162,7 +176,7 @@ class BareRepositoryTests(InitTestCase):
             result.lines,
             [
                 "wrote .skill-ci.toml (version v1.1.0)",
-                "wrote .github/workflows/skill-checks.yml",
+                "wrote .github/workflows/skill-checks.yml (push runs on main)",
                 "wrote evals/alpha/shared-benchmark.json",
                 "wrote evals/beta/shared-benchmark.json",
                 "wrote .gitignore (added eval-runs/, evals/runs/)",
@@ -366,7 +380,7 @@ class WorkflowTests(InitTestCase):
         self.init()
         text = (self.repository / ".github/workflows/skill-checks.yml").read_text()
         self.assertEqual(text.count("pip install uv==0.12.7"), 1)
-        job = self.workflow()["jobs"]["skills"]
+        job = self.workflow()["jobs"]["skill-checks"]
         self.assertEqual(job["env"], {"SKILL_CI_SOURCE": config.DEFAULT_SOURCE})
         self.assertEqual(
             [step.get("run") for step in job["steps"] if "run" in step],
@@ -378,15 +392,49 @@ class WorkflowTests(InitTestCase):
     def test_the_workflow_names_the_source_the_pin_names(self) -> None:
         write(self.repository / config.FILE_NAME, f'version = "v1.1.0"\nsource = "{self.source}"\n')
         self.assertEqual(self.init().status, 0)
-        self.assertEqual(self.workflow()["jobs"]["skills"]["env"], {"SKILL_CI_SOURCE": self.source.as_uri()})
+        self.assertEqual(self.workflow()["jobs"]["skill-checks"]["env"], {"SKILL_CI_SOURCE": self.source.as_uri()})
 
     def test_a_source_with_shell_characters_stays_out_of_the_shell_text(self) -> None:
         source = 'ssh://git@example.com/a"b;c$d.git'
         write(self.repository / config.FILE_NAME, f"version = \"v1.1.0\"\nsource = '{source}'\n")
         self.assertEqual(self.init().status, 0)
-        job = self.workflow()["jobs"]["skills"]
+        job = self.workflow()["jobs"]["skill-checks"]
         self.assertEqual(job["env"], {"SKILL_CI_SOURCE": source})
         self.assertNotIn(source, str(job["steps"]))
+
+    def restart(self, *arguments: str) -> None:
+        shutil.rmtree(self.repository / ".git")
+        self.git("init", "-q", *arguments)
+
+    def test_the_workflow_runs_every_pull_request_and_pushes_to_the_default_branch_only(self) -> None:
+        self.restart("-b", "trunk")
+        result = self.init()
+        self.assertEqual(result.status, 0, result.stderr)
+        self.assertIn("wrote .github/workflows/skill-checks.yml (push runs on trunk)", result.lines)
+        workflow = self.workflow()
+        self.assertEqual(workflow[True], {"push": {"branches": ["trunk"]}, "pull_request": None})
+        self.assertEqual(workflow["concurrency"], CONCURRENCY)
+        self.assertEqual(list(workflow["jobs"]), ["skill-checks"])
+
+    def test_the_branch_origin_names_wins_over_the_current_branch(self) -> None:
+        self.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop")
+        result = self.init()
+        self.assertIn("wrote .github/workflows/skill-checks.yml (push runs on develop)", result.lines)
+        self.assertEqual(self.workflow()[True]["push"], {"branches": ["develop"]})
+
+    def test_a_detached_head_and_no_remote_fall_back_to_main(self) -> None:
+        self.restart("-b", "trunk")
+        self.git("commit", "-q", "--allow-empty", "-m", "first")
+        self.git("checkout", "-q", "--detach")
+        result = self.init()
+        self.assertIn("wrote .github/workflows/skill-checks.yml (push runs on main)", result.lines)
+        self.assertEqual(self.workflow()[True]["push"], {"branches": ["main"]})
+
+    def test_a_branch_name_full_of_yaml_characters_stays_one_string(self) -> None:
+        name = 'release/1.0,#x"y\'z{w}'
+        self.git("symbolic-ref", "HEAD", f"refs/heads/{name}")
+        self.assertEqual(self.init().status, 0)
+        self.assertEqual(self.workflow()[True]["push"], {"branches": [name]})
 
     def test_an_existing_workflow_is_kept(self) -> None:
         path = write(self.repository / ".github/workflows/skill-checks.yml", "name: mine\njobs:\n  skills:\n    steps:\n      - run: skill-ci check --fast && skill-ci check\n")
@@ -530,9 +578,11 @@ class MiseTests(InitTestCase):
         write(self.repository / "mise.toml", '[tools]\nuv = "0.12.7"')
         result = self.init()
         self.assertEqual(result.status, 0, result.stderr)
-        self.assertEqual(self.tasks(), {name: {"run": command} for name, command in SKILL_CHECK_TASKS.items()})
+        self.assertEqual(self.tasks(), SKILL_CHECK_TASKS)
         self.assertIn(f"updated mise.toml (added {', '.join(SKILL_CHECK_TASKS)})", result.lines)
-        self.assertTrue((self.repository / "mise.toml").read_text().startswith('[tools]\nuv = "0.12.7"\n\n[tasks.skill-check]\nrun = "skill-ci check"\n'))
+        self.assertTrue((self.repository / "mise.toml").read_text().startswith(
+            '[tools]\nuv = "0.12.7"\n\n[tasks.skill-check]\ndescription = "Run the model-free checks that CI runs"\nrun = "skill-ci check"\n'
+        ))
 
     def test_a_task_the_repository_already_defines_is_kept(self) -> None:
         text = '[tasks.skill-lint]\nrun = "make lint"\n\n[tasks.test]\nrun = "make test"\n'
@@ -684,7 +734,7 @@ class TemplateTests(unittest.TestCase):
         for name in ("skill-checks.yml", "lefthook.yml"):
             with self.subTest(name):
                 text = resources.files("skill_ci").joinpath("templates", name).read_text(encoding="utf-8")
-                self.assertIsInstance(yaml.safe_load(text.replace("@SOURCE@", '"https://example.com/skill-ci.git"')), dict)
+                self.assertIsInstance(yaml.safe_load(text.replace("@SOURCE@", '"https://example.com/skill-ci.git"').replace("@BRANCH@", '"main"')), dict)
         self.assertEqual(
             init.lefthook_commands(),
             [("pre-commit", "skill-ci-check-fast", "skill-ci check --fast"), ("pre-push", "skill-ci-check", "skill-ci check")],

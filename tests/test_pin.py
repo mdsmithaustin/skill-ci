@@ -57,6 +57,8 @@ class ResolutionTests(PinTestCase):
         self.pin("main")
         self.handed_off(self.skill_ci("lint"), self.main, "lint")
         moved = self.push_commit("main moves")
+        self.handed_off(self.skill_ci("lint"), self.main, "lint")
+        self.expire_cache()
         result = self.skill_ci("lint")
         self.handed_off(result, moved, "lint")
         self.assertEqual(result.stderr.splitlines(), [f"skill-ci main ({moved})"])
@@ -96,6 +98,7 @@ class OfflineTests(PinTestCase):
             with self.subTest(version=version):
                 self.pin(version)
                 self.handed_off(self.skill_ci("lint"), commit, "lint")
+        self.expire_cache()
         self.unreachable()
         for version, commit in (("latest", self.commits["v0.10.0"]), ("main", self.main)):
             with self.subTest(version=version):
@@ -223,6 +226,45 @@ class OfflineTests(PinTestCase):
         self.handed_off(result, self.commits["v0.9.0"], "lint")
         self.assertFalse(self.git_log.exists(), "a fresh cache answers an exact tag without git")
         self.assertNotIn("warning", result.stderr)
+
+    def test_a_floating_pin_reads_a_fresh_cache_without_the_network(self) -> None:
+        for version, commit in (("main", self.main), ("latest", self.commits["v0.10.0"])):
+            with self.subTest(version=version):
+                shutil.rmtree(self.cache, ignore_errors=True)
+                self.git_log.unlink(missing_ok=True)
+                self.pin(version)
+                shimmed = self.shimmed()
+                self.handed_off(self.skill_ci("lint", **shimmed), commit, "lint")
+                self.assertEqual(self.git_log.read_text(), f"ls-remote {self.source.as_uri()} refs/heads/main refs/tags/v*\n")
+                self.git_log.unlink()
+                result = self.skill_ci("lint", **shimmed)
+                self.handed_off(result, commit, "lint")
+                self.assertFalse(self.git_log.exists(), "a fresh cache answers a floating pin without git")
+                self.assertEqual(result.stderr.splitlines(), [f"skill-ci {version if version == 'main' else 'v0.10.0'} ({commit})"])
+
+    def test_a_floating_pin_asks_the_source_when_the_cache_is_old_future_dated_foreign_or_missing(self) -> None:
+        old = {"fetched_at": (datetime.now(UTC) - timedelta(days=2)).isoformat()}
+        future = {"fetched_at": "2099-01-01T00:00:00+00:00"}
+        foreign = {"source": "https://git.example.com/skill-ci.git"}
+        for version in ("main", "latest"):
+            for state, changes in (("old", old), ("future-dated", future), ("from another source", foreign), ("missing", None)):
+                with self.subTest(version=version, cache=state):
+                    shutil.rmtree(self.cache, ignore_errors=True)
+                    self.git_log.unlink(missing_ok=True)
+                    self.pin(version)
+                    shimmed = self.shimmed()
+                    self.skill_ci("lint", **shimmed)
+                    self.uv_log.unlink()
+                    self.git_log.unlink()
+                    if changes is None:
+                        shutil.rmtree(self.cache)
+                    else:
+                        self.rewrite_cache(**changes)
+                    result = self.skill_ci("lint", **shimmed)
+                    self.assertEqual(result.returncode, 3, result.stderr)
+                    self.assertEqual(self.git_log.read_text(), f"ls-remote {self.source.as_uri()} refs/heads/main refs/tags/v*\n")
+                    self.assertNotIn("warning", result.stderr)
+                    self.uv_log.unlink()
 
     def test_an_exact_tag_refreshes_the_newer_tag_notice_after_a_day(self) -> None:
         self.pin("v0.9.0")
@@ -650,16 +692,45 @@ class UpdateTests(PinTestCase):
         )
         self.assertEqual(path.read_text(), f'version = "v2.0.0"\nsource = "{self.source}"\n')
 
-    def test_update_leaves_a_floating_pin_alone(self) -> None:
-        for version in ("latest", "main"):
+    def test_update_on_a_floating_pin_fetches_refreshes_the_cache_and_leaves_the_file(self) -> None:
+        for version in ("main", "latest"):
             with self.subTest(version=version):
+                shutil.rmtree(self.cache, ignore_errors=True)
                 text = f'# Float on purpose.\nversion = "{version}"  # keep\nsource = "{self.source}"\n'
                 path = write(self.consumer / ".skill-ci.toml", text)
+                self.skill_ci("lint")
+                self.uv_log.unlink()
+                hour_ago = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+                self.rewrite_cache(fetched_at=hour_ago)
+                name, commit = (version, self.push_commit("main moves")) if version == "main" else ("v0.10.0", self.commits["v0.10.0"])
+                self.git_log.unlink(missing_ok=True)
                 result = self.skill_ci("update", **self.shimmed())
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(result.stdout, f".skill-ci.toml: version is {version}, which floats; update moves only an exact tag, so the file is unchanged\n")
+                self.assertEqual(
+                    result.stdout,
+                    f".skill-ci.toml: version is {version}, which floats, so the file is unchanged; it now runs {name} ({commit})\n",
+                )
+                self.assertEqual(self.git_log.read_text(), f"ls-remote {self.source.as_uri()} refs/heads/main refs/tags/v*\n")
                 self.assertEqual(path.read_text(), text)
-        self.assertFalse(self.git_log.exists())
+                self.assertGreater(datetime.fromisoformat(self.cache_record()[1]["fetched_at"]), datetime.fromisoformat(hour_ago))
+                self.assertFalse(self.uv_log.exists())
+
+    def test_update_on_a_floating_pin_needs_the_source_even_with_a_fresh_cache(self) -> None:
+        for version in ("main", "latest"):
+            for cached in (True, False):
+                with self.subTest(version=version, cached=cached):
+                    shutil.rmtree(self.cache, ignore_errors=True)
+                    self.pin(version)
+                    if cached:
+                        self.skill_ci("lint")
+                        self.uv_log.unlink()
+                    self.unreachable()
+                    result = self.skill_ci("update")
+                    (self.root / "moved.git").rename(self.source)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertRegex(result.stderr, rf"^skill-ci \S+ \(commit unknown\)\nskill-ci: cannot reach {re.escape(self.source.as_uri())} \(.*\)\n$")
+                    self.assertEqual((self.consumer / ".skill-ci.toml").read_text(), f'version = "{version}"\nsource = "{self.source}"\n')
 
     def test_a_write_that_fails_leaves_the_file_whole(self) -> None:
         path = self.pin("v0.9.0", "# " + "padding " * 1000)

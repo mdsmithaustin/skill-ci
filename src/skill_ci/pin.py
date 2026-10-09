@@ -24,7 +24,7 @@ STARTED = "SKILL_CI_STARTED"
 HANDOFF_FAILED = 126
 # uv's console script starts Python without -I, so these would load other code under the pinned commit's name.
 SHADOWING = frozenset({"PYTHONPATH", "PYTHONHOME"})
-NEWER_TAG_CHECK_INTERVAL = timedelta(days=1)
+REFS_FRESH_FOR = timedelta(days=1)
 LS_REMOTE_TIMEOUT = 5
 COMMIT = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 
@@ -65,10 +65,9 @@ class Resolved:
 def resolve(pin: Pin, cache: Path, now: datetime) -> Resolved:
     cached = read_cache(cache, pin.source)
     if (
-        isinstance(pin.version, Tag)
-        and cached is not None
-        and pin.version in cached.tags
-        and timedelta(0) <= now - cached.fetched_at < NEWER_TAG_CHECK_INTERVAL
+        cached is not None
+        and timedelta(0) <= now - cached.fetched_at < REFS_FRESH_FOR
+        and (not isinstance(pin.version, Tag) or pin.version in cached.tags)
     ):
         return answer(pin.version, cached)
     try:
@@ -103,9 +102,9 @@ def newest(refs: Refs) -> Tag:
     return max(refs.tags)
 
 
-def newest_tag(pin: Pin, cache: Path, now: datetime) -> Tag:
+def refresh(pin: Pin, cache: Path, now: datetime) -> Refs:
     try:
-        return newest(fetch(pin, cache, now))
+        return fetch(pin, cache, now)
     except Unreachable as error:
         raise PinError(f"cannot reach {pin.source} ({error})") from error
 
