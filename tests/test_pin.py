@@ -58,7 +58,7 @@ class ResolutionTests(PinTestCase):
         self.handed_off(self.skill_ci("lint"), self.main, "lint")
         moved = self.push_commit("main moves")
         self.handed_off(self.skill_ci("lint"), self.main, "lint")
-        self.rewrite_cache(fetched_at=(datetime.now(UTC) - timedelta(days=2)).isoformat())
+        self.expire_cache()
         result = self.skill_ci("lint")
         self.handed_off(result, moved, "lint")
         self.assertEqual(result.stderr.splitlines(), [f"skill-ci main ({moved})"])
@@ -98,7 +98,7 @@ class OfflineTests(PinTestCase):
             with self.subTest(version=version):
                 self.pin(version)
                 self.handed_off(self.skill_ci("lint"), commit, "lint")
-        self.rewrite_cache(fetched_at=(datetime.now(UTC) - timedelta(days=2)).isoformat())
+        self.expire_cache()
         self.unreachable()
         for version, commit in (("latest", self.commits["v0.10.0"]), ("main", self.main)):
             with self.subTest(version=version):

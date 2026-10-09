@@ -339,6 +339,9 @@ class PinTestCase(unittest.TestCase):
         cached, record = self.cache_record()
         cached.write_text(json.dumps({**record, **changes}))
 
+    def expire_cache(self) -> None:
+        self.rewrite_cache(fetched_at="2000-01-01T00:00:00+00:00")
+
     def tag(self, name: str) -> str:
         commit = self.push_commit(name)
         self.git("tag", name, commit)

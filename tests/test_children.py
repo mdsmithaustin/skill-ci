@@ -230,8 +230,7 @@ class ChildStopTests(PinTestCase):
             with self.subTest(file=name):
                 path = self.pin(version)
                 if self.cache.exists():
-                    # A fresh cache would answer a floating pin without the fetch that writes it.
-                    self.rewrite_cache(fetched_at="2000-01-01T00:00:00+00:00")
+                    self.expire_cache()
                 listing = sorted(os.listdir(directory)) if directory.exists() else []
                 process = self.start(sys.executable, str(driver), command, DRIVER_STOP=stop)
                 self.assertEqual(process.wait(timeout=30), 128 + signal.SIGTERM)
