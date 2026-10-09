@@ -140,7 +140,7 @@ The prototype on 2026-10-06, with uv 0.12.7, compared the two ways to run a pinn
 
 Resolution has its own cost. skill-ci caches each source's answer for a day (`REFS_FRESH_FOR` in `src/skill_ci/pin.py`), and every pin reuses it while it is fresh. A tag moved on the source can keep its old commit for up to a day. An exact tag that the cache lacks is looked up at once.
 
-`latest` and `main` asked the source on every run until v1.1.0, because following the head is their purpose. On 2026-10-09 the operator judged a network check on every run too costly. They now reuse the cached answer for the same day. The cost is that a local run can run a commit up to a day older than CI, which starts with no cache. `skill-ci update` asks the source at once and refreshes the cache.
+`latest` and `main` asked the source on every run until v1.1.0, because following the head is their purpose. On 2026-10-09 the operator judged a network check on every run too costly. They now reuse a cached answer for up to a day, as an exact tag does. The cost is that a local run can run a commit up to a day older than CI, which starts with no cache. `skill-ci update` asks the source at once and refreshes the cache.
 
 Offline, `latest` and `main` run the last answer skill-ci looked up and print a warning that names its commit. A lookup needs the network. The warning lets a local run keep working offline without hiding that its commit may be stale. When nothing was ever looked up, skill-ci exits with a message that says so. An exact tag in the cache needs no lookup.
 
