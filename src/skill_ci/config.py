@@ -49,7 +49,7 @@ OPTIONS: dict[str, tuple[str, dict[str, Any]]] = {
             "type": InvocationPolicy,
             "choices": tuple(InvocationPolicy),
             "help": "where a skill's invocation gate lives: paired requires agents/openai.yaml to match disable-model-invocation; "
-            "openai-yaml gates only in agents/openai.yaml and rejects disable-model-invocation",
+            "openai-yaml gates only in agents/openai.yaml and rejects disable-model-invocation: true",
         },
     ),
     "content_ignore_file": (
