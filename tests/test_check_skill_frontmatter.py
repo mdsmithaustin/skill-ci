@@ -232,7 +232,7 @@ class FrontmatterChecker(unittest.TestCase):
             self.assertEqual(self.check(self.corpus(open_entry), policy="openai-yaml"), (0, ""))
             self.assertEqual(self.check(self.corpus(gated_entry), policy="openai-yaml"), (1, mismatch))
 
-    def test_openai_yaml_policy_reports_an_unreadable_gate_once(self) -> None:
+    def test_openai_yaml_policy_reports_an_erroring_gate_once(self) -> None:
         self.skill(frontmatter='name: a\ndescription: "valid description"')
         gate = self.gate("a", 'policy:\n  allow_implicit_invocation: "false"\n')
         gated = [{"skill": "a", "example_request": "x", "description_contains": ["valid"], "implicit_allowed": False}]
