@@ -237,6 +237,7 @@ evals_dir = "evals"
 | `skills_dir` | path | `skills` | `init`, `lint`, `package`, `coverage`, `validate`, `audit`, `check` | The directory whose children each hold a `SKILL.md`. |
 | `evals_dir` | path | unset | `init`, `coverage`, `validate`, `audit`, `check`, `trigger`, `run` | Where manifests live. Unset means each manifest sits at `<skill>/evals/`. The directory must be named `evals`, and every skill must sit inside its parent. |
 | `pii_scope` | `skills` or `repository` | `skills` | `check` | `skills` scans tracked files in the skills directory for personal data. `repository` scans every tracked file. |
+| `invocation_policy` | `paired` or `openai-yaml` | `paired` | `lint`, `check` | Where a skill's invocation gate lives. See [Invocation policy](#invocation-policy). |
 | `trigger_cases` | path | unset | `lint`, `check` | A version-1 trigger declaration file. See [Trigger declaration file](#trigger-declaration-file). |
 | `content_ignore_file` | path | unset | `lint`, `check` | Skill names that live in another repository, separated by commas or newlines, with `#` comment lines allowed. |
 | `content_link_exceptions_file` | path | unset | `lint`, `check` | A link-exceptions policy. See [Allow links to files a template creates](docs/link-exceptions.md). |
@@ -258,6 +259,15 @@ evals_dir = "evals"
 An unknown key is an error that names the key and, when one is close, suggests the right spelling. The version that runs decides what is unknown, so a key from a newer release is not an error to an older command that only hands the run on. The key is an error when the pin is the commit already running, when the version cannot be resolved, and in every command under the pinned run itself. Otherwise the pinned run judges it. Skill-ci checks every known key for the right type before it resolves a version or hands off. `update` ignores unknown keys.
 
 An invalid `.skill-ci.toml` makes every command exit with code 2, `--help` and `--version` included, because the file decides which version runs.
+
+### Invocation policy
+
+The frontmatter check compares two places that can stop a model from invoking a skill on its own, the `disable-model-invocation` field in `SKILL.md` and `policy.allow_implicit_invocation` in `agents/openai.yaml`. `invocation_policy` picks the rule.
+
+- **`paired`** is the default. `agents/openai.yaml` must agree with `disable-model-invocation`. A skill with `disable-model-invocation: true` needs `policy.allow_implicit_invocation: false`, and a skill without the field needs the policy absent or `true`.
+- **`openai-yaml`** makes `agents/openai.yaml` the only gate. A skill with no `agents/openai.yaml`, or with no `policy.allow_implicit_invocation`, is open to implicit invocation, and `policy.allow_implicit_invocation: false` gates it. No comparison with the field happens. A `SKILL.md` that sets `disable-model-invocation: true` fails, because on Claude Code that field makes the Skill tool refuse the skill by name, even when another skill names it. Remove the field and gate the skill in `agents/openai.yaml`. `disable-model-invocation: false` passes.
+
+Both policies fail a non-boolean `disable-model-invocation` or `policy.allow_implicit_invocation`, and a `policy` that is not a mapping. A trigger declaration's `implicit_allowed` is compared with the value the policy yields: the field under `paired`, and `agents/openai.yaml` under `openai-yaml`.
 
 ### Where the file is found, and what its paths mean
 
@@ -384,7 +394,7 @@ This repository's own `mise.toml` adds a `test` task that runs the unit tests.
 
 ### What the lints check
 
-- The frontmatter check validates each `SKILL.md` against the agentskills.io metadata rules and the Codex invocation policy. With `trigger_cases` set, it also fails for any skill missing from the trigger declaration file.
+- The frontmatter check validates each `SKILL.md` against the agentskills.io metadata rules and the Codex invocation policy, as `invocation_policy` sets it. With `trigger_cases` set, it also fails for any skill missing from the trigger declaration file.
 - The content check fails on relative links whose target does not exist, bold skill names that match no known skill, and unclosed code fences. A bold name counts as a skill name when its line contains the word "skill". A conventions file can add name prefixes and retired text for your repository. See [Add your repository's naming conventions to the content check](docs/content-conventions.md).
 - Bare resource paths in whole inline-code spans, such as `scripts/extract.py`, `references/guide.md`, and `assets/template.json`, must exist relative to the Markdown file that mentions them. Quoted paths can contain spaces. Commands, directory-only mentions, globs, dynamic placeholders, and fenced examples are skipped.
 - Reference definitions that reuse a normalized label with a different destination or title fail. Identical repeats pass. CommonMark uses the first definition, so a later conflicting definition can silently point an agent at the wrong resource.
@@ -423,7 +433,7 @@ Use `skill-ci harness` instead of installing the harness yourself. The upstream 
 }
 ```
 
-Each `description_contains` entry must appear in that skill's `description`, compared case-insensitively with whitespace collapsed. `implicit_allowed` must match the skill's Codex invocation policy. The check fails for a missing, duplicate, or stale declaration. It does not run a model. `skill-ci trigger` measures real triggering from the eval manifest instead.
+Each `description_contains` entry must appear in that skill's `description`, compared case-insensitively with whitespace collapsed. `implicit_allowed` must match the skill's Codex invocation policy under the chosen [`invocation_policy`](#invocation-policy). The check fails for a missing, duplicate, or stale declaration. It does not run a model. `skill-ci trigger` measures real triggering from the eval manifest instead.
 
 ## Run output and host isolation
 

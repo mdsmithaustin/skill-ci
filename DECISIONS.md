@@ -182,6 +182,12 @@ Only description-triggerable skills get the trigger matrix. For skills gated fro
 
 Mode-to-skill routing is the primary trigger measurement, not bare description matching. A harvest of six thousand three hundred real prompts across both harnesses found that skills reach context through modes and plays, not through their descriptions. Harness-native description-driven loads were in single digits across the entire history. Measuring only bare descriptions would measure a path that is nearly unused. Bare description matching is kept as a secondary signal, because it is what a standalone install of a skill depends on.
 
+## Where a skill's invocation gate lives
+
+The frontmatter check began by requiring `agents/openai.yaml` `policy.allow_implicit_invocation` to equal `not disable-model-invocation`, so the two gates never disagreed. A consuming repository then removed `disable-model-invocation` from 47 skills. It reported that on Claude Code the field makes the Skill tool refuse a skill even when another skill names it, and that its own notes were therefore unreachable. It hides those skills' descriptions with Claude's user-scope `skillOverrides: name-only` setting and gates them for Codex in `agents/openai.yaml` alone. The paired rule reported 94 errors on that tree under v1.1.0.
+
+The `invocation_policy` key (`--invocation-policy`) keeps the paired rule as the default and adds `openai-yaml`. Under it, `agents/openai.yaml` is the only gate, and a `SKILL.md` that sets `disable-model-invocation: true` is an error whose message names the Skill tool refusal and the fix. The default stays `paired` so a repository that relies on the field keeps its check. `disable-model-invocation: false` passes under `openai-yaml`, since it does not stop the Skill tool and the message would otherwise be false. The trigger declaration check compares `implicit_allowed` with the gate the policy reads, so a repository on `openai-yaml` declares what Codex sees. Whether the Skill tool refuses a flagged skill comes from the consuming repository's report and was not re-measured here.
+
 ## Where cases come from
 
 Trigger rows are harvested from local session history with ground truth taken from whether the skill actually loaded, then reviewed by a person before use. Near-miss negatives are written by hand only where history has none. Harvested prompts are the least artificial corpus available and their labels are observed rather than asserted.
