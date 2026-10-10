@@ -175,9 +175,8 @@ def apply_invocation_policy(skill: SkillMetadata, policy: InvocationPolicy) -> t
     allowed, errors = read_openai_policy(path)
     if policy is InvocationPolicy.OPENAI_YAML:
         gate = None if errors else allowed is not False
-        if not skill.implicit_allowed:
-            errors.append(Diagnostic(skill.path, OPENAI_YAML_FLAG))
-        return replace(skill, implicit_allowed=gate), errors
+        flag = [] if skill.implicit_allowed else [Diagnostic(skill.path, OPENAI_YAML_FLAG)]
+        return replace(skill, implicit_allowed=gate), errors + flag
     if errors:
         return skill, errors
     if allowed is None:

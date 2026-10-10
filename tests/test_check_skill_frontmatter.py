@@ -241,6 +241,20 @@ class FrontmatterChecker(unittest.TestCase):
         self.assertEqual(self.check(corpus, policy="openai-yaml"), expected)
         self.assertEqual(self.check(self.corpus([{**gated[0], "implicit_allowed": True}]), policy="openai-yaml"), expected)
 
+    def test_openai_yaml_policy_compares_a_flagged_skill_with_its_readable_gate(self) -> None:
+        flagged = self.skill(frontmatter='name: a\ndescription: "valid description"\ndisable-model-invocation: true')
+        self.gate("a", "policy:\n  allow_implicit_invocation: false\n")
+        corpus = self.corpus([{"skill": "a", "example_request": "x", "description_contains": ["valid"], "implicit_allowed": True}])
+        self.assertEqual(
+            self.check(corpus, policy="openai-yaml"),
+            (
+                1,
+                f"{flagged}: disable-model-invocation: true makes Claude's Skill tool refuse this skill by name, even when another skill names it; "
+                "remove it and set policy.allow_implicit_invocation: false in agents/openai.yaml\n"
+                f"{corpus}: trigger declaration 1.implicit_allowed does not match 'a'\n",
+            ),
+        )
+
     def test_invalid_utf8_in_openai_yaml_is_a_diagnostic_and_other_skills_are_checked(self) -> None:
         self.skill()
         gate = self.gate("a", "")
