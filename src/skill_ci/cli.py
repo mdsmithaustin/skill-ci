@@ -17,7 +17,7 @@ from skill_ci.harness import Command
 from skill_ci.runs import RunOptions, TriggerOptions
 from skill_ci.suite import CheckOptions
 
-LINT = ("skills_dir", "trigger_cases", "content_ignore_file", "content_link_exceptions_file", "content_conventions_file")
+LINT = ("skills_dir", "trigger_cases", "invocation_policy", "content_ignore_file", "content_link_exceptions_file", "content_conventions_file")
 MANIFESTS = ("skills_dir", "evals_dir")
 
 

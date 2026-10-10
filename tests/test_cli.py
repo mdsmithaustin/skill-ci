@@ -436,6 +436,29 @@ class LintTests(ConsumerTestCase):
         self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
         self.assertEqual(lines(allowed), ["checks run: 2; failed: 0"])
 
+    def test_invocation_policy_chooses_where_a_skill_is_gated(self) -> None:
+        write(self.skill / "agents/openai.yaml", "policy:\n  allow_implicit_invocation: false\n")
+        paired = self.skill_ci("lint")
+        self.assertEqual(paired.returncode, 1, paired.stdout + paired.stderr)
+        self.assertIn(
+            "skills/example/agents/openai.yaml: policy.allow_implicit_invocation must match disable-model-invocation",
+            lines(paired),
+        )
+        gated = self.skill_ci("lint", "--invocation-policy", "openai-yaml")
+        self.assertEqual(gated.returncode, 0, gated.stdout + gated.stderr)
+        self.assertEqual(lines(gated), ["checks run: 2; failed: 0"])
+        write(self.skill / "SKILL.md", "---\nname: example\ndescription: Use when asked for example.\ndisable-model-invocation: true\n---\n# example\n")
+        flagged = self.skill_ci("lint", "--invocation-policy", "openai-yaml")
+        self.assertEqual(flagged.returncode, 1, flagged.stdout + flagged.stderr)
+        self.assertIn(
+            "skills/example/SKILL.md: disable-model-invocation: true makes Claude's Skill tool refuse this skill by name, "
+            "even when another skill names it; remove it and set policy.allow_implicit_invocation: false in agents/openai.yaml",
+            lines(flagged),
+        )
+        invalid = self.skill_ci("lint", "--invocation-policy", "claude")
+        self.assertEqual(invalid.returncode, 2, invalid.stdout + invalid.stderr)
+        self.assertIn("argument --invocation-policy: invalid InvocationPolicy value: 'claude'", invalid.stderr)
+
     def test_conventions_file_flags_retired_text(self) -> None:
         self.append("\nRun /retired here.\n")
         quiet = self.skill_ci("lint")

@@ -13,6 +13,7 @@ from typing import Any, NewType
 from urllib.parse import unquote, urlsplit
 
 from skill_ci import files
+from skill_ci.checks.frontmatter import InvocationPolicy
 from skill_ci.runs import Agent
 from skill_ci.suite import PiiScope
 
@@ -41,6 +42,15 @@ OPTIONS: dict[str, tuple[str, dict[str, Any]]] = {
     "trigger_cases": (
         "--trigger-cases",
         {"type": Path, "metavar": "FILE", "help": "version-1 trigger declaration corpus that must declare every skill"},
+    ),
+    "invocation_policy": (
+        "--invocation-policy",
+        {
+            "type": InvocationPolicy,
+            "choices": tuple(InvocationPolicy),
+            "help": "where a skill's invocation gate lives: paired requires agents/openai.yaml to match disable-model-invocation; "
+            "openai-yaml gates only in agents/openai.yaml and rejects disable-model-invocation",
+        },
     ),
     "content_ignore_file": (
         "--content-ignore-file",

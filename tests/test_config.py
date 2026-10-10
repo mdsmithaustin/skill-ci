@@ -14,6 +14,7 @@ from support import ENVIRONMENT, FakeHarness, fake_git_install, skill_ci, write,
 from skill_ci import config
 from skill_ci.config import ConfigError, Tag, Track
 from skill_ci.runs import Agent
+from skill_ci.checks.frontmatter import InvocationPolicy
 from skill_ci.suite import PiiScope
 
 INSTALLED_COMMIT = "0" * 40
@@ -102,6 +103,7 @@ class ConfigFileTests(unittest.TestCase):
                     'skills_dir = "skills"',
                     'evals_dir = "evals"',
                     'pii_scope = "repository"',
+                    'invocation_policy = "openai-yaml"',
                     "require_manifests = true",
                     "package = false",
                     "runs = 5",
@@ -117,6 +119,7 @@ class ConfigFileTests(unittest.TestCase):
                 "skills_dir": Path("skills"),
                 "evals_dir": Path("evals"),
                 "pii_scope": PiiScope.REPOSITORY,
+                "invocation_policy": InvocationPolicy.OPENAI_YAML,
                 "require_manifests": True,
                 "package": False,
                 "runs": 5,
@@ -124,6 +127,11 @@ class ConfigFileTests(unittest.TestCase):
                 "codex_cmd": "codex exec",
             },
         )
+
+    def test_an_unknown_invocation_policy_is_rejected(self) -> None:
+        with self.assertRaises(ConfigError) as caught:
+            config.read(self.write('version = "main"\ninvocation_policy = "claude"\n'))
+        self.assertEqual(problems(caught.exception), ["invocation_policy is 'claude'; set it to one of paired, openai-yaml"])
 
     def test_a_wrong_value_names_its_key(self) -> None:
         path = self.write('version = "main"\nrequire_manifests = "yes"\npii_scope = "all"\nruns = true\nagents = []\nskills_dir = 3\n')

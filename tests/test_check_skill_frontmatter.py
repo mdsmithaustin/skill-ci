@@ -35,10 +35,12 @@ class FrontmatterChecker(unittest.TestCase):
         path.write_text(json.dumps(data), encoding="utf-8")
         return path
 
-    def check(self, triggers: Path | None = None) -> tuple[int, str]:
+    def check(self, triggers: Path | None = None, policy: str | None = None) -> tuple[int, str]:
         command = [sys.executable, "-m", "skill_ci.checks.frontmatter", str(self.root)]
         if triggers is not None:
             command.extend(["--triggers", str(triggers)])
+        if policy is not None:
+            command.extend(["--invocation-policy", policy])
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         return result.returncode, result.stdout
 
@@ -159,6 +161,65 @@ class FrontmatterChecker(unittest.TestCase):
         code, output = self.check()
         self.assertEqual(code, 1)
         self.assertIn("orphan", output)
+
+    def gate(self, name: str, source: str) -> Path:
+        path = self.root / name / "agents" / "openai.yaml"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(source, encoding="utf-8")
+        return path
+
+    def test_paired_policy_is_the_default_and_checks_a_paired_tree_as_before(self) -> None:
+        self.skill(frontmatter='name: a\ndescription: "d"\ndisable-model-invocation: true')
+        self.gate("a", "policy:\n  allow_implicit_invocation: false\n")
+        self.skill("b", 'name: b\ndescription: "d"')
+        self.assertEqual(self.check(), (0, ""))
+        self.assertEqual(self.check(policy="paired"), (0, ""))
+        self.skill("c", 'name: c\ndescription: "d"')
+        gate = self.gate("c", "policy:\n  allow_implicit_invocation: false\n")
+        expected = f"{gate}: policy.allow_implicit_invocation must match disable-model-invocation\n"
+        self.assertEqual(self.check(), (1, expected))
+        self.assertEqual(self.check(policy="paired"), (1, expected))
+
+    def test_openai_yaml_policy_accepts_a_flagless_tree_gated_only_in_openai_yaml(self) -> None:
+        self.skill(frontmatter='name: a\ndescription: "d"')
+        self.gate("a", "policy:\n  allow_implicit_invocation: false\n")
+        self.skill("b", 'name: b\ndescription: "d"')
+        self.gate("b", "interface: chat\n")
+        self.skill("c", 'name: c\ndescription: "d"\ndisable-model-invocation: false')
+        self.assertEqual(self.check(policy="openai-yaml"), (0, ""))
+
+    def test_openai_yaml_policy_rejects_a_skill_that_sets_disable_model_invocation(self) -> None:
+        path = self.skill(frontmatter='name: a\ndescription: "d"\ndisable-model-invocation: true')
+        expected = (
+            f"{path}: disable-model-invocation: true makes Claude's Skill tool refuse this skill by name, even when another skill names it; "
+            "remove it and set policy.allow_implicit_invocation: false in agents/openai.yaml\n"
+        )
+        self.assertEqual(self.check(policy="openai-yaml"), (1, expected))
+        self.gate("a", "policy:\n  allow_implicit_invocation: false\n")
+        self.assertEqual(self.check(policy="openai-yaml"), (1, expected))
+        self.assertEqual(self.check(), (0, ""))
+
+    def test_openai_yaml_policy_keeps_the_type_checks(self) -> None:
+        self.skill(frontmatter='name: a\ndescription: "d"')
+        gate = self.gate("a", "policy:\n  allow_implicit_invocation: value\n")
+        self.assertEqual(self.check(policy="openai-yaml"), (1, f"{gate}: policy.allow_implicit_invocation must be a boolean\n"))
+        self.gate("a", "policy: false\n")
+        self.assertEqual(self.check(policy="openai-yaml"), (1, f"{gate}: policy must be a mapping\n"))
+        flagged = self.skill("b", 'name: b\ndescription: "d"\ndisable-model-invocation: yes please')
+        self.gate("a", "interface: chat\n")
+        self.assertEqual(self.check(policy="openai-yaml"), (1, f"{flagged}: disable-model-invocation must be a boolean\n"))
+
+    def test_openai_yaml_policy_checks_trigger_declarations_against_openai_yaml(self) -> None:
+        self.skill(frontmatter='name: a\ndescription: "valid description"')
+        self.gate("a", "policy:\n  allow_implicit_invocation: false\n")
+        gated = [{"skill": "a", "example_request": "x", "description_contains": ["valid"], "implicit_allowed": False}]
+        self.assertEqual(self.check(self.corpus(gated), policy="openai-yaml"), (0, ""))
+        open_entry = [{**gated[0], "implicit_allowed": True}]
+        corpus = self.corpus(open_entry)
+        self.assertEqual(
+            self.check(corpus, policy="openai-yaml"),
+            (1, f"{corpus}: trigger declaration 1.implicit_allowed does not match 'a'\n"),
+        )
 
     def test_corpus_coverage_literal_drift_and_mode_fail(self) -> None:
         self.skill()
