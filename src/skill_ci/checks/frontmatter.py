@@ -35,7 +35,7 @@ class SkillMetadata:
     path: Path
     name: str
     description: str
-    implicit_allowed: bool
+    implicit_allowed: bool | None
 
 
 @dataclass(frozen=True)
@@ -99,9 +99,9 @@ def nonblank_string(value: Any, label: str, path: Path, errors: list[Diagnostic]
     return value
 
 
-def read_skill(path: Path) -> tuple[SkillMetadata | None, list[Diagnostic]]:
+def read_utf8(path: Path) -> tuple[str | None, list[Diagnostic]]:
     try:
-        text = path.read_text(encoding="utf-8")
+        return path.read_text(encoding="utf-8"), []
     except UnicodeDecodeError as error:
         line = len(re.split(rb"\r\n|\r|\n", error.object[: error.start]))
         return None, [Diagnostic(
@@ -111,6 +111,12 @@ def read_skill(path: Path) -> tuple[SkillMetadata | None, list[Diagnostic]]:
         )]
     except OSError as error:
         return None, [Diagnostic(path, f"cannot read file: {error}")]
+
+
+def read_skill(path: Path) -> tuple[SkillMetadata | None, list[Diagnostic]]:
+    text, errors = read_utf8(path)
+    if text is None:
+        return None, errors
     match = FRONTMATTER.match(text)
     if match is None:
         return None, [Diagnostic(path, "missing frontmatter")]
@@ -145,10 +151,9 @@ def read_skill(path: Path) -> tuple[SkillMetadata | None, list[Diagnostic]]:
 def read_openai_policy(path: Path) -> tuple[bool | None, list[Diagnostic]]:
     if not path.exists():
         return None, []
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as error:
-        return None, [Diagnostic(path, f"cannot read file: {error}")]
+    text, errors = read_utf8(path)
+    if text is None:
+        return None, errors
     fields, errors = load_yaml_mapping(text, path)
     if fields is None:
         return None, errors
@@ -169,9 +174,10 @@ def apply_invocation_policy(skill: SkillMetadata, policy: InvocationPolicy) -> t
     path = skill.path.parent / "agents" / "openai.yaml"
     allowed, errors = read_openai_policy(path)
     if policy is InvocationPolicy.OPENAI_YAML:
+        gate = None if errors else allowed is not False
         if not skill.implicit_allowed:
             errors.append(Diagnostic(skill.path, OPENAI_YAML_FLAG))
-        return replace(skill, implicit_allowed=allowed is not False), errors
+        return replace(skill, implicit_allowed=gate), errors
     if errors:
         return skill, errors
     if allowed is None:
@@ -237,7 +243,7 @@ def check_trigger_declarations(skills: dict[str, SkillMetadata], corpus_path: Pa
             errors.append(Diagnostic(corpus_path, f"{label}.example_request must be a nonblank string"))
         if type(allowed) is not bool:
             errors.append(Diagnostic(corpus_path, f"{label}.implicit_allowed must be a boolean"))
-        if metadata is not None and type(allowed) is bool and allowed != metadata.implicit_allowed:
+        if metadata is not None and metadata.implicit_allowed is not None and type(allowed) is bool and allowed != metadata.implicit_allowed:
             errors.append(Diagnostic(corpus_path, f"{label}.implicit_allowed does not match {skill!r}"))
         if not isinstance(anchors, list) or not anchors:
             errors.append(Diagnostic(corpus_path, f"{label}.description_contains must be a nonempty list"))
@@ -299,7 +305,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=InvocationPolicy,
         choices=tuple(InvocationPolicy),
         default=InvocationPolicy.PAIRED,
-        help="paired: agents/openai.yaml must match disable-model-invocation; openai-yaml: only agents/openai.yaml gates, and disable-model-invocation is an error",
+        help="paired: agents/openai.yaml must match disable-model-invocation; openai-yaml: only agents/openai.yaml gates, and disable-model-invocation: true is an error",
     )
     return parser.parse_args(argv)
 
