@@ -8,7 +8,8 @@ A case is one test prompt in `shared-benchmark.json`. A trigger case asks whethe
 
 - Trigger cases (`kind: trigger`, with `should_trigger` set to true or false) are cut from real Claude and Codex session history, where you can see whether the skill loaded. A person reviews each one before it is used. The harvest tool is not in this repository yet. See `TODO.md`.
 - Outcome cases are written by the skill's author.
-- A gated skill is one a model may not load on its own. It runs only when the user types `/name` or `$name`. Gated skills get outcome cases only. Skills that load from their description get trigger cases too.
+- A gated skill blocks implicit, description-driven invocation under the repository's configured [invocation policy](../README.md#invocation-policy). Exercise it through explicit named invocation. A user can type `/name` or `$name`. A mode or another skill can name it when the harness and configured gate permit that route. Gated skills get outcome cases, not description-driven trigger cases. Skills open to description-driven invocation get trigger cases too.
+- Keep mode-to-skill routing measurements separate from description-driven trigger measurements. A successful named route does not show that a skill's description triggered the load. Do not assume every gate permits named routing. The [invocation-gate decision](../DECISIONS.md#where-a-skills-invocation-gate-lives) records a consuming repository's report of Claude Code refusing named invocation with `disable-model-invocation: true`. That provider behavior was not re-measured here.
 
 ## Rules
 
