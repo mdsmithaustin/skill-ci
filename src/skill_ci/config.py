@@ -77,6 +77,10 @@ OPTIONS: dict[str, tuple[str, dict[str, Any]]] = {
         "--package",
         {"action": argparse.BooleanOptionalAction, "help": "inspect every package entry and reject symlinks and special files"},
     ),
+    "strict_frontmatter": (
+        "--strict-frontmatter",
+        {"action": argparse.BooleanOptionalAction, "help": "permit only name and description in SKILL.md frontmatter"},
+    ),
     "out": (
         "--out",
         {

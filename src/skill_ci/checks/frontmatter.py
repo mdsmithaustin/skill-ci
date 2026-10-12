@@ -19,6 +19,7 @@ from yaml.resolver import BaseResolver
 
 FRONTMATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---(?:\r?\n|\Z)", re.DOTALL)
 SKILL_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+_STRICT_FRONTMATTER_KEYS = frozenset({"name", "description"})
 OPENAI_YAML_FLAG = (
     "disable-model-invocation: true makes Claude's Skill tool refuse this skill by name, even when another skill names it; "
     "remove it and set policy.allow_implicit_invocation: false in agents/openai.yaml"
@@ -121,7 +122,7 @@ def read_utf8(path: Path) -> tuple[str | None, list[Diagnostic]]:
         return None, [Diagnostic(path, f"cannot read file: {error}")]
 
 
-def read_skill(path: Path) -> tuple[_SkillFrontmatter | None, list[Diagnostic]]:
+def read_skill(path: Path, *, strict_frontmatter: bool = False) -> tuple[_SkillFrontmatter | None, list[Diagnostic]]:
     text, errors = read_utf8(path)
     if text is None:
         return None, errors
@@ -134,6 +135,11 @@ def read_skill(path: Path) -> tuple[_SkillFrontmatter | None, list[Diagnostic]]:
     fields, errors = load_yaml_mapping(block, path, line_offset=1)
     if fields is None:
         return None, errors
+    if strict_frontmatter:
+        errors.extend(
+            Diagnostic(path, f"unexpected frontmatter key {key!r}; strict frontmatter permits only name and description")
+            for key in sorted(fields.keys() - _STRICT_FRONTMATTER_KEYS)
+        )
     name = nonblank_string(fields.get("name"), "name", path, errors, 64)
     description = nonblank_string(fields.get("description"), "description", path, errors, 1024)
     if name is not None:
@@ -270,7 +276,9 @@ def check_trigger_declarations(skills: dict[str, SkillMetadata], corpus_path: Pa
     return errors
 
 
-def check_skills(root: Path, triggers: Path | None = None, policy: InvocationPolicy = InvocationPolicy.PAIRED) -> int:
+def check_skills(
+    root: Path, triggers: Path | None = None, policy: InvocationPolicy = InvocationPolicy.PAIRED, *, strict_frontmatter: bool = False
+) -> int:
     errors: list[Diagnostic] = []
     if not root.is_dir():
         errors.append(Diagnostic(root, "skills root is not a directory"))
@@ -281,7 +289,7 @@ def check_skills(root: Path, triggers: Path | None = None, policy: InvocationPol
             errors.append(Diagnostic(root, "skills inventory is empty"))
     raw_skills: dict[str, _SkillFrontmatter] = {}
     for path in skill_files:
-        skill, skill_errors = read_skill(path)
+        skill, skill_errors = read_skill(path, strict_frontmatter=strict_frontmatter)
         errors.extend(skill_errors)
         if skill is not None:
             if skill.name in raw_skills:
@@ -310,6 +318,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("skills_root", nargs="?", default="skills", type=Path)
     parser.add_argument("--triggers", type=Path, help="version-1 trigger declaration corpus")
     parser.add_argument(
+        "--strict-frontmatter",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="permit only name and description in SKILL.md frontmatter",
+    )
+    parser.add_argument(
         "--invocation-policy",
         type=InvocationPolicy,
         choices=tuple(InvocationPolicy),
@@ -321,7 +335,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
-    return check_skills(args.skills_root, args.triggers, args.invocation_policy)
+    return check_skills(args.skills_root, args.triggers, args.invocation_policy, strict_frontmatter=args.strict_frontmatter)
 
 
 if __name__ == "__main__":

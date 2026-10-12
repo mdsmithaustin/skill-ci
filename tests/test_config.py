@@ -338,6 +338,45 @@ class FlagPrecedenceTests(unittest.TestCase):
         from_flag = self.run_cli("check", "--no-require-manifests")
         self.assertEqual(from_flag.returncode, 0, from_flag.stdout + from_flag.stderr)
 
+    def test_strict_frontmatter_config_and_both_override_directions(self) -> None:
+        skill = self.checkout / "skills" / "example"
+        for command, count in ((["lint"], 2), (["check"], 4), (["check", "--fast"], 3)):
+            for setting, flags, strict in (
+                ("true", (), True),
+                ("false", (), False),
+                ("true", ("--no-strict-frontmatter",), False),
+                ("false", ("--strict-frontmatter",), True),
+            ):
+                with self.subTest(command=command, setting=setting, flags=flags):
+                    self.settings(f"strict_frontmatter = {setting}")
+                    write_skill(skill)
+                    valid = self.run_cli(*command, *flags)
+                    self.assertEqual(valid.returncode, 0, valid.stdout + valid.stderr)
+                    self.assertEqual(valid.stdout.splitlines()[-1], f"checks run: {count}; failed: 0")
+                    write(skill / "SKILL.md", "---\nname: example\ndescription: Use when asked for example.\ncustom: accepted by default\n---\n# example\n")
+                    result = self.run_cli(*command, *flags)
+                    self.assertEqual(result.returncode, 1 if strict else 0, result.stdout + result.stderr)
+                    if strict:
+                        self.assertIn(
+                            "skills/example/SKILL.md: unexpected frontmatter key 'custom'; strict frontmatter permits only name and description",
+                            result.stdout.splitlines(),
+                        )
+                        self.assertEqual(result.stdout.splitlines()[-1], f"checks run: {count}; failed: 1 (frontmatter)")
+                    else:
+                        self.assertEqual(result.stdout.splitlines()[-1], f"checks run: {count}; failed: 0")
+
+    def test_nonboolean_strict_frontmatter_config_stops_the_command(self) -> None:
+        for value, shown in (('"true"', "'true'"), ("1", "1"), ("[]", "[]")):
+            with self.subTest(value=value):
+                self.settings(f"strict_frontmatter = {value}")
+                result = self.run_cli("lint", "--no-strict-frontmatter")
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(
+                    result.stderr,
+                    f"skill-ci: .skill-ci.toml: strict_frontmatter is {shown}; set it to true or false\n",
+                )
+
     def test_paths_in_the_file_resolve_from_its_directory(self) -> None:
         self.settings('skills_dir = "skills"')
         result = self.run_cli("lint", cwd=self.checkout / "skills" / "example")

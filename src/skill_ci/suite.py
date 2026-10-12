@@ -29,6 +29,7 @@ class CheckOptions:
     require_manifests: bool = False
     require_populated_manifests: bool = False
     package: bool = False
+    strict_frontmatter: bool = False
 
 
 @dataclass(frozen=True)
@@ -71,7 +72,12 @@ def fast_checks(options: CheckOptions) -> list[Check]:
 
 def lint_checks(options: CheckOptions) -> list[Check]:
     return [
-        ("frontmatter", lambda: frontmatter.check_skills(options.skills_dir, options.trigger_cases, options.invocation_policy)),
+        (
+            "frontmatter",
+            lambda: frontmatter.check_skills(
+                options.skills_dir, options.trigger_cases, options.invocation_policy, strict_frontmatter=options.strict_frontmatter
+            ),
+        ),
         ("content", lambda: lint_content(options)),
     ]
 

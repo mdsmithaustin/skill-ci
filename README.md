@@ -238,6 +238,7 @@ evals_dir = "evals"
 | `evals_dir` | path | unset | `init`, `coverage`, `validate`, `audit`, `check`, `trigger`, `run` | Where manifests live. Unset means each manifest sits at `<skill>/evals/`. The directory must be named `evals`, and every skill must sit inside its parent. |
 | `pii_scope` | `skills` or `repository` | `skills` | `check` | `skills` scans tracked files in the skills directory for personal data. `repository` scans every tracked file. |
 | `invocation_policy` | `paired` or `openai-yaml` | `paired` | `lint`, `check` | Where a skill's invocation gate lives. See [Invocation policy](#invocation-policy). |
+| `strict_frontmatter` | boolean | `false` | `lint`, `check` | Permit only `name` and `description` in `SKILL.md` frontmatter. See [Strict frontmatter](#strict-frontmatter). |
 | `trigger_cases` | path | unset | `lint`, `check` | A version-1 trigger declaration file. See [Trigger declaration file](#trigger-declaration-file). |
 | `content_ignore_file` | path | unset | `lint`, `check` | Skill names that live in another repository, separated by commas or newlines, with `#` comment lines allowed. |
 | `content_link_exceptions_file` | path | unset | `lint`, `check` | A link-exceptions policy. See [Allow links to files a template creates](docs/link-exceptions.md). |
@@ -265,9 +266,42 @@ An invalid `.skill-ci.toml` makes every command exit with code 2, `--help` and `
 The frontmatter check compares two places that can stop a model from invoking a skill on its own, the `disable-model-invocation` field in `SKILL.md` and `policy.allow_implicit_invocation` in `agents/openai.yaml`. `invocation_policy` picks the rule.
 
 - **`paired`** is the default. `agents/openai.yaml` must agree with `disable-model-invocation`. A skill with `disable-model-invocation: true` needs `policy.allow_implicit_invocation: false`, and a skill without the field needs the policy absent or `true`.
-- **`openai-yaml`** makes `agents/openai.yaml` the only gate. A skill with no `agents/openai.yaml`, or with no `policy.allow_implicit_invocation`, is open to implicit invocation, and `policy.allow_implicit_invocation: false` gates it. No comparison with the field happens. A `SKILL.md` that sets `disable-model-invocation: true` fails, because on Claude Code that field makes the Skill tool refuse the skill by name, even when another skill names it. Remove the field and gate the skill in `agents/openai.yaml`. `disable-model-invocation: false` passes.
+- **`openai-yaml`** makes `agents/openai.yaml` the only gate. A skill with no `agents/openai.yaml`, or with no `policy.allow_implicit_invocation`, is open to implicit invocation, and `policy.allow_implicit_invocation: false` gates it. No comparison with the field happens. A `SKILL.md` that sets `disable-model-invocation: true` fails, because on Claude Code that field makes the Skill tool refuse the skill by name, even when another skill names it. Remove the field and gate the skill in `agents/openai.yaml`. `disable-model-invocation: false` passes when `strict_frontmatter` is off.
 
 Both policies fail a non-boolean `disable-model-invocation` or `policy.allow_implicit_invocation`, and a `policy` that is not a mapping. A trigger declaration's `implicit_allowed` is compared with the value the policy yields: the field under `paired`, and `agents/openai.yaml` under `openai-yaml`. Under `openai-yaml`, a skill whose `agents/openai.yaml` fails any of these checks, or cannot be read or parsed, is not compared, because that error already names the file.
+
+### Strict frontmatter
+
+`strict_frontmatter` defaults to `false`. When enabled, the frontmatter check permits only the top-level keys `name` and `description` in `SKILL.md`. It reports each extra key in sorted order and still validates required fields and YAML. Both `disable-model-invocation: true` and `disable-model-invocation: false` are extra keys. With strict mode off, existing optional metadata and unknown string keys remain accepted.
+
+Before enabling strict mode, update your pin to a skill-ci version that supports this option. A newer launcher still hands control to the configured version, so an older pin cannot use it.
+
+Add this setting to your existing `.skill-ci.toml` to enable it for `lint`, full `check`, and `check --fast`:
+
+```toml
+strict_frontmatter = true
+```
+
+The matching CLI flags override the configured value:
+
+```sh
+skill-ci lint --strict-frontmatter
+skill-ci check --strict-frontmatter
+skill-ci check --fast --strict-frontmatter
+skill-ci lint --no-strict-frontmatter
+```
+
+Strict mode does not change invocation policy or restrict keys in `agents/openai.yaml`. With the default `paired` policy, a name-and-description-only skill is implicitly open, so a false sidecar gate still fails the agreement check. To gate a strict skill through the sidecar, set `policy.allow_implicit_invocation: false` there and select `openai-yaml`:
+
+```sh
+skill-ci lint --strict-frontmatter --invocation-policy openai-yaml
+```
+
+The standalone checker also accepts both strict flags. It does not read `.skill-ci.toml`:
+
+```sh
+python -m skill_ci.checks.frontmatter skills --strict-frontmatter --invocation-policy openai-yaml
+```
 
 ### Where the file is found, and what its paths mean
 
@@ -394,7 +428,7 @@ This repository's own `mise.toml` adds a `test` task that runs the unit tests.
 
 ### What the lints check
 
-- The frontmatter check validates each `SKILL.md` against the agentskills.io metadata rules and the Codex invocation policy, as `invocation_policy` sets it. With `trigger_cases` set, it also fails for any skill missing from the trigger declaration file.
+- The frontmatter check validates each `SKILL.md` against the agentskills.io metadata rules and the Codex invocation policy, as `invocation_policy` sets it. Opt-in `strict_frontmatter` permits only `name` and `description`. With `trigger_cases` set, it also fails for any skill missing from the trigger declaration file.
 - The content check fails on relative links whose target does not exist, bold skill names that match no known skill, and unclosed code fences. A bold name counts as a skill name when its line contains the word "skill". A conventions file can add name prefixes and retired text for your repository. See [Add your repository's naming conventions to the content check](docs/content-conventions.md).
 - Bare resource paths in whole inline-code spans, such as `scripts/extract.py`, `references/guide.md`, and `assets/template.json`, must exist relative to the Markdown file that mentions them. Quoted paths can contain spaces. Commands, directory-only mentions, globs, dynamic placeholders, and fenced examples are skipped.
 - Reference definitions that reuse a normalized label with a different destination or title fail. Identical repeats pass. CommonMark uses the first definition, so a later conflicting definition can silently point an agent at the wrong resource.

@@ -31,4 +31,5 @@ Activation is `skill-ci init`, then `skill-ci check`, and a report of what they 
 - Never edit the checks during activation. A checker defect gets its own change in the skill-ci repository.
 - The version lives in `.skill-ci.toml` only. `skill-ci update` moves it to the newest tag. Do not write a version anywhere else.
 - `README.md` in the skill-ci repository owns the overview and the `.skill-ci.toml` reference. `docs/authoring-cases.md` owns the authoring conventions. Point authors there instead of restating them.
+- Strict frontmatter is opt-in. Set `strict_frontmatter = true` in the existing `.skill-ci.toml`, or run `skill-ci lint --strict-frontmatter`. See [Strict frontmatter](README.md#strict-frontmatter) for the negative override and sidecar gating with `openai-yaml`.
 - `DECISIONS.md` owns the rationale, including why the runner is a pinned fork and the test for when to stop using it. Point a reader there rather than explaining it in a run report.
