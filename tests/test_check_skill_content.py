@@ -7,6 +7,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 CHECKS = Path(__file__).resolve().parents[1] / "src" / "skill_ci" / "checks"
@@ -87,6 +89,76 @@ class ContentLint(ConventionsTree):
 
     def test_clean_tree_passes(self) -> None:
         self.assertEqual(run(CONTENT, self.root), (0, ""))
+
+    def test_populated_roots_keep_each_invocations_configuration(self) -> None:
+        from skill_ci.checks.content import main
+
+        roots = [Path(self.tmp.name) / name for name in ("first", "second")]
+        configurations = []
+        for root, prefix, retired, source in (
+            (roots[0], "principle-", "legacy-a", "a/SKILL.md"),
+            (roots[1], "pattern-", "legacy-b", "a/notes.md"),
+        ):
+            (root / "a").mkdir(parents=True)
+            (root / f"{prefix}real").mkdir()
+            (root / "a/SKILL.md").write_text(
+                f"[allowed](missing.md)\n**skip** skill.\nUse {prefix[:-1]} **real**.\n{retired}\n**{prefix}missing**.\n",
+                encoding="utf-8",
+            )
+            (root / "a/notes.md").write_text("[same](missing.md)\n", encoding="utf-8")
+            exceptions = root / "exceptions.json"
+            exceptions.write_text(json.dumps({
+                "version": 1,
+                "inline_link_exceptions": {source: ["missing.md"]},
+            }), encoding="utf-8")
+            conventions = root / "conventions.json"
+            conventions.write_text(json.dumps({
+                "version": 1,
+                "skill_prefixes": [prefix],
+                "retired_text": {retired: f"replace {retired}"},
+            }), encoding="utf-8")
+            configurations.append([
+                "--ignore", "skip" if root == roots[0] else "other",
+                "--link-exceptions-file", str(exceptions),
+                "--conventions-file", str(conventions), str(root),
+            ])
+        malformed = Path(self.tmp.name) / "malformed.json"
+        malformed.write_text("{}", encoding="utf-8")
+        first_output = (
+            f"{roots[0]}/a/SKILL.md:4: retired-text: replace legacy-a\n"
+            f"{roots[0]}/a/SKILL.md:5: sibling-skill: **principle-missing** has no matching directory under {roots[0]}/\n"
+            f"{roots[0]}/a/notes.md:1: relative-link: target does not exist: missing.md\n"
+        )
+        second_output = (
+            f"{roots[1]}/a/SKILL.md:1: relative-link: target does not exist: missing.md\n"
+            f"{roots[1]}/a/SKILL.md:2: sibling-skill: **skip** has no matching directory under {roots[1]}/\n"
+            f"{roots[1]}/a/SKILL.md:4: retired-text: replace legacy-b\n"
+            f"{roots[1]}/a/SKILL.md:5: sibling-skill: **pattern-missing** has no matching directory under {roots[1]}/\n"
+        )
+        default_output = (
+            f"{roots[0]}/a/SKILL.md:1: relative-link: target does not exist: missing.md\n"
+            f"{roots[0]}/a/SKILL.md:2: sibling-skill: **skip** has no matching directory under {roots[0]}/\n"
+            f"{roots[0]}/a/notes.md:1: relative-link: target does not exist: missing.md\n"
+        )
+        calls = [
+            (configurations[0], 1, first_output, "content: 2 files, 3 findings\n"),
+            (configurations[1], 1, second_output, "content: 2 files, 4 findings\n"),
+            ([str(roots[0])], 1, default_output, "content: 2 files, 3 findings\n"),
+            (configurations[0], 1, first_output, "content: 2 files, 3 findings\n"),
+            (["--link-exceptions-file", str(malformed), str(roots[1])], 2, "",
+             "content: link exceptions must contain only version and inline_link_exceptions\n"),
+            (configurations[1], 1, second_output, "content: 2 files, 4 findings\n"),
+            (["--conventions-file", str(malformed), str(roots[0])], 2, "",
+             "content: conventions must be an object with a version\n"),
+            (configurations[0], 1, first_output, "content: 2 files, 3 findings\n"),
+        ]
+        for arguments, code, output, summary in calls:
+            with self.subTest(arguments=arguments):
+                stdout, stderr = StringIO(), StringIO()
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    actual_code = main(arguments)
+                self.assertEqual((actual_code, stdout.getvalue(), stderr.getvalue()),
+                                 (code, output, summary))
 
     def test_empty_and_comment_only_skill_bodies_fail(self) -> None:
         for body in ("", " \t\n\n", "<!-- Only a comment. -->", "<!-- First. -->\n<!-- Second. -->"):
