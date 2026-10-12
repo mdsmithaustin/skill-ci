@@ -44,8 +44,6 @@ from markdown_it.token import Token
 
 from skill_ci.checks.frontmatter import FRONTMATTER
 
-ROOT = Path("skills")
-IGNORE: frozenset[str] = frozenset()
 MARKDOWN = MarkdownIt("commonmark")
 UNSAFE_CODEPOINTS = (frozenset(range(32)) - {9, 10, 13}) | {127, 0x202D, 0x202E}
 
@@ -134,24 +132,18 @@ class ParsedFile:
 class InlineLinkExceptions:
     destinations_by_source: Mapping[PurePosixPath, frozenset[str]]
 
-    def permits(self, path: Path, raw_destination: str) -> bool:
+    def permits(self, path: Path, raw_destination: str, *, root: Path) -> bool:
         try:
-            source = PurePosixPath(path.relative_to(ROOT).as_posix())
+            source = PurePosixPath(path.relative_to(root).as_posix())
         except ValueError:
             return False
         return raw_destination in self.destinations_by_source.get(source, frozenset())
-
-
-INLINE_LINK_EXCEPTIONS = InlineLinkExceptions({})
 
 
 @dataclass(frozen=True)
 class ContentConventions:
     retired_text: Mapping[str, str]
     skill_prefixes: tuple[str, ...]
-
-
-CONVENTIONS = ContentConventions({}, ())
 
 
 CODE_PATH = re.compile(r"(?:\.\.?/|scripts/|references/|assets/)[^\s<>]+")
@@ -373,7 +365,9 @@ def nested_image_code_spans(
             yield from nested_image_code_spans(child.children, offset + 2)
 
 
-def check_relative_links(parsed: ParsedFile) -> Iterator[Finding]:
+def check_relative_links(
+    parsed: ParsedFile, *, root: Path, exceptions: InlineLinkExceptions
+) -> Iterator[Finding]:
     reference_hrefs: set[str] = set()
     for definition in parsed.references.values():
         href = str(definition["href"])
@@ -401,9 +395,10 @@ def check_relative_links(parsed: ParsedFile) -> Iterator[Finding]:
                     finding = finding_for_target(parsed, line, href)
                     if finding is not None and not (
                         child.type == "link_open"
-                        and INLINE_LINK_EXCEPTIONS.permits(
+                        and exceptions.permits(
                             parsed.path,
                             str(child.meta.get("raw_destination", "")),
+                            root=root,
                         )
                     ):
                         yield finding
@@ -471,26 +466,32 @@ def rendered_lines(
     }
 
 
-def check_sibling_skill(parsed: ParsedFile) -> Iterator[Finding]:
+def check_sibling_skill(
+    parsed: ParsedFile,
+    *,
+    root: Path,
+    ignore: frozenset[str],
+    skill_prefixes: tuple[str, ...],
+) -> Iterator[Finding]:
     for parent, children in inline_children(parsed):
         lines = rendered_lines(children, parent.map[0] + 1)
         for line, (visible, names) in lines.items():
             near_skill = "skill" in visible
-            hinted = [p for p in CONVENTIONS.skill_prefixes if p[:-1] in visible]
+            hinted = [p for p in skill_prefixes if p[:-1] in visible]
             for name in names:
-                if name in IGNORE:
+                if name in ignore:
                     continue
-                if not near_skill and not name.startswith(CONVENTIONS.skill_prefixes):
+                if not near_skill and not name.startswith(skill_prefixes):
                     continue
-                if (ROOT / name).is_dir():
+                if (root / name).is_dir():
                     continue
-                if any((ROOT / f"{prefix}{name}").is_dir() for prefix in hinted):
+                if any((root / f"{prefix}{name}").is_dir() for prefix in hinted):
                     continue
                 yield Finding(
                     parsed.path,
                     line,
                     "sibling-skill",
-                    f"**{name}** has no matching directory under {ROOT}/",
+                    f"**{name}** has no matching directory under {root}/",
                 )
 
 
@@ -565,22 +566,13 @@ def check_unsafe_characters(parsed: ParsedFile) -> Iterator[Finding]:
                 )
 
 
-def check_retired_text(parsed: ParsedFile) -> Iterator[Finding]:
+def check_retired_text(
+    parsed: ParsedFile, *, retired_text: Mapping[str, str]
+) -> Iterator[Finding]:
     for lineno, line in parsed.raw:
-        for text, message in CONVENTIONS.retired_text.items():
+        for text, message in retired_text.items():
             if text in line:
                 yield Finding(parsed.path, lineno, "retired-text", message)
-
-
-REGISTRY: list[tuple[str, Callable[[ParsedFile], Iterator[Finding]]]] = [
-    ("relative-link", check_relative_links),
-    ("sibling-skill", check_sibling_skill),
-    ("unclosed-fence", check_unclosed_fence),
-    ("conflicting-reference", check_conflicting_references),
-    ("empty-skill-body", check_empty_skill_body),
-    ("unsafe-character", check_unsafe_characters),
-    ("retired-text", check_retired_text),
-]
 
 
 def iter_markdown_files(root: Path) -> Iterator[Path]:
@@ -597,19 +589,16 @@ def check_content(
     link_exceptions_file: Path | None = None,
     conventions_file: Path | None = None,
 ) -> int:
-    global ROOT, IGNORE, INLINE_LINK_EXCEPTIONS, CONVENTIONS
-    ROOT = root
-    IGNORE = ignore
     try:
-        INLINE_LINK_EXCEPTIONS = load_inline_link_exceptions(link_exceptions_file)
-        CONVENTIONS = load_content_conventions(conventions_file)
+        exceptions = load_inline_link_exceptions(link_exceptions_file)
+        conventions = load_content_conventions(conventions_file)
     except ValueError as error:
         print(f"content: {error}", file=sys.stderr)
         return 2
 
     findings: list[Finding] = []
     files_checked = 0
-    for path in iter_markdown_files(ROOT):
+    for path in iter_markdown_files(root):
         files_checked += 1
         try:
             parsed = parse_file(path)
@@ -627,8 +616,15 @@ def check_content(
         except OSError as error:
             findings.append(Finding(path, 1, "unreadable", f"cannot read file: {error}"))
             continue
-        for _name, check in REGISTRY:
-            findings.extend(check(parsed))
+        findings.extend(check_relative_links(parsed, root=root, exceptions=exceptions))
+        findings.extend(check_sibling_skill(
+            parsed, root=root, ignore=ignore, skill_prefixes=conventions.skill_prefixes
+        ))
+        findings.extend(check_unclosed_fence(parsed))
+        findings.extend(check_conflicting_references(parsed))
+        findings.extend(check_empty_skill_body(parsed))
+        findings.extend(check_unsafe_characters(parsed))
+        findings.extend(check_retired_text(parsed, retired_text=conventions.retired_text))
 
     findings.sort(key=lambda f: (str(f.path), f.line, f.kind))
     for finding in findings:
