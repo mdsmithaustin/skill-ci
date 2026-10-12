@@ -10,8 +10,6 @@ Open work, consumer responsibilities, and completed proof with its remaining ver
 
 ## Deferred features
 
-- A stricter frontmatter policy that permits only `name` and `description` is not implemented. It needs a flag on `skill-ci lint` and `skill-ci check`, or a separate small checker.
-
 - Trigger-row harvesting from local Claude and Codex session history is not in this repository. The decision record says the user reviews the harvest before use; the tool that produces it has not been written.
 
 - `skill-ci run` and `skill-ci trigger` drive the CLIs through the launchers in `src/skill_ci/launchers/`. Since the runner pin to `80e49af`, the runner hides host skills and other host context itself in answer and trigger runs. `claude-project-only` is still needed, because the runner invokes `claude -p` with no tool permissions and the launcher grants `acceptEdits`. In answer and trigger runs its `--setting-sources project` repeats the runner's flag, which Claude Code 2.1.286 accepts. Judge runs get the runner's sealed `--safe-mode --disable-slash-commands` instead, and whether the launcher's flag adds anything there is untested. `codex-project-only` only moves HOME, which is now redundant. Removing it needs one Codex run through `--codex-cmd` without it, which has not been done. If either CLI changes how it scopes skills or grants tools, the launchers are the first thing to recheck.

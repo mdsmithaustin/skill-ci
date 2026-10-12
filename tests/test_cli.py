@@ -422,6 +422,28 @@ class LintTests(ConsumerTestCase):
         with (self.skill / "SKILL.md").open("a") as skill:
             skill.write(text)
 
+    def test_strict_frontmatter_reaches_lint_full_and_fast_checks(self) -> None:
+        path = self.skill / "SKILL.md"
+        for command, count in ((["lint"], 2), (["check"], 4), (["check", "--fast"], 3)):
+            with self.subTest(command=command):
+                write_skill(self.skill)
+                valid = self.skill_ci(*command, "--strict-frontmatter")
+                self.assertEqual(valid.returncode, 0, valid.stdout + valid.stderr)
+                self.assertEqual(lines(valid)[-1], f"checks run: {count}; failed: 0")
+                write(path, "---\nname: example\ndescription: Use when asked for example.\ncustom: accepted by default\n---\n# example\n")
+                for flags in ((), ("--no-strict-frontmatter",)):
+                    accepted = self.skill_ci(*command, *flags)
+                    self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+                    self.assertEqual(lines(accepted)[-1], f"checks run: {count}; failed: 0")
+                strict = self.skill_ci(*command, "--strict-frontmatter")
+                self.assertEqual(strict.returncode, 1, strict.stdout + strict.stderr)
+                self.assertIn(
+                    "skills/example/SKILL.md: unexpected frontmatter key 'custom'; strict frontmatter permits only name and description",
+                    lines(strict),
+                )
+                self.assertIn("frontmatter: 1 skills, 1 errors", strict.stderr.splitlines())
+                self.assertEqual(lines(strict)[-1], f"checks run: {count}; failed: 1 (frontmatter)")
+
     def test_link_exceptions_file_allows_a_named_missing_link(self) -> None:
         self.append("\n[report](output.md)\n")
         policy = write(

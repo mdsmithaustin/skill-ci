@@ -35,18 +35,123 @@ class FrontmatterChecker(unittest.TestCase):
         path.write_text(json.dumps(data), encoding="utf-8")
         return path
 
-    def check(self, triggers: Path | None = None, policy: str | None = None) -> tuple[int, str]:
+    def check(self, triggers: Path | None = None, policy: str | None = None, *, strict: bool | None = None) -> tuple[int, str]:
         command = [sys.executable, "-m", "skill_ci.checks.frontmatter", str(self.root)]
         if triggers is not None:
             command.extend(["--triggers", str(triggers)])
         if policy is not None:
             command.extend(["--invocation-policy", policy])
+        if strict is not None:
+            command.append("--strict-frontmatter" if strict else "--no-strict-frontmatter")
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         return result.returncode, result.stdout
 
     def test_isolated_fixture_keeps_one_argument_interface(self) -> None:
         self.skill()
         self.assertEqual(self.check()[0], 0)
+
+    def test_strict_frontmatter_rejects_known_and_unknown_extra_keys(self) -> None:
+        for key, source in (
+            ("compatibility", "compatibility: local"),
+            ("license", "license: MIT"),
+            ("allowed-tools", "allowed-tools: Read"),
+            ("metadata", "metadata:\n  owner: tools"),
+            ("custom", "custom: [one, two]"),
+            ("<<", '"<<": ordinary'),
+            ("disable-model-invocation", "disable-model-invocation: false"),
+            ("disable-model-invocation", "disable-model-invocation: true"),
+        ):
+            with self.subTest(source=source):
+                path = self.skill(frontmatter=f"name: a\ndescription: valid description\n{source}")
+                gate = self.gate("a", "policy:\n  allow_implicit_invocation: false\n" if source.endswith(": true") else "interface: chat\n")
+                self.assertEqual(self.check(), (0, ""))
+                self.assertEqual(self.check(strict=False), (0, ""))
+                for policy in ("paired", "openai-yaml"):
+                    self.assertEqual(
+                        self.check(policy=policy, strict=True),
+                        (1, f"{path}: unexpected frontmatter key {key!r}; strict frontmatter permits only name and description\n"),
+                    )
+                gate.unlink()
+        self.skill()
+        self.assertEqual(self.check(strict=True), (0, ""))
+
+    def test_strict_extra_key_diagnostics_are_sorted(self) -> None:
+        for extras in ("zeta: z\nlicense: MIT\nalpha: a", "alpha: a\nlicense: MIT\nzeta: z"):
+            path = self.skill(frontmatter=f"name: a\ndescription: valid\n{extras}")
+            self.assertEqual(
+                self.check(strict=True),
+                (1, f"{path}: unexpected frontmatter key 'alpha'; strict frontmatter permits only name and description\n"
+                 f"{path}: unexpected frontmatter key 'license'; strict frontmatter permits only name and description\n"
+                 f"{path}: unexpected frontmatter key 'zeta'; strict frontmatter permits only name and description\n"),
+            )
+
+    def test_strict_keeps_required_and_optional_field_validation(self) -> None:
+        for source, messages in (
+            ("description: valid", ["name must be a string"]),
+            ("name: a", ["description must be a string"]),
+            ("name: 3\ndescription: false", ["name must be a string", "description must be a string"]),
+            ("name: a\ndescription: ''", ["description must not be blank"]),
+            ("name: a\ncustom: x", ["unexpected frontmatter key 'custom'; strict frontmatter permits only name and description", "description must be a string"]),
+            ("name: a\ndescription: d\nmetadata: 3", ["unexpected frontmatter key 'metadata'; strict frontmatter permits only name and description", "metadata must be a mapping of strings to strings"]),
+            ("name: a\ndescription: d\ndisable-model-invocation: value", ["unexpected frontmatter key 'disable-model-invocation'; strict frontmatter permits only name and description", "disable-model-invocation must be a boolean"]),
+        ):
+            with self.subTest(source=source):
+                path = self.skill(frontmatter=source)
+                self.assertEqual(self.check(strict=True), (1, "".join(f"{path}: {message}\n" for message in messages)))
+
+    def test_strict_retains_yaml_boundary_errors(self) -> None:
+        for extra, line, message in (
+            ("1: value", 4, "mapping keys must be strings"),
+            ("custom: value\n1: value", 5, "mapping keys must be strings"),
+            ("true: value", 4, "mapping keys must be strings"),
+            ("null: value", 4, "mapping keys must be strings"),
+            ("? [one, two]\n: value", 4, "mapping keys must be strings"),
+            ("name: a", 4, "duplicate key 'name'"),
+            ("custom:\n  owner: one\n  owner: two", 6, "duplicate key 'owner'"),
+            ("<<: {}", 4, "could not determine a constructor for the tag 'tag:yaml.org,2002:merge'"),
+        ):
+            with self.subTest(extra=extra):
+                path = self.skill(frontmatter=f"name: a\ndescription: d\n{extra}")
+                expected = (1, f"{path}:{line}: invalid YAML: {message}\n")
+                self.assertEqual(self.check(), expected)
+                self.assertEqual(self.check(strict=True), expected)
+
+    def test_strict_does_not_change_sidecar_policy(self) -> None:
+        self.skill()
+        gate = self.root / "a" / "agents" / "openai.yaml"
+        for source, paired, openai in (
+            (None, "", ""),
+            ("interface: chat\n", "", ""),
+            ("policy:\n  allow_implicit_invocation: true\n", "", ""),
+            ("policy:\n  allow_implicit_invocation: false\n", "policy.allow_implicit_invocation must match disable-model-invocation", ""),
+            ('policy:\n  allow_implicit_invocation: "false"\n', "policy.allow_implicit_invocation must be a boolean", "policy.allow_implicit_invocation must be a boolean"),
+            ("policy: false\n", "policy must be a mapping", "policy must be a mapping"),
+            ("policy: {}\n---\ninterface: chat\n", "YAML must contain exactly one document", "YAML must contain exactly one document"),
+        ):
+            if source is None:
+                gate.unlink(missing_ok=True)
+            else:
+                self.gate("a", source)
+            for policy, message in (("paired", paired), ("openai-yaml", openai)):
+                with self.subTest(source=source, policy=policy):
+                    expected = (1, f"{gate}: {message}\n") if message else (0, "")
+                    self.assertEqual(self.check(policy=policy), expected)
+                    self.assertEqual(self.check(policy=policy, strict=True), expected)
+        gate.unlink()
+        (self.root / "orphan").mkdir()
+        orphan = self.gate("orphan", "policy: false\n")
+        for policy in ("paired", "openai-yaml"):
+            self.assertEqual(self.check(policy=policy, strict=True), (1, f"{orphan}: orphan OpenAI policy file\n"))
+
+    def test_strict_invalid_skill_keeps_stale_trigger_diagnostic(self) -> None:
+        path = self.skill(frontmatter="name: a\ndescription: valid description\ncustom: accepted by default")
+        corpus = self.corpus([{"skill": "a", "example_request": "x", "description_contains": ["valid"], "implicit_allowed": True}])
+        self.assertEqual(self.check(corpus), (0, ""))
+        self.assertEqual(
+            self.check(corpus, strict=True),
+            (1, f"{path}: unexpected frontmatter key 'custom'; strict frontmatter permits only name and description\n"
+             f"{corpus}: stale trigger declaration for 'a'\n"),
+        )
 
     def test_invalid_utf8_is_a_diagnostic_and_other_skills_are_checked(self) -> None:
         path = self.skill()
