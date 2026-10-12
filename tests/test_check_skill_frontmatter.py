@@ -255,6 +255,66 @@ class FrontmatterChecker(unittest.TestCase):
             ),
         )
 
+    def test_malformed_gate_preserves_each_policy_declaration_checks(self) -> None:
+        for source, message in (
+            ('policy:\n  allow_implicit_invocation: "false"\n', "policy.allow_implicit_invocation must be a boolean"),
+            ("policy: false\n", "policy must be a mapping"),
+            ("policy: {}\n---\ninterface: chat\n", "YAML must contain exactly one document"),
+        ):
+            for disabled in (False, True):
+                path = self.skill(frontmatter=f'name: a\ndescription: "valid description"\ndisable-model-invocation: {str(disabled).lower()}')
+                gate = self.gate("a", source)
+                for declared in (False, True):
+                    corpus = self.corpus([{
+                        "skill": "a", "example_request": "", "description_contains": ["absent"], "implicit_allowed": declared,
+                    }])
+                    for policy in ("paired", "openai-yaml"):
+                        with self.subTest(source=source, disabled=disabled, declared=declared, policy=policy):
+                            expected = f"{gate}: {message}\n"
+                            if policy == "openai-yaml" and disabled:
+                                expected += (
+                                    f"{path}: disable-model-invocation: true makes Claude's Skill tool refuse this skill by name, even when another skill names it; "
+                                    "remove it and set policy.allow_implicit_invocation: false in agents/openai.yaml\n"
+                                )
+                            expected += f"{corpus}: trigger declaration 1.example_request must be a nonblank string\n"
+                            if policy == "paired" and declared == disabled:
+                                expected += f"{corpus}: trigger declaration 1.implicit_allowed does not match 'a'\n"
+                            expected += f"{corpus}: trigger declaration 1 anchor 'absent' is absent from 'a' description\n"
+                            self.assertEqual(self.check(corpus, policy=policy), (1, expected))
+
+    def test_diagnostics_keep_parse_orphan_policy_and_declaration_order(self) -> None:
+        self.skill(frontmatter='name: a\ndescription: "valid description"\ndisable-model-invocation: true')
+        gate = self.gate("a", "policy: false\n")
+        broken = self.skill("b", "name: b\ndescription: 3")
+        self.skill("c", 'name: c\ndescription: "valid description"')
+        orphan = self.root / "orphan" / "agents" / "openai.yaml"
+        orphan.parent.mkdir(parents=True)
+        orphan.write_text("policy: false\n", encoding="utf-8")
+        corpus = self.corpus([
+            {"skill": "a", "example_request": "x", "description_contains": ["absent"], "implicit_allowed": True},
+            {"skill": "b", "example_request": "x", "description_contains": ["valid"], "implicit_allowed": True},
+        ])
+        for policy in ("paired", "openai-yaml"):
+            with self.subTest(policy=policy):
+                expected = (
+                    f"{broken}: description must be a string\n"
+                    f"{orphan}: orphan OpenAI policy file\n"
+                    f"{gate}: policy must be a mapping\n"
+                )
+                if policy == "openai-yaml":
+                    expected += (
+                        f"{self.root / 'a' / 'SKILL.md'}: disable-model-invocation: true makes Claude's Skill tool refuse this skill by name, even when another skill names it; "
+                        "remove it and set policy.allow_implicit_invocation: false in agents/openai.yaml\n"
+                    )
+                else:
+                    expected += f"{corpus}: trigger declaration 1.implicit_allowed does not match 'a'\n"
+                expected += (
+                    f"{corpus}: trigger declaration 1 anchor 'absent' is absent from 'a' description\n"
+                    f"{corpus}: stale trigger declaration for 'b'\n"
+                    f"{corpus}: missing trigger declaration for 'c'\n"
+                )
+                self.assertEqual(self.check(corpus, policy=policy), (1, expected))
+
     def test_invalid_utf8_in_openai_yaml_is_a_diagnostic_and_other_skills_are_checked(self) -> None:
         self.skill()
         gate = self.gate("a", "")
