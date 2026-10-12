@@ -299,20 +299,19 @@ class PackageChecker(unittest.TestCase):
 
     def test_unreadable_source_file_and_installed_parent_symlink_fail(self) -> None:
         package = self.skill("alpha")
-        blocked = package / "blocked"
-        blocked.write_text("secret", encoding="utf-8")
-        blocked.chmod(0)
-        try:
-            code, output = self.execute("--skill", package)
-        finally:
-            blocked.chmod(0o600)
-        self.assertEqual(code, 1)
-        self.assertIn("cannot read file blocked", output)
         installed_link = self.root / "installed-link"
         installed_link.symlink_to(self.installed, target_is_directory=True)
         code, output = self.execute("--skill", package, "--compare-to", installed_link)
         self.assertEqual(code, 1)
         self.assertIn("installed skills directory must not be a symlink", output)
+        blocked = package / "blocked"
+        blocked.write_text("secret", encoding="utf-8")
+        blocked.chmod(0)
+        if os.access(blocked, os.R_OK):
+            self.skipTest("this user can read a file without read permission")
+        code, output = self.execute("--skill", package)
+        self.assertEqual(code, 1)
+        self.assertIn("cannot read file blocked", output)
 
     def test_failed_source_inspection_does_not_count_as_a_completed_comparison(self) -> None:
         package = self.skill("alpha")

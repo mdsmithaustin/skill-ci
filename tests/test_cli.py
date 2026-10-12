@@ -7,8 +7,10 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import unittest
 from pathlib import Path
@@ -257,7 +259,9 @@ class ManifestTests(ConsumerTestCase):
             with self.subTest(layout=layout):
                 result = self.skill_ci("validate", layout, root)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                self.assertEqual(result.stderr.splitlines(), [failure])
+                banner, *rest = result.stderr.splitlines()
+                self.assertRegex(banner, r"^skill-ci \S+ \(commit unknown\)$")
+                self.assertEqual(rest, [failure])
                 self.assertEqual(lines(result), ["OK: b — 0 cases, 0 ablations", "manifests checked: 2"])
 
     def test_the_skills_tree_checks_only_manifests_directly_inside_an_evals_directory(self) -> None:
@@ -406,7 +410,7 @@ class PackageTests(ConsumerTestCase):
         result = run_in_a_broken_cwd(self.root / "gone", "rmdir", sys.executable, "-I", "-m", "skill_ci", "package", "--skills-dir", "../skills")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual(result.stdout, "")
-        self.assertEqual(result.stderr, "skill-ci: FileNotFoundError: [Errno 2] No such file or directory\n")
+        self.assertRegex(result.stderr, r"^skill-ci \S+ \(commit unknown\)\nskill-ci: FileNotFoundError: \[Errno 2\] No such file or directory\n$")
 
 
 class LintTests(ConsumerTestCase):
@@ -431,6 +435,29 @@ class LintTests(ConsumerTestCase):
         allowed = self.skill_ci("lint", "--content-link-exceptions-file", str(policy))
         self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
         self.assertEqual(lines(allowed), ["checks run: 2; failed: 0"])
+
+    def test_invocation_policy_chooses_where_a_skill_is_gated(self) -> None:
+        write(self.skill / "agents/openai.yaml", "policy:\n  allow_implicit_invocation: false\n")
+        paired = self.skill_ci("lint")
+        self.assertEqual(paired.returncode, 1, paired.stdout + paired.stderr)
+        self.assertIn(
+            "skills/example/agents/openai.yaml: policy.allow_implicit_invocation must match disable-model-invocation",
+            lines(paired),
+        )
+        gated = self.skill_ci("lint", "--invocation-policy", "openai-yaml")
+        self.assertEqual(gated.returncode, 0, gated.stdout + gated.stderr)
+        self.assertEqual(lines(gated), ["checks run: 2; failed: 0"])
+        write(self.skill / "SKILL.md", "---\nname: example\ndescription: Use when asked for example.\ndisable-model-invocation: true\n---\n# example\n")
+        flagged = self.skill_ci("lint", "--invocation-policy", "openai-yaml")
+        self.assertEqual(flagged.returncode, 1, flagged.stdout + flagged.stderr)
+        self.assertIn(
+            "skills/example/SKILL.md: disable-model-invocation: true makes Claude's Skill tool refuse this skill by name, "
+            "even when another skill names it; remove it and set policy.allow_implicit_invocation: false in agents/openai.yaml",
+            lines(flagged),
+        )
+        invalid = self.skill_ci("lint", "--invocation-policy", "claude")
+        self.assertEqual(invalid.returncode, 2, invalid.stdout + invalid.stderr)
+        self.assertIn("argument --invocation-policy: invalid InvocationPolicy value: 'claude'", invalid.stderr)
 
     def test_conventions_file_flags_retired_text(self) -> None:
         self.append("\nRun /retired here.\n")
@@ -524,14 +551,68 @@ class LintTests(ConsumerTestCase):
         )
         self.assertNotIn("Traceback", result.stderr)
 
-    def test_a_check_that_raises_is_named_on_one_line_and_the_next_check_still_runs(self) -> None:
+    def test_invalid_utf8_is_diagnosed_by_both_markdown_checks(self) -> None:
         (self.root / "skills/other").mkdir()
         (self.root / "skills/other/SKILL.md").write_bytes(b"---\nname: other\ndescription: caf\xe9\n---\n")
         result = self.skill_ci("lint")
-        decode = "UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe9 in position 32: invalid continuation byte"
+        decode = "invalid UTF-8 at byte 33 (0xE9): invalid continuation byte"
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertEqual(lines(result), ["checks run: 2; failed: 2 (frontmatter, content)"])
-        self.assertEqual(result.stderr.splitlines(), [f"skill-ci: frontmatter check: {decode}", f"skill-ci: content check: {decode}"])
+        self.assertEqual(
+            lines(result),
+            [
+                f"skills/other/SKILL.md:3: {decode}",
+                f"skills/other/SKILL.md:3: invalid-utf8: {decode}",
+                "checks run: 2; failed: 2 (frontmatter, content)",
+            ],
+        )
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_new_author_findings_run_in_all_model_free_modes(self) -> None:
+        marker = self.root.parent / "harness-loaded"
+        plant = write(
+            self.root.parent / "plant/skill_benchmark.py",
+            f"open({str(marker)!r}, 'w').close()\nraise RuntimeError('model harness loaded')\n",
+        )
+        self.append(
+            "\nRead `scripts/MISSING.py`.\n\n"
+            "[x]: https://example.com/first\n[x]: https://example.com/second\n\n"
+            "Text\u202e\n"
+        )
+        empty = write(
+            self.root / "skills/empty/SKILL.md",
+            "---\nname: empty\ndescription: Empty example.\n---\n\n<!-- Only a comment. -->\n",
+        )
+        invalid = write_skill(self.root / "skills/invalid") / "SKILL.md"
+        invalid.write_bytes(b"---\nname: invalid\ndescription: \xff\n---\nBody.\n")
+        expected = [
+            "skills/invalid/SKILL.md:3: invalid UTF-8 at byte 32 (0xFF): invalid start byte",
+            "skills/empty/SKILL.md:5: empty-skill-body: body has no content after frontmatter",
+            "skills/example/SKILL.md:7: relative-link: target does not exist: scripts/MISSING.py",
+            "skills/example/SKILL.md:10: conflicting-reference: label 'X' conflicts with definition on line 9",
+            "skills/example/SKILL.md:12: unsafe-character: literal U+202E at column 5",
+            "skills/invalid/SKILL.md:3: invalid-utf8: invalid UTF-8 at byte 32 (0xFF): invalid start byte",
+        ]
+        modes = (
+            (("lint",), 2, []),
+            (("check", "--fast"), 3, []),
+            (("check",), 4, ["manifests checked: 0"]),
+        )
+        for arguments, count, extra in modes:
+            with self.subTest(arguments=arguments):
+                result = self.skill_ci(*arguments, env={**ENVIRONMENT, "PYTHONPATH": str(plant.parent)})
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual(lines(result), expected + extra + [f"checks run: {count}; failed: 2 (frontmatter, content)"])
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertFalse(marker.exists())
+        write_skill(self.skill)
+        write_skill(empty.parent)
+        write_skill(invalid.parent)
+        for arguments, count, extra in modes:
+            with self.subTest(repaired=arguments):
+                result = self.skill_ci(*arguments, env={**ENVIRONMENT, "PYTHONPATH": str(plant.parent)})
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(lines(result), extra + [f"checks run: {count}; failed: 0"])
+                self.assertFalse(marker.exists())
 
 
 class FastCheckTests(ConsumerTestCase):
@@ -559,8 +640,10 @@ class FastCheckTests(ConsumerTestCase):
             timeout=60,
             check=False,
         )
+        banner, *findings = result.stdout.splitlines()
+        self.assertRegex(banner, r"^skill-ci \S+ \(commit unknown\)$")
         self.assertEqual(
-            result.stdout.splitlines(),
+            findings,
             [
                 "skills/example/notes.md:3: possible email address",
                 "frontmatter: 1 skills, 0 errors",
@@ -684,6 +767,9 @@ class CheckRunnerTests(unittest.TestCase):
         self.assertEqual(stdout.getvalue(), "checks run: 2; failed: 1 (first)\n")
 
 
+ONE_LINE = r"^skill-ci \S+ \(commit unknown\)\nskill-ci: RuntimeError: the inventory broke\n$"
+
+
 class UnexpectedErrorTests(unittest.TestCase):
     def package_that_raises(self, error: BaseException, **variables: str) -> tuple[int, str]:
         stderr = io.StringIO()
@@ -696,24 +782,24 @@ class UnexpectedErrorTests(unittest.TestCase):
         return code, stderr.getvalue()
 
     def test_an_unexpected_error_in_a_command_prints_one_line_and_exits_1(self) -> None:
-        self.assertEqual(
-            self.package_that_raises(RuntimeError("the inventory broke")),
-            (1, "skill-ci: RuntimeError: the inventory broke\n"),
-        )
+        code, stderr = self.package_that_raises(RuntimeError("the inventory broke"))
+        self.assertEqual(code, 1)
+        self.assertRegex(stderr, ONE_LINE)
 
     def test_skill_ci_debug_of_exactly_1_prints_the_traceback_instead(self) -> None:
         code, stderr = self.package_that_raises(RuntimeError("the inventory broke"), SKILL_CI_DEBUG="1")
+        banner, printed = stderr.split("\n", 1)
         self.assertEqual(code, 1)
-        self.assertTrue(stderr.startswith("Traceback (most recent call last):\n"), stderr)
-        self.assertTrue(stderr.endswith("\nRuntimeError: the inventory broke\n"), stderr)
+        self.assertRegex(banner, r"^skill-ci \S+ \(commit unknown\)$")
+        self.assertTrue(printed.startswith("Traceback (most recent call last):\n"), stderr)
+        self.assertTrue(printed.endswith("\nRuntimeError: the inventory broke\n"), stderr)
 
     def test_any_other_skill_ci_debug_value_keeps_the_one_line(self) -> None:
         for value in ("0", "true", "", "11", " 1"):
             with self.subTest(value=value):
-                self.assertEqual(
-                    self.package_that_raises(RuntimeError("the inventory broke"), SKILL_CI_DEBUG=value),
-                    (1, "skill-ci: RuntimeError: the inventory broke\n"),
-                )
+                code, stderr = self.package_that_raises(RuntimeError("the inventory broke"), SKILL_CI_DEBUG=value)
+                self.assertEqual(code, 1)
+                self.assertRegex(stderr, ONE_LINE)
 
     def test_a_system_exit_passes_through_with_its_code(self) -> None:
         for code in (0, 3):
@@ -721,6 +807,23 @@ class UnexpectedErrorTests(unittest.TestCase):
                 with self.assertRaises(SystemExit) as raised:
                     self.package_that_raises(SystemExit(code))
                 self.assertEqual(raised.exception.code, code)
+
+    def test_a_run_without_an_installed_distribution_ends_on_one_line(self) -> None:
+        dependencies = Path(self.enterContext(tempfile.TemporaryDirectory(prefix="skill-ci-uninstalled-")))
+        for entry in Path(sysconfig.get_path("purelib")).iterdir():
+            if not entry.name.startswith("skill_ci"):
+                (dependencies / entry.name).symlink_to(entry)
+        result = subprocess.run(
+            [sys.executable, "-S", "-m", "skill_ci", "--version"],
+            cwd=dependencies,
+            env={**ENVIRONMENT, "PYTHONPATH": os.pathsep.join((str(REPOSITORY / "src"), str(dependencies)))},
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        self.assertEqual((result.returncode, result.stdout), (1, ""), result.stderr)
+        self.assertEqual(result.stderr, "skill-ci: PackageNotFoundError: No package metadata was found for skill-ci\n")
 
 
 class PaidRunTests(unittest.TestCase):
@@ -817,6 +920,12 @@ class PaidRunTests(unittest.TestCase):
         self.assertEqual(result.returncode, 7, result.stderr)
         self.assertEqual([stage[0] for stage in self.fake.arguments()], ["audit-manifest", "prepare", "run-agent", "grade"])
 
+    def test_a_harness_stage_killed_by_a_signal_exits_128_plus_its_number(self) -> None:
+        for command in (("trigger", "skills/example", "--out", "t"), ("run", "skills/example", "--out", "r")):
+            with self.subTest(command=command[0]):
+                result = self.paid(*command, FAKE_HARNESS_SIGNAL=str(int(signal.SIGTERM)))
+                self.assertEqual(result.returncode, 128 + signal.SIGTERM, result.stderr)
+
     def test_a_failed_readiness_audit_leaves_an_explicit_output_uncreated(self) -> None:
         result = self.paid("run", "skills/example", "--out", "o/nested", FAKE_HARNESS_EXIT="2", FAKE_HARNESS_FAIL_STAGE="audit-manifest")
         self.assertEqual(result.returncode, 2, result.stderr)
@@ -907,7 +1016,7 @@ class PaidRunTests(unittest.TestCase):
             with self.subTest(command=command):
                 result = self.paid(command, "skills/example", "--out", "afile/sub")
                 self.assertEqual(result.returncode, 1, result.stderr)
-                self.assertEqual(result.stderr, "skill-ci: output allocation failed: [Errno 20] Not a directory: 'afile/sub'\n")
+                self.assertRegex(result.stderr, r"^skill-ci \S+ \(commit unknown\)\nskill-ci: output allocation failed: \[Errno 20\] Not a directory: 'afile/sub'\n$")
                 self.assertEqual([stage[0] for stage in self.fake.arguments()], stages)
 
     def test_an_explicit_output_still_needs_a_selected_package(self) -> None:
@@ -918,7 +1027,7 @@ class PaidRunTests(unittest.TestCase):
                     with self.subTest(selection=selection, out=out, command=command):
                         result = self.paid(command, selection, "--evals-dir", "evals", "--out", out)
                         self.assertEqual(result.returncode, 1, result.stderr)
-                        self.assertRegex(result.stderr, rf"^skill-ci: output allocation failed: {error}\n$")
+                        self.assertRegex(result.stderr, rf"^skill-ci \S+ \(commit unknown\)\nskill-ci: output allocation failed: {error}\n$")
         self.assertEqual(self.fake.calls(), [])
         self.assertEqual(list(self.package.iterdir()), [self.package / "SKILL.md"])
         self.assertFalse((self.checkout / "elsewhere").exists())
@@ -932,7 +1041,7 @@ class PaidRunTests(unittest.TestCase):
                 with self.subTest(selection=selection, out=out, command=command):
                     result = self.paid(command, selection, "--out", out)
                     self.assertEqual(result.returncode, 1, result.stderr)
-                    self.assertRegex(result.stderr, rf"^skill-ci: output allocation failed: .*'({re.escape(str(self.checkout))}/)?links/loop(/sub)?'\n$")
+                    self.assertRegex(result.stderr, rf"^skill-ci \S+ \(commit unknown\)\nskill-ci: output allocation failed: .*'({re.escape(str(self.checkout))}/)?links/loop(/sub)?'\n$")
         self.assertEqual(self.fake.calls(), [])
         self.assertFalse((self.checkout / "elsewhere").exists())
 

@@ -14,20 +14,20 @@ The source review covered [skill-optimizer at `914629f`](https://github.com/mdsm
 
 ## Changes to the donor's package design
 
-The new checker is read-only and accepts explicit single-package or collection selection. Copy comparison always takes the installed skills parent directory. Each selected source maps to its own basename below that parent.
+The new checker is read-only and accepts explicit single-package or collection selection. `skill-ci package` exposes the collection form. Copy comparison always takes the installed skills parent directory. Each selected source maps to its own basename below that parent.
 
 The inventory includes empty directories and exact executable permission bits as well as file paths and bytes. The donor's digest omitted directories and permissions. Symlink roots are checked before path resolution. All file content is opaque, so native metadata extensions do not acquire a new validation policy.
 
 The command owns one in-memory inventory and derives both its digest and path-level differences from it. A separate serialized-inventory format would add storage, freshness, and schema coordination without a current consumer. Automatic selection based on whether `SKILL.md` exists was rejected because a missing marker would change which directories the command inspected.
 
-Both new reusable workflow inputs default to false. Consumers can adopt package inspection or require manifests independently. The existing copied checker files and their drift checks retain their current contracts.
+The `package` and `require_manifests` settings both default to false. Consumers can adopt package inspection or a manifest requirement independently.
 
 ## Left with their existing owners
 
 | Candidate | Reason |
 | --- | --- |
 | The donor's full frontmatter, reference, and OpenAI-sidecar validator. | The recipient already validates metadata and invocation policy. The donor requires UI fields and portable-only keys that conflict with valid recipient packages. |
-| Bare resource paths in code spans. | This is useful follow-up work for the shared parser-based content checker. The donor's regex uses different path rules and would misread examples if copied directly. The shared checker must be updated and synchronized with its consumers. |
+| The donor's regex for bare resource paths. | The shared parser-based content checker now checks whole inline-code resource paths under `scripts/`, `references/`, and `assets/`. It preserves the existing containing-file resolution base and skips commands, placeholders, globs, directory mentions, and fenced examples. |
 | The donor's eval JSON schema, audit-focus taxonomy, and optimizer-specific fixtures. | The external runner already owns manifest validation and readiness. The donor cases judge the optimizer's semantic audits, not general skill infrastructure. |
 | The live `npx skills` installer probe. | It hard-codes the donor name, installer identity, target, and listing expectations. Generalizing it adds Node and registry dependencies. The package check makes no installer claim. |
 | The `install_to` helper. | It removes an existing destination before copying. Offline comparison needs no installation or replacement operation. |

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from skill_ci import harness
 from skill_ci.checks import content, coverage, frontmatter, manifests, package, pii
+from skill_ci.checks.frontmatter import InvocationPolicy
 
 
 class PiiScope(StrEnum):
@@ -21,6 +22,7 @@ class CheckOptions:
     evals_dir: Path | None = None
     pii_scope: PiiScope = PiiScope.SKILLS
     trigger_cases: Path | None = None
+    invocation_policy: InvocationPolicy = InvocationPolicy.PAIRED
     content_ignore_file: Path | None = None
     content_link_exceptions_file: Path | None = None
     content_conventions_file: Path | None = None
@@ -69,7 +71,7 @@ def fast_checks(options: CheckOptions) -> list[Check]:
 
 def lint_checks(options: CheckOptions) -> list[Check]:
     return [
-        ("frontmatter", lambda: frontmatter.check_skills(options.skills_dir, options.trigger_cases)),
+        ("frontmatter", lambda: frontmatter.check_skills(options.skills_dir, options.trigger_cases, options.invocation_policy)),
         ("content", lambda: lint_content(options)),
     ]
 

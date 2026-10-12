@@ -1,0 +1,8 @@
+pre-commit:
+  commands:
+    skill-ci-check-fast:
+      run: skill-ci check --fast
+pre-push:
+  commands:
+    skill-ci-check:
+      run: skill-ci check

@@ -88,6 +88,158 @@ class ContentLint(ConventionsTree):
     def test_clean_tree_passes(self) -> None:
         self.assertEqual(run(CONTENT, self.root), (0, ""))
 
+    def test_empty_and_comment_only_skill_bodies_fail(self) -> None:
+        for body in ("", " \t\n\n", "<!-- Only a comment. -->", "<!-- First. -->\n<!-- Second. -->"):
+            with self.subTest(body=body):
+                code, out = self.body(body)
+                self.assertEqual(code, 1)
+                self.assertEqual(
+                    out,
+                    f"{self.root}/a/SKILL.md:5: empty-skill-body: body has no content after frontmatter\n",
+                )
+                self.assertEqual(self.body(body + "\n# Instructions"), (0, ""))
+
+    def test_skill_body_presence_preserves_code_definitions_and_body_delimiters(self) -> None:
+        for body in (
+            "# Instructions",
+            "```\n<!-- A code example. -->\n```",
+            "    <!-- An indented code example. -->",
+            "`<!-- An inline code example. -->`",
+            "[x]: https://example.com",
+            "---\nbody: text\n---",
+        ):
+            with self.subTest(body=body):
+                self.assertEqual(self.body(body), (0, ""))
+        self.assertEqual(self.body("")[0], 1)
+
+    def test_empty_reference_and_template_markdown_are_allowed(self) -> None:
+        skill = self.skill("a", 'name: a\ndescription: "d"', "")
+        (skill / "references").mkdir()
+        for name in ("references/empty.md", "template.md"):
+            (skill / name).write_text("<!-- No content yet. -->\n", encoding="utf-8")
+        code, out = run(CONTENT, self.root)
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            out,
+            f"{skill}/SKILL.md:5: empty-skill-body: body has no content after frontmatter\n",
+        )
+
+    def test_frontmatter_like_body_without_an_opening_block_is_not_removed(self) -> None:
+        skill = self.skill("a", 'name: a\ndescription: "d"')
+        path = skill / "SKILL.md"
+        path.write_text("\n---\nbody: text\n---\n", encoding="utf-8")
+        self.assertEqual(run(CONTENT, self.root), (0, ""))
+        path.write_text("\n<!-- Empty. -->\n", encoding="utf-8")
+        self.assertEqual(run(CONTENT, self.root), (0, ""))
+
+    def test_unsafe_characters_are_detected_in_raw_markdown(self) -> None:
+        unsafe = [chr(codepoint) for codepoint in range(32) if codepoint not in (9, 10, 13)]
+        unsafe.extend(("\x7f", "\u202d", "\u202e"))
+        for character in unsafe:
+            with self.subTest(codepoint=ord(character)):
+                code, out = self.body("Safe" + character + "text.")
+                self.assertEqual(code, 1)
+                self.assertEqual(
+                    out,
+                    f"{self.root}/a/SKILL.md:6: unsafe-character: literal U+{ord(character):04X} at column 5\n",
+                )
+        self.assertEqual(self.body("Safe text.\tمرحبا\u200c\u200d\u2066text\u2069"), (0, ""))
+
+    def test_unsafe_characters_in_frontmatter_and_fences_keep_physical_positions(self) -> None:
+        skill = self.skill("a", 'name: a\ndescription: "d"')
+        path = skill / "SKILL.md"
+        path.write_bytes(
+            b'---\r\nname: a\r\ndescription: "d\x0b"\r\n---\r\n'
+            b'\r\n```\r\nA\x0cB\x1cC\x1dD\x1eE\x7f\r\n```\r\n'
+        )
+        code, out = run(CONTENT, self.root)
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            out,
+            f"{path}:3: unsafe-character: literal U+000B at column 16\n"
+            f"{path}:7: unsafe-character: literal U+000C at column 2\n"
+            f"{path}:7: unsafe-character: literal U+001C at column 4\n"
+            f"{path}:7: unsafe-character: literal U+001D at column 6\n"
+            f"{path}:7: unsafe-character: literal U+001E at column 8\n"
+            f"{path}:7: unsafe-character: literal U+007F at column 10\n",
+        )
+
+    def test_rtl_controls_joiners_and_isolates_are_allowed(self) -> None:
+        code, out = self.body("مرحبا\u200e\u200f\u202a\u202b\u202c\u2066\u2067\u2068\u2069\u200c\u200d\t\r\nText.\u202e")
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            out,
+            f"{self.root}/a/SKILL.md:7: unsafe-character: literal U+202E at column 6\n",
+        )
+
+    def test_visible_control_notation_and_entities_are_allowed(self) -> None:
+        body = r"Use `\u202e`, `\x00`, U+202E, or &#x202e; in examples."
+        code, out = self.body(body + "\nLiteral\u202e")
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            out,
+            f"{self.root}/a/SKILL.md:7: unsafe-character: literal U+202E at column 8\n",
+        )
+        self.assertEqual(self.body(body), (0, ""))
+
+    def test_control_inside_a_resource_path_is_escaped_in_every_diagnostic(self) -> None:
+        code, out = self.body("Read `scripts/bad\x1b.py`.")
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            out,
+            f"{self.root}/a/SKILL.md:6: relative-link: target does not exist: scripts/bad\\u001B.py\n"
+            f"{self.root}/a/SKILL.md:6: unsafe-character: literal U+001B at column 18\n",
+        )
+        self.assertNotIn("\x1b", out)
+        self.assertEqual(self.body("Read `scripts/good.py`.")[0], 1)
+        path = self.root / "a/scripts/good.py"
+        path.parent.mkdir()
+        path.write_text("Content.", encoding="utf-8")
+        self.assertEqual(self.body("Read `scripts/good.py`."), (0, ""))
+
+    def test_content_diagnostics_escape_source_paths_and_preserve_other_unicode(self) -> None:
+        skill = self.skill("a", 'name: a\ndescription: "d"')
+        path = skill / "notes\x1b.md"
+        path.write_text("Read `assets/مرحبا\u200d\u2067\u2069\u202e.svg`.\n", encoding="utf-8")
+        code, out = run(CONTENT, self.root)
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            out,
+            f"{skill}/notes\\u001B.md:1: relative-link: target does not exist: assets/مرحبا\u200d\u2067\u2069\\u202E.svg\n"
+            f"{skill}/notes\\u001B.md:1: unsafe-character: literal U+202E at column 22\n",
+        )
+        self.assertNotIn("\x1b", out)
+        self.assertNotIn("\u202e", out)
+
+    def test_invalid_utf8_reports_bytes_and_continues_checking_markdown(self) -> None:
+        skill = self.skill("a", 'name: a\ndescription: "d"')
+        path = skill / "notes.md"
+        path.write_bytes(b"First.\r\nBad: \xff\n")
+        self.skill("z", 'name: z\ndescription: "d"', "Read `assets/MISSING.svg`.")
+        code, out = run(CONTENT, self.root)
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            out,
+            f"{path}:2: invalid-utf8: invalid UTF-8 at byte 14 (0xFF): invalid start byte\n"
+            f"{self.root}/z/SKILL.md:6: relative-link: target does not exist: assets/MISSING.svg\n",
+        )
+        path.write_text("First.\nBad: café\n", encoding="utf-8")
+        self.skill("z", 'name: z\ndescription: "d"')
+        self.assertEqual(run(CONTENT, self.root), (0, ""))
+
+    def test_invalid_utf8_in_a_skill_does_not_abort_other_files(self) -> None:
+        skill = self.skill("a", 'name: a\ndescription: "d"')
+        path = skill / "SKILL.md"
+        path.write_bytes(b"---\nname: a\ndescription: \xe9\n---\nBody.\n")
+        (skill / "notes.md").write_text("Read `scripts/MISSING.py`.\n", encoding="utf-8")
+        code, out = run(CONTENT, self.root)
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            out,
+            f"{path}:3: invalid-utf8: invalid UTF-8 at byte 26 (0xE9): invalid continuation byte\n"
+            f"{skill}/notes.md:1: relative-link: target does not exist: scripts/MISSING.py\n",
+        )
+
     def test_whitespace_only_line_does_not_hide_a_broken_link(self) -> None:
         code, out = self.body("Intro.\n   \nSee [bad](MISSING).")
         self.assertEqual(code, 1)
@@ -315,6 +467,87 @@ class ContentLint(ConventionsTree):
     def test_inline_code_path_broken_fires(self) -> None:
         code, out = self.body("Read `../gone/setup.md` first.")
         self.assertEqual(code, 1)
+
+    def test_bare_resource_code_paths_report_missing_files(self) -> None:
+        for resource in ("scripts/run.py", "references/guide.md", "assets/diagram.svg"):
+            with self.subTest(resource=resource):
+                code, out = self.body(f"Read `{resource}` first.")
+                self.assertEqual(code, 1)
+                self.assertEqual(
+                    out,
+                    f"{self.root}/a/SKILL.md:6: relative-link: target does not exist: {resource}\n",
+                )
+                path = self.root / "a" / resource
+                path.parent.mkdir(exist_ok=True)
+                path.write_text("Content.", encoding="utf-8")
+                self.assertEqual(self.body(f"Read `{resource}` first."), (0, ""))
+
+    def test_bare_resource_paths_follow_the_containing_markdown_file(self) -> None:
+        skill = self.skill("a", 'name: a\ndescription: "d"')
+        write_at = skill / "references"
+        write_at.mkdir()
+        (write_at / "notes.md").write_text(
+            "Read `assets/diagram.svg` and ![`scripts/run.py`](https://example.com).\n",
+            encoding="utf-8",
+        )
+        code, out = run(CONTENT, self.root)
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            out,
+            f"{write_at}/notes.md:1: relative-link: target does not exist: assets/diagram.svg\n"
+            f"{write_at}/notes.md:1: relative-link: target does not exist: scripts/run.py\n",
+        )
+        for resource in ("assets/diagram.svg", "scripts/run.py"):
+            path = write_at / resource
+            path.parent.mkdir()
+            path.write_text("Content.", encoding="utf-8")
+        self.assertEqual(run(CONTENT, self.root), (0, ""))
+
+    def test_quoted_bare_resource_paths_support_spaces(self) -> None:
+        code, out = self.body('Read `"references/my notes.md"` and `\'assets/my diagram.svg\'`.')
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            out,
+            f"{self.root}/a/SKILL.md:6: relative-link: target does not exist: references/my notes.md\n"
+            f"{self.root}/a/SKILL.md:6: relative-link: target does not exist: assets/my diagram.svg\n",
+        )
+        for resource in ("references/my notes.md", "assets/my diagram.svg"):
+            path = self.root / "a" / resource
+            path.parent.mkdir()
+            path.write_text("Content.", encoding="utf-8")
+        self.assertEqual(
+            self.body('Read `"references/my notes.md"` and `\'assets/my diagram.svg\'`.'),
+            (0, ""),
+        )
+
+    def test_bare_resource_examples_commands_and_dynamic_paths_are_skipped(self) -> None:
+        body = (
+            "`scripts/` `references/` `assets/` `scripts/nested/`\n"
+            "`scripts/run.py --check` `python scripts/run.py` `references/my notes.md`\n"
+            "`scripts/*.py` `references/[name].md` `assets/{name}.svg` `scripts/$RUN`\n"
+            "`scripts/run.py;exit` `scripts/run.py|cat` `scripts/run?.py`\n"
+            "```\n`scripts/example.py`\n```\n\n"
+            "    `references/example.md`\n\n"
+            "Read `assets/MISSING.svg`."
+        )
+        code, out = self.body(body)
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            out,
+            f"{self.root}/a/SKILL.md:16: relative-link: target does not exist: assets/MISSING.svg\n",
+        )
+
+    def test_bare_resource_directory_mentions_are_skipped_even_with_md_suffix(self) -> None:
+        skill = self.skill("a", 'name: a\ndescription: "d"', "Read `references/folder.md` and `assets/MISSING.svg`.")
+        (skill / "references/folder.md").mkdir(parents=True)
+        code, out = run(CONTENT, self.root)
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            out,
+            f"{skill}/SKILL.md:6: relative-link: target does not exist: assets/MISSING.svg\n"
+            f"{skill}/references/folder.md:1: unreadable: cannot read file: "
+            f"[Errno 21] Is a directory: '{skill}/references/folder.md'\n",
+        )
 
     def test_broken_non_md_inline_path_fires(self) -> None:
         code, out = self.body("Run `../real-skill/gone.sh` first.")
@@ -674,6 +907,56 @@ class ContentLint(ConventionsTree):
         )
         self.assertEqual(code, 1)
         self.assertIn("references/MISSING-DUPLICATE.svg", out)
+
+    def test_conflicting_reference_definitions_normalize_labels(self) -> None:
+        for second in (
+            '[  lAbEl   x  ]: https://example.com/other "First"',
+            '[  lAbEl   x  ]: https://example.com/first "Other"',
+        ):
+            with self.subTest(second=second):
+                code, out = self.body(
+                    '[Label x]: https://example.com/first "First"\n' + second
+                )
+                self.assertEqual(code, 1)
+                self.assertEqual(
+                    out,
+                    f"{self.root}/a/SKILL.md:7: conflicting-reference: "
+                    "label 'LABEL X' conflicts with definition on line 6\n",
+                )
+                self.assertEqual(
+                    self.body(
+                        '[Label x]: https://example.com/first "First"\n'
+                        '[  lAbEl   x  ]: https://example.com/first "First"'
+                    ),
+                    (0, ""),
+                )
+
+    def test_identical_parsed_reference_destinations_and_titles_are_allowed(self) -> None:
+        code, out = self.body(
+            '[x]: https://example.com/a?b=1&amp;c=2 "A &amp; B"\n'
+            "[X]: <https://example.com/a?b=1&c=2> 'A & B'\n"
+            '[x]: https://example.com/a?b=1&c=2 "Changed"'
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            out,
+            f"{self.root}/a/SKILL.md:8: conflicting-reference: "
+            "label 'X' conflicts with definition on line 6\n",
+        )
+
+    def test_reference_conflicts_in_code_blocks_are_ignored(self) -> None:
+        code, out = self.body(
+            "[x]: https://example.com/a\n\n"
+            "```\n[x]: https://example.com/b\n```\n\n"
+            "    [x]: https://example.com/c\n\n"
+            "> [X]: https://example.com/d"
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            out,
+            f"{self.root}/a/SKILL.md:14: conflicting-reference: "
+            "label 'X' conflicts with definition on line 6\n",
+        )
 
     def test_angle_reference_targets_with_spaces_are_checked(self) -> None:
         code, out = self.body(

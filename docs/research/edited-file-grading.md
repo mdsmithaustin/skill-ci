@@ -1,6 +1,6 @@
 # Edited-file grading proof
 
-On 2026-10-04, the standard `skill-run` task completed one with-skill and one without-skill run on each provider. All four products passed the script oracle. This proves file-edit capture, patch reconstruction, and deterministic grading through the existing runner. It does not prove skill benefit. Both provider reports flagged the case as saturated and reported zero objective lift.
+On 2026-10-04, the standard `skill-run` task, whose work `skill-ci run` now does, completed one with-skill and one without-skill run on each provider. All four products passed the script oracle. This proves file-edit capture, patch reconstruction, and deterministic grading through the existing runner. It does not prove skill benefit. Both provider reports flagged the case as saturated and reported zero objective lift.
 
 The runner pin was `80e49afd5ac6502d3bb2a877846a6f49003e588d`. The host was macOS with Claude Code 2.1.289 and Codex CLI 0.160.0. Claude used the `sonnet` alias, whose native trace identified `claude-sonnet-5-5`. Codex used `gpt-6.1-sol`. Each subject call had a 240-second timeout. No tuning or retry occurred. The manifest contains no judge assertions, both judge result files were empty, and no paid judge call occurred.
 
@@ -17,13 +17,14 @@ Output went to the newly allocated default directory beside the checkout. Raw tr
 Run from this repository with authenticated Claude and Codex CLIs. This spends four subject calls. The writable Codex override applies only to this invocation.
 
 ```sh
-EVALS_DIR=.github/fixtures/populated/evals \
-AGENTS='claude codex' RUNS=1 TIMEOUT=240 CODEX_MODEL=gpt-6.1-sol \
-CODEX_CMD="\"$PWD/tools/codex-project-only\" exec --json --skip-git-repo-check --sandbox workspace-write" \
-  mise run skill-run .github/fixtures/populated/skills/project-editing
+launcher=$(uv run python -c 'from importlib.resources import files; print(files("skill_ci") / "launchers" / "codex-project-only")')
+uv run skill-ci run .github/fixtures/populated/skills/project-editing \
+	--evals-dir .github/fixtures/populated/evals \
+	--runs 1 --timeout 240 --codex-model gpt-6.1-sol \
+	--codex-cmd "\"$launcher\" exec --json --skip-git-repo-check --sandbox workspace-write"
 ```
 
-A zero task exit alone does not prove passing grades. Inspect both benchmark reports for objective scores, missing runs, and execution errors. The retained run had objective score 1.00 for each variant, no missing runs, and no execution errors on either provider.
+A zero exit alone does not prove passing grades. Inspect both benchmark reports for objective scores, missing runs, and execution errors. The retained run had objective score 1.00 for each variant, no missing runs, and no execution errors on either provider.
 
 The model-free oracle tests exercise known-good evidence and rejection of missing capture, forged hashes, unrelated writes, and a behaviorally incorrect patch. CI never executes the paid path.
 

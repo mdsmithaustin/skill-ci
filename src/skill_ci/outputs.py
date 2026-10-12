@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
-import subprocess
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+
+from skill_ci import children
 
 
 def overlaps(first: Path, second: Path) -> bool:
@@ -25,12 +26,12 @@ def same_file(first: Path, second: Path) -> bool:
 
 def checkout_root(directory: Path) -> Path:
     try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"], cwd=directory, capture_output=True, check=True
-        )
-    except (OSError, subprocess.CalledProcessError):
+        found = children.run(["git", "rev-parse", "--show-toplevel"], cwd=directory, capture=True)
+    except OSError:
         return directory
-    return Path(os.fsdecode(result.stdout.rstrip(b"\n")))
+    if found.returncode != 0:
+        return directory
+    return Path(os.fsdecode(found.stdout.rstrip(b"\n")))
 
 
 def selected_package(skill: Path) -> Path:

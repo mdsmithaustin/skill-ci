@@ -7,7 +7,8 @@ import json
 import re
 import sys
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,15 @@ from yaml.resolver import BaseResolver
 
 FRONTMATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---(?:\r?\n|\Z)", re.DOTALL)
 SKILL_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+OPENAI_YAML_FLAG = (
+    "disable-model-invocation: true makes Claude's Skill tool refuse this skill by name, even when another skill names it; "
+    "remove it and set policy.allow_implicit_invocation: false in agents/openai.yaml"
+)
+
+
+class InvocationPolicy(StrEnum):
+    PAIRED = "paired"
+    OPENAI_YAML = "openai-yaml"
 
 
 @dataclass(frozen=True)
@@ -25,7 +35,7 @@ class SkillMetadata:
     path: Path
     name: str
     description: str
-    implicit_allowed: bool
+    implicit_allowed: bool | None
 
 
 @dataclass(frozen=True)
@@ -89,11 +99,24 @@ def nonblank_string(value: Any, label: str, path: Path, errors: list[Diagnostic]
     return value
 
 
-def read_skill(path: Path) -> tuple[SkillMetadata | None, list[Diagnostic]]:
+def read_utf8(path: Path) -> tuple[str | None, list[Diagnostic]]:
     try:
-        text = path.read_text(encoding="utf-8")
+        return path.read_text(encoding="utf-8"), []
+    except UnicodeDecodeError as error:
+        line = len(re.split(rb"\r\n|\r|\n", error.object[: error.start]))
+        return None, [Diagnostic(
+            path,
+            f"invalid UTF-8 at byte {error.start + 1} (0x{error.object[error.start]:02X}): {error.reason}",
+            line,
+        )]
     except OSError as error:
         return None, [Diagnostic(path, f"cannot read file: {error}")]
+
+
+def read_skill(path: Path) -> tuple[SkillMetadata | None, list[Diagnostic]]:
+    text, errors = read_utf8(path)
+    if text is None:
+        return None, errors
     match = FRONTMATTER.match(text)
     if match is None:
         return None, [Diagnostic(path, "missing frontmatter")]
@@ -125,30 +148,42 @@ def read_skill(path: Path) -> tuple[SkillMetadata | None, list[Diagnostic]]:
     return SkillMetadata(path, name, description, not disabled), []
 
 
-def check_invocation_policy(skill: SkillMetadata) -> list[Diagnostic]:
-    path = skill.path.parent / "agents" / "openai.yaml"
+def read_openai_policy(path: Path) -> tuple[bool | None, list[Diagnostic]]:
     if not path.exists():
-        return [] if skill.implicit_allowed else [Diagnostic(path, "missing policy.allow_implicit_invocation: false")]
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as error:
-        return [Diagnostic(path, f"cannot read file: {error}")]
+        return None, []
+    text, errors = read_utf8(path)
+    if text is None:
+        return None, errors
     fields, errors = load_yaml_mapping(text, path)
     if fields is None:
-        return errors
+        return None, errors
     if "policy" not in fields:
-        return [] if skill.implicit_allowed else [Diagnostic(path, "missing policy.allow_implicit_invocation: false")]
+        return None, []
     policy = fields["policy"]
     if not isinstance(policy, dict):
-        return [Diagnostic(path, "policy must be a mapping")]
+        return None, [Diagnostic(path, "policy must be a mapping")]
     if "allow_implicit_invocation" not in policy:
-        return [] if skill.implicit_allowed else [Diagnostic(path, "missing policy.allow_implicit_invocation: false")]
+        return None, []
     allowed = policy["allow_implicit_invocation"]
     if type(allowed) is not bool:
-        return [Diagnostic(path, "policy.allow_implicit_invocation must be a boolean")]
+        return None, [Diagnostic(path, "policy.allow_implicit_invocation must be a boolean")]
+    return allowed, []
+
+
+def apply_invocation_policy(skill: SkillMetadata, policy: InvocationPolicy) -> tuple[SkillMetadata, list[Diagnostic]]:
+    path = skill.path.parent / "agents" / "openai.yaml"
+    allowed, errors = read_openai_policy(path)
+    if policy is InvocationPolicy.OPENAI_YAML:
+        gate = None if errors else allowed is not False
+        flag = [] if skill.implicit_allowed else [Diagnostic(skill.path, OPENAI_YAML_FLAG)]
+        return replace(skill, implicit_allowed=gate), errors + flag
+    if errors:
+        return skill, errors
+    if allowed is None:
+        return skill, [] if skill.implicit_allowed else [Diagnostic(path, "missing policy.allow_implicit_invocation: false")]
     if allowed != skill.implicit_allowed:
-        return [Diagnostic(path, "policy.allow_implicit_invocation must match disable-model-invocation")]
-    return []
+        return skill, [Diagnostic(path, "policy.allow_implicit_invocation must match disable-model-invocation")]
+    return skill, []
 
 
 class DuplicateJsonKey(ValueError):
@@ -207,7 +242,7 @@ def check_trigger_declarations(skills: dict[str, SkillMetadata], corpus_path: Pa
             errors.append(Diagnostic(corpus_path, f"{label}.example_request must be a nonblank string"))
         if type(allowed) is not bool:
             errors.append(Diagnostic(corpus_path, f"{label}.implicit_allowed must be a boolean"))
-        if metadata is not None and type(allowed) is bool and allowed != metadata.implicit_allowed:
+        if metadata is not None and metadata.implicit_allowed is not None and type(allowed) is bool and allowed != metadata.implicit_allowed:
             errors.append(Diagnostic(corpus_path, f"{label}.implicit_allowed does not match {skill!r}"))
         if not isinstance(anchors, list) or not anchors:
             errors.append(Diagnostic(corpus_path, f"{label}.description_contains must be a nonempty list"))
@@ -226,7 +261,7 @@ def check_trigger_declarations(skills: dict[str, SkillMetadata], corpus_path: Pa
     return errors
 
 
-def check_skills(root: Path, triggers: Path | None = None) -> int:
+def check_skills(root: Path, triggers: Path | None = None, policy: InvocationPolicy = InvocationPolicy.PAIRED) -> int:
     errors: list[Diagnostic] = []
     if not root.is_dir():
         errors.append(Diagnostic(root, "skills root is not a directory"))
@@ -248,8 +283,9 @@ def check_skills(root: Path, triggers: Path | None = None) -> int:
         for openai_path in sorted(root.glob("*/agents/openai.yaml")):
             if not (openai_path.parent.parent / "SKILL.md").is_file():
                 errors.append(Diagnostic(openai_path, "orphan OpenAI policy file"))
-    for skill in skills.values():
-        errors.extend(check_invocation_policy(skill))
+    for name, skill in list(skills.items()):
+        skills[name], problems = apply_invocation_policy(skill, policy)
+        errors.extend(problems)
     if triggers is not None:
         errors.extend(check_trigger_declarations(skills, triggers))
     for error in errors:
@@ -263,12 +299,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("skills_root", nargs="?", default="skills", type=Path)
     parser.add_argument("--triggers", type=Path, help="version-1 trigger declaration corpus")
+    parser.add_argument(
+        "--invocation-policy",
+        type=InvocationPolicy,
+        choices=tuple(InvocationPolicy),
+        default=InvocationPolicy.PAIRED,
+        help="paired: agents/openai.yaml must match disable-model-invocation; openai-yaml: only agents/openai.yaml gates, and disable-model-invocation: true is an error",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
-    return check_skills(args.skills_root, args.triggers)
+    return check_skills(args.skills_root, args.triggers, args.invocation_policy)
 
 
 if __name__ == "__main__":
