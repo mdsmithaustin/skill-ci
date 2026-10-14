@@ -9,10 +9,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from support import ENVIRONMENT, ISOLATED_GIT, git, write
+
 from skill_ci.checks import pii as CHECK_PII
 
 PII_CHECK = Path(CHECK_PII.__file__)
 PII_COMMAND = [sys.executable, "-m", "skill_ci.checks.pii"]
+FIXTURE_GIT = ENVIRONMENT | ISOLATED_GIT
+ADDRESS = "grace" + "@" + "private.test"
 
 
 class PiiCheck(unittest.TestCase):
@@ -272,6 +276,56 @@ class PiiCheck(unittest.TestCase):
                 text=True,
             )
         self.assertEqual((result.returncode, result.stdout), (0, ""))
+
+    def fixture_repository(self) -> Path:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        repository = Path(temporary.name)
+        git("init", "-q", "--initial-branch=main", cwd=repository, env=FIXTURE_GIT)
+        return repository
+
+    def scan_repository(self, repository: Path) -> tuple[int, str, str]:
+        result = subprocess.run(PII_COMMAND, cwd=repository, env=FIXTURE_GIT, capture_output=True, text=True)
+        return result.returncode, result.stdout, result.stderr
+
+    def test_repository_scan_skips_a_tracked_file_deleted_from_disk(self) -> None:
+        repository = self.fixture_repository()
+        write(repository / "deleted.txt", "Clean text.\n")
+        write(repository / "kept.txt", f"Contact {ADDRESS}.\n")
+        git("add", "-A", cwd=repository, env=FIXTURE_GIT)
+        (repository / "deleted.txt").unlink()
+        self.assertEqual(self.scan_repository(repository), (1, "kept.txt:1: possible email address\n", ""))
+
+    def test_repository_scan_reads_untracked_files_and_skips_ignored_ones(self) -> None:
+        repository = self.fixture_repository()
+        write(repository / ".gitignore", "ignored.txt\n")
+        write(repository / "untracked.txt", f"Contact {ADDRESS}.\n")
+        write(repository / "ignored.txt", f"Contact {ADDRESS}.\n")
+        self.assertEqual(self.scan_repository(repository), (1, "untracked.txt:1: possible email address\n", ""))
+
+    def test_repository_scan_passes_over_an_untracked_nested_repository(self) -> None:
+        repository = self.fixture_repository()
+        nested = repository / "nested"
+        nested.mkdir()
+        git("init", "-q", cwd=nested, env=FIXTURE_GIT)
+        write(nested / "notes.txt", "Clean text.\n")
+        self.assertEqual(self.scan_repository(repository), (0, "", ""))
+
+    def test_repository_scan_reports_a_conflicted_file_once(self) -> None:
+        repository = self.fixture_repository()
+        target = repository / "conflicted.txt"
+        write(target, f"Contact {ADDRESS}.\nbase\n")
+        git("add", "-A", cwd=repository, env=FIXTURE_GIT)
+        git("commit", "-q", "-m", "base", cwd=repository, env=FIXTURE_GIT)
+        git("checkout", "-q", "-b", "other", cwd=repository, env=FIXTURE_GIT)
+        write(target, f"Contact {ADDRESS}.\nother\n")
+        git("commit", "-q", "-am", "other", cwd=repository, env=FIXTURE_GIT)
+        git("checkout", "-q", "main", cwd=repository, env=FIXTURE_GIT)
+        write(target, f"Contact {ADDRESS}.\nmain\n")
+        git("commit", "-q", "-am", "main", cwd=repository, env=FIXTURE_GIT)
+        merge = subprocess.run(["git", "merge", "-q", "other"], cwd=repository, env=FIXTURE_GIT, capture_output=True)
+        self.assertEqual(merge.returncode, 1)
+        self.assertEqual(self.scan_repository(repository), (1, "conflicted.txt:1: possible email address\n", ""))
 
     def test_staged_mode_scans_index_contents_not_working_tree(self) -> None:
         environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
