@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reject likely PII in tracked files or the staged Git index."""
+"""Reject likely PII in tracked and untracked, non-ignored files, or in the staged Git index."""
 from __future__ import annotations
 
 import argparse
@@ -81,12 +81,12 @@ def source_name(raw_name: bytes) -> str:
 
 
 def repository_sources(*pathspec: str) -> list[Source]:
-    names = git_output("ls-files", "-z", *(("--", *pathspec) if pathspec else ())).split(b"\0")
-    return [
-        Source(name, Path(name).read_bytes())
-        for raw_name in names
-        if (name := source_name(raw_name))
-    ]
+    listed = git_output(
+        "ls-files", "-z", "--cached", "--others", "--exclude-standard", *(("--", *pathspec) if pathspec else ())
+    ).split(b"\0")
+    # A conflicted file is listed once per stage, a deleted one stays in the index, and a nested repository is a directory.
+    names = dict.fromkeys(name for raw_name in listed if (name := source_name(raw_name)))
+    return [Source(name, Path(name).read_bytes()) for name in names if Path(name).is_file()]
 
 
 def staged_sources(*pathspec: str) -> list[Source]:
