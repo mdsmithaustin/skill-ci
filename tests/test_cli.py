@@ -107,18 +107,19 @@ class ManifestTests(ConsumerTestCase):
         self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
 
     def test_a_populated_manifest_is_validated_and_audited(self) -> None:
-        write_skill(self.root / "skills" / "a")
-        write(self.root / "evals with spaces/a/shared-benchmark.json", manifest("a", ["skills/a/SKILL.md"], [case()]))
-        result = self.skill_ci("check", "--evals-dir", "evals with spaces", "--require-manifests")
+        write_skill(self.root / "with spaces/skills/a")
+        write(self.root / "with spaces/evals/a/shared-benchmark.json", manifest("a", ["skills/a/SKILL.md"], [case()]))
+        result = self.skill_ci("check", "--skills-dir", "with spaces/skills", "--evals-dir", "with spaces/evals", "--require-manifests")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("OK: a — 1 cases, 0 ablations", lines(result))
-        self.assertIn('"manifest": "evals with spaces/a/shared-benchmark.json"', result.stdout)
+        self.assertIn('"manifest": "with spaces/evals/a/shared-benchmark.json"', result.stdout)
         self.assertEqual(lines(result)[-1], "checks run: 4; failed: 0")
 
     def test_a_manifest_that_fails_validation_is_not_audited_and_the_next_still_runs(self) -> None:
         write_skill(self.root / "skills" / "a")
         write_skill(self.root / "skills" / "b")
         write(self.root / "evals/b/shared-benchmark.json", manifest("b", ["skills/b/SKILL.md"], [case()]))
+        write(self.root / "ancillary.txt", "Not a skill marker.\n")
         for invalid, error in (
             (
                 manifest("a", ["skills/a/SKILL.md"], [case(prompt="Repair the thing and say repaired.")]),
@@ -162,9 +163,9 @@ class ManifestTests(ConsumerTestCase):
         write(self.root / "evals/b/shared-benchmark.json", manifest("b", ["skills/b/SKILL.md"]))
         (self.root / "skills/a/evals").symlink_to(elsewhere, target_is_directory=True)
         (self.root / "evals/a").symlink_to(elsewhere, target_is_directory=True)
-        (self.root / "linked evals").symlink_to(self.root / "evals", target_is_directory=True)
+        (self.root / "linked root").symlink_to(self.root, target_is_directory=True)
         (self.root / "linked skills").symlink_to(self.root / "skills", target_is_directory=True)
-        for layout in ((), ("--evals-dir", "evals"), ("--evals-dir", "linked evals"), ("--skills-dir", "linked skills")):
+        for layout in ((), ("--evals-dir", "evals"), ("--evals-dir", "linked root/evals"), ("--skills-dir", "linked skills")):
             with self.subTest(layout=layout):
                 result = self.skill_ci("validate", *layout)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -337,7 +338,7 @@ class ManifestTests(ConsumerTestCase):
                 source = write_skill(self.root / "skills with spaces" / "directory-name")
                 if external:
                     write(
-                        self.root / "evals with spaces/directory-name/shared-benchmark.json",
+                        self.root / "evals/directory-name/shared-benchmark.json",
                         manifest("example", [str(source)], [case()]),
                     )
                 else:
@@ -346,14 +347,14 @@ class ManifestTests(ConsumerTestCase):
                     "check",
                     "--skills-dir",
                     "skills with spaces",
-                    *(("--evals-dir", "evals with spaces") if external else ()),
+                    *(("--evals-dir", "evals") if external else ()),
                     "--require-populated-manifests",
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("skill manifests checked: 1; failed: 0", lines(result))
                 self.assertIn("manifests checked: 1", lines(result))
                 shutil.rmtree(self.root / "skills with spaces")
-                shutil.rmtree(self.root / "evals with spaces", ignore_errors=True)
+                shutil.rmtree(self.root / "evals", ignore_errors=True)
 
     def test_coverage_requires_cases_in_every_manifest(self) -> None:
         source = write_skill(self.root / "skills" / "example")

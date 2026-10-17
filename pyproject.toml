@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "skill-ci"
-version = "1.3.0"
+version = "1.4.0"
 description = "Model-free checks and operator-local eval runs for repositories of Agent Skills."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -12,7 +12,7 @@ dependencies = [
   "markdown-it-py==4.2.0",
   "mdurl==0.1.2",
   "PyYAML==6.0.3",
-  "skill-eval-harness-ext @ git+https://github.com/mdsmithaustin/skill-eval-harness.git@c23ed79554995c60cbd63cc9da9f47837cfa6f9a",
+  "skill-eval-harness-ext @ git+https://github.com/mdsmithaustin/skill-eval-harness.git@76e0f2179a9d5bd64d16eec88996b8c4bedff2bb",
 ]
 
 [project.scripts]
