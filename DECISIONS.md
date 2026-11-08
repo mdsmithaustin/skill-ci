@@ -16,7 +16,7 @@ Building our own would have reproduced about twenty thousand lines to add two th
 
 ## Why a fork, and when to leave it
 
-`pyproject.toml` pins a fork, as the distribution `skill-eval-harness-ext`, rather than the upstream release `skill-eval-harness`. The pin is one git commit, because the fork has no release tags of its own. When `c23ed79` was adopted, `git ls-remote --tags` listed only `sync-upstream-2026-10-05`, and its local `v0.x` tags were upstream's. The current pin is `76e0f2179a9d5bd64d16eec88996b8c4bedff2bb`, fork #49. The previous pin was `c23ed79`, fork #25. The commit before it, `15cc612`, renamed the distribution. At the `80e49af` pin, the fork carried the twenty patches listed below. Patches 1 to 8 were classified on 2026-09-27. Patches 9 to 20 arrived with that pin and name the fork pull request each came from. Fork #11 and #13 changed only tests and docs, so they are not patches. The `6634de1` pin also includes fork #20, classified below on 2026-10-04.
+`pyproject.toml` pins a fork, as the distribution `skill-eval-harness-ext`, rather than the upstream release `skill-eval-harness`. The pin is one git commit, because the fork has no release tags of its own. When `c23ed79` was adopted, `git ls-remote --tags` listed only `sync-upstream-2026-10-05`, and its local `v0.x` tags were upstream's. The current pin is `9e9741a42e2beed96c9c22f1e9fb8ab25988aec2`, fork #50. The previous pin was `76e0f2179a9d5bd64d16eec88996b8c4bedff2bb`, fork #49. The earlier pin was `c23ed79`, fork #25. The commit before it, `15cc612`, renamed the distribution. At the `80e49af` pin, the fork carried the twenty patches listed below. Patches 1 to 8 were classified on 2026-09-27. Patches 9 to 20 arrived with that pin and name the fork pull request each came from. Fork #11 and #13 changed only tests and docs, so they are not patches. The `6634de1` pin also includes fork #20, classified below on 2026-10-04.
 
 1. The judge prompt no longer reveals which arm it is grading.
 2. Codex skill loads are read from the session rollout, because an explicit mention injects the skill with no tool event.
@@ -99,6 +99,12 @@ The classification for `c23ed79554995c60cbd63cc9da9f47837cfa6f9a` through `76e0f
 This classification finds no new third-kind evaluation difference outside the previously accepted blinding principle. It does not widen that principle or record a new operator acceptance. Any later change to grading, aggregation, case meaning, or prompt design still has to pass the exit test.
 
 Both the previous fork pin and upstream `0cc7392473c3d8e2e7de7412239ba39229101604` are ancestors of the new pin. `git rev-list --left-right --count 0cc7392473c3d8e2e7de7412239ba39229101604...76e0f2179a9d5bd64d16eec88996b8c4bedff2bb` reports `0 55`. No commit from that upstream checkpoint is missing. This is an ancestry claim about the pinned checkpoint, not about future upstream changes.
+
+### The 1.5.0 runner pin
+
+Fork [#50](https://github.com/mdsmithaustin/skill-eval-harness/pull/50) adds a diagnostic outcome rate that excludes process and efficiency assertion types. Existing objective, combined, process, and efficiency rates, critical vetoes, pairing, and exit gates retain their semantics. Consumers can read the new fields without changing old manifests or acceptance gates. The GitHub report adds an outcome column and labels the existing objective difference as including process.
+
+This is an additive report under the exit test, not a replacement scoring policy. Selecting the new rate as an acceptance criterion would be a separate decision. The metric is an assertion fraction, not whole-task acceptance. Old saved rows do not acquire an invented outcome score. The skill-ci default repetition change and explicit judge selection are wrapper policy owned here, not fork grading changes.
 
 ## How skill-ci is distributed
 
