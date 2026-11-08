@@ -49,12 +49,24 @@ You need `uv` and `git`. `mise` and `lefthook` are optional, and `init` wires th
 
 3. Write cases in each manifest. See [Write test cases for a skill](docs/authoring-cases.md).
 
-4. Run the paid checks when you choose:
+4. Preview the paired run before spending model budget:
+
+   ```sh
+   skill-ci run skills/my-skill --agent codex --out ../my-skill-run --dry-run
+   ```
+
+   A nonzero exit means the preview failed. The JSON lists the planned harness commands and marks them `validated: false`. Previewing creates no output directory and runs no harness command. It requires an explicit `--out`. Normal version resolution still applies and may access the network.
+
+5. Run the paid checks when you choose:
 
    ```sh
    skill-ci trigger skills/my-skill
    skill-ci run skills/my-skill
    ```
+
+   `run` now defaults to one paired repetition and one judgment per applicable judge task, down from three each. Both answer agents remain selected unless you pass `--agent`. This is a development screen, not evidence of repeatability or generalization. Increase `--runs` or `--judge-runs` for a named research decision. Trigger runs still default to three repetitions.
+
+   The default judge is Claude Opus. For Claude answers with a Codex judge, pass `--agent claude --judge-backend codex --judge-model MODEL`. Without `--judge-model`, a Codex judge uses `--codex-model`. `--codex-cmd` applies to both Codex answers and Codex judging. The harness calls no judge model when the selected cases have no applicable qualitative assertions. Keep exact properties in executable assertions and reserve judging for residual qualitative questions.
 
 ### What `init` does
 
@@ -247,15 +259,17 @@ evals_dir = "evals"
 | `require_populated_manifests` | boolean | `false` | `check` | Require a manifest with cases bound to every skill. |
 | `package` | boolean | `false` | `check` | Inspect every package entry and reject symlinks and special files. |
 | `out` | path | a new directory under `<checkout>.eval-runs/<skill>/` | `trigger`, `run` | The output directory, which must sit outside the skill package. |
-| `runs` | whole number | `3` | `trigger`, `run` | Runs per query or variant. |
+| `runs` | whole number | `3` for `trigger`, `1` for `run` | `trigger`, `run` | Runs per query or variant. |
 | `agents` | list of `claude` and `codex` | both | `run` | The agents the paired benchmark runs. `trigger` always runs both. |
 | `model` | string | `sonnet` | `run` | The Claude model that answers the prompts. |
 | `matrix_model` | string | unset | `trigger` | One model for every agent. Unset, each agent uses its own model list. |
 | `codex_model` | string | `gpt-5.6-sol` | `run` | The Codex model that answers the prompts. |
 | `codex_cmd` | string | the bundled Codex launcher with a read-only sandbox | `trigger`, `run` | The command line that starts Codex. It does not name a model. |
 | `timeout` | whole number | `240` | `run` | Seconds allowed per run. |
-| `judge_model` | string | `opus` | `run` | The Claude model that judges the runs. |
-| `judge_runs` | whole number | `3` | `run` | How many times each judge task repeats before the verdicts are merged. |
+| `judge_backend` | `claude` or `codex` | `claude` | `run` | Runtime that judges applicable qualitative assertions. |
+| `judge_model` | string | `opus` for Claude, `codex_model` for Codex | `run` | Model used by the selected judge runtime. |
+| `judge_runs` | whole number | `1` | `run` | How many times each applicable judge task repeats before the verdicts are merged. |
+| `dry_run` | boolean | `false` | `run` | Print an unvalidated plan without dispatch. Requires `out`. `--no-dry-run` overrides a configured preview. |
 
 An unknown key is an error that names the key and, when one is close, suggests the right spelling. The version that runs decides what is unknown, so a key from a newer release is not an error to an older command that only hands the run on. The key is an error when the pin is the commit already running, when the version cannot be resolved, and in every command under the pinned run itself. Otherwise the pinned run judges it. Skill-ci checks every known key for the right type before it resolves a version or hands off. `update` ignores unknown keys.
 
@@ -489,9 +503,9 @@ The v1.4.0 runner also checks that declared skill paths exist inside the manifes
 
 The pinned runner supports `report --fail-on-failures` for offline saved-result gates. It checks `with_skill` by default and permits expected baseline assertion failures while requiring complete evidence across all arms. Rendering remains the default. The runner also ships an [offline captured-edit example](https://github.com/mdsmithaustin/skill-eval-harness/tree/70e83674f787327e3d271310fc64106dc89a2708/examples/edited-file-demo). Its native permission smoke is separate and opt-in.
 
-The current pin is `76e0f2179a9d5bd64d16eec88996b8c4bedff2bb`, harness PR #49. It fixes complete prompt delivery to delayed subprocess readers. The runner's [adoption summary](https://github.com/mdsmithaustin/skill-eval-harness/blob/76e0f2179a9d5bd64d16eec88996b8c4bedff2bb/docs/adopting-upstream-2026-10-09.md) records the upstream sync and earlier additions. `DECISIONS.md` classifies the changes against skill-ci's fork exit policy.
+The current pin is `9e9741a42e2beed96c9c22f1e9fb8ab25988aec2`, harness PR #50. It adds outcome rates that exclude process and efficiency assertions while preserving existing gates. The v1.5.0 wrapper defaults to one answer repetition and one judge repetition; set both explicitly for repeated studies. The prior v1.4.0 pin fixed complete prompt delivery to delayed subprocess readers. The runner's [adoption summary](https://github.com/mdsmithaustin/skill-eval-harness/blob/76e0f2179a9d5bd64d16eec88996b8c4bedff2bb/docs/adopting-upstream-2026-10-09.md) records the upstream sync and earlier additions. `DECISIONS.md` classifies the changes against skill-ci's fork exit policy.
 
-The previous pin, `c23ed79554995c60cbd63cc9da9f47837cfa6f9a`, added harness PR #25's `stops_on_signal`, which [stops a run on SIGINT or SIGTERM](https://github.com/mdsmithaustin/skill-eval-harness/blob/c23ed79554995c60cbd63cc9da9f47837cfa6f9a/docs/commands.md) on POSIX hosts. The native runners and trigger adapters start each agent in its own session. On SIGINT or SIGTERM, a harness command that runs agents sends that signal to each running agent's process group. It sends SIGKILL to the group as soon as the agent exits, or after 2 seconds if the agent is still running. A fixed recovery case sends SIGKILL at once. The harness command starts no queued run and exits 130 for SIGINT or 143 for SIGTERM. Before that pin, a stopped run could leave its agents running and still making paid model calls.
+The earlier pin, `c23ed79554995c60cbd63cc9da9f47837cfa6f9a`, added harness PR #25's `stops_on_signal`, which [stops a run on SIGINT or SIGTERM](https://github.com/mdsmithaustin/skill-eval-harness/blob/c23ed79554995c60cbd63cc9da9f47837cfa6f9a/docs/commands.md) on POSIX hosts. The native runners and trigger adapters start each agent in its own session. On SIGINT or SIGTERM, a harness command that runs agents sends that signal to each running agent's process group. It sends SIGKILL to the group as soon as the agent exits, or after 2 seconds if the agent is still running. A fixed recovery case sends SIGKILL at once. The harness command starts no queued run and exits 130 for SIGINT or 143 for SIGTERM. Before that pin, a stopped run could leave its agents running and still making paid model calls.
 
 The runner also retains harness PR #22's [fixed recovery cases](https://github.com/mdsmithaustin/skill-eval-harness/blob/70e83674f787327e3d271310fc64106dc89a2708/docs/recovery.md). On supported POSIX hosts, a prepared `run-agent` row with a `recovery` object retains one fixture across a verified checkpoint stop, fresh recovery, and fresh refusal. Successful runs save `recovery.json`, raw process evidence, and file snapshots for a consumer grader. Setup, spawn, or capture failures can leave partial or absent artifacts. Exit code 0 confirms completed runner phases and snapshots. It does not certify a model, provider, or enforced write denial. Rows without `recovery` keep their ordinary one-shot contract.
 

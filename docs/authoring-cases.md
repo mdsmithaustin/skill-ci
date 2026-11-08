@@ -44,7 +44,7 @@ A case is one test prompt in `shared-benchmark.json`. A trigger case asks whethe
 
    - Give the judge assertion gate severity when it is the check you trust. A soft judge adds nothing to the headline score, so a run can separate the variants cleanly and still report no lift.
    - Score anchored dimensions, not one overall rubric. A failure then names the property that fell.
-   - Repeat the judge and let the runner merge the verdicts. `skill-ci run` repeats each judge task `--judge-runs` times, default 3. One verdict hides its own variance.
+   - Start with one calibrated verdict per applicable judge task, the `skill-ci run` default. Inspect disputed or threshold-close judgments before increasing `--judge-runs`. Repetition measures judge variance but does not replace calibration. Use executable assertions for exact properties so they need no model judgment.
 
 8. **Use the calibration the runner already has before adding a dependency.** skill-eval-harness already supports judge alignment against human labels, judge robustness probes with negative controls, multi-judge panels with a quorum, and repeated judging. Before you adopt an external scoring framework, check that score resolution is your real limit. Usually the limits are cases that do not tell the variants apart, and too few runs.
 

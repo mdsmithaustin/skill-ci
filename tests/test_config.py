@@ -49,6 +49,21 @@ class ConfigFileTests(unittest.TestCase):
                 self.assertEqual(pin.version, version)
                 self.assertEqual(pin.source, "https://github.com/mdsmithaustin/skill-ci.git")
 
+    def test_preview_setting_is_a_boolean_and_cli_can_override_it(self) -> None:
+        from skill_ci import cli
+        from skill_ci.runs import RunOptions
+
+        for value in (True, False):
+            loaded = config.read(self.write(f'version = "main"\ndry_run = {str(value).lower()}\n'))
+            self.assertIs(loaded.settings["dry_run"], value)
+            for flag, expected in (("--dry-run", True), ("--no-dry-run", False)):
+                namespace = cli.build_parser("test").parse_args(["run", "skills/example", flag])
+                merged = type(namespace)(**(loaded.settings | vars(namespace)))
+                self.assertIs(cli.options(RunOptions, merged).dry_run, expected)
+        for value in ('"true"', '"false"', '1'):
+            with self.subTest(value=value), self.assertRaises(ConfigError):
+                config.read(self.write(f'version = "main"\ndry_run = {value}\n'))
+
     def test_any_other_version_is_rejected(self) -> None:
         for line, shown in (
             ('version = "v1"', "'v1'"),

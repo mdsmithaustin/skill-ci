@@ -99,8 +99,10 @@ OPTIONS: dict[str, tuple[str, dict[str, Any]]] = {
         {"metavar": "COMMAND", "help": "Codex command line (default: the bundled codex launcher, read-only sandbox)"},
     ),
     "timeout": ("--timeout", {"type": int, "metavar": "SECONDS", "help": "per-run timeout"}),
-    "judge_model": ("--judge-model", {"help": "Claude judge model"}),
+    "judge_backend": ("--judge-backend", {"type": Agent, "choices": tuple(Agent), "help": "judge runtime"}),
+    "judge_model": ("--judge-model", {"help": "judge model; unset, opus for Claude or --codex-model for Codex"}),
     "judge_runs": ("--judge-runs", {"type": int, "metavar": "N", "help": "judge repeats per run"}),
+    "dry_run": ("--dry-run", {"action": argparse.BooleanOptionalAction, "help": "print an unvalidated execution plan without running the harness; requires --out"}),
 }
 
 
