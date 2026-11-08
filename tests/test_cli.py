@@ -870,6 +870,47 @@ class PaidRunTests(unittest.TestCase):
         stage = self.fake.arguments()[0 if command == "trigger" else 1]
         return Path(stage[stage.index("--out") + 1]).parent
 
+    def test_run_defaults_to_one_paired_repetition_and_one_judgment(self) -> None:
+        result = self.paid("run", "skills/example", "--out", "o")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        stages = self.fake.arguments()
+        prepare = next(stage for stage in stages if stage[0] == "prepare")
+        self.assertEqual(prepare[prepare.index("--runs-per-variant") + 1], "1")
+        judges = [stage for stage in stages if stage[0] == "judge"]
+        self.assertEqual(len(judges), 2)
+        for stage in judges:
+            self.assertEqual(stage[stage.index("--judge-runs") + 1], "1")
+
+    def test_codex_judge_uses_its_command_and_selected_model(self) -> None:
+        result = self.paid("run", "skills/example", "--out", "o", "--agent", "claude",
+                           "--judge-backend", "codex", "--judge-model", "judge-model",
+                           "--codex-cmd", "custom codex")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        judge = next(stage for stage in self.fake.arguments() if stage[0] == "judge")
+        self.assertEqual(judge[judge.index("--judge-backend") + 1], "codex")
+        self.assertEqual(judge[judge.index("--judge-model") + 1], "judge-model")
+        self.assertEqual(judge[judge.index("--codex-cmd") + 1], "custom codex")
+        self.assertNotIn("--claude-bin", judge)
+
+    def test_dry_run_prints_stages_without_dispatch_or_output_creation(self) -> None:
+        result = self.paid("run", "skills/example", "--out", "o", "--dry-run")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        plan = json.loads(result.stdout)
+        self.assertFalse(plan["validated"])
+        self.assertEqual(plan["stages"][0][0], "audit-manifest")
+        self.assertEqual(sum(stage[0] == "run-agent" for stage in plan["stages"]), 2)
+        self.assertEqual(self.fake.calls(), [])
+        self.assertFalse((self.checkout / "o").exists())
+        self.assertFalse(self.runs_root.exists())
+
+    def test_invalid_run_budget_and_unlocated_preview_dispatch_nothing(self) -> None:
+        for flags in (("--runs", "0"), ("--judge-runs", "-1"), ("--timeout", "0"), ("--dry-run",)):
+            with self.subTest(flags=flags):
+                result = self.paid("run", "skills/example", *flags)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual(self.fake.calls(), [])
+                self.assertFalse(self.runs_root.exists())
+
     def test_trigger_passes_the_launchers_and_flags_to_the_matrix(self) -> None:
         result = self.paid(
             "trigger", "skills/example", "--evals-dir", "evals", "--out", "run output", "--runs", "2", "--model", "m1"
